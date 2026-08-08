@@ -1,0 +1,499 @@
+"""工具层：契约、可恢复错误、暂存语义、懒惰摘要。"""
+
+import re
+from pathlib import Path
+from typing import Any
+
+import httpx
+import pytest
+
+from agenttavern.config import Settings
+from agenttavern.llm import LLMGateway, ToolCall
+from agenttavern.models import (
+    Capabilities,
+    Node,
+    Session,
+    StateDelta,
+    SummarizeMode,
+    WorldbookEntry,
+    WorldbookMode,
+)
+from agenttavern.storage import Store
+from agenttavern.tools import RunContext, ToolOutcome, ToolRegistry, build_tools
+
+
+def fake_gateway(reply: str = "摘要文本") -> LLMGateway:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": reply}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return LLMGateway(Settings(llm_model="m"), http_client=client)
+
+
+@pytest.fixture
+def ctx(tmp_path: Path) -> RunContext:
+    repo = Store(tmp_path).create_session(Session(capabilities=ALL_ON))
+    return RunContext(
+        run_id="run_test",
+        repo=repo,
+        session=repo.load_session(),
+        gateway=fake_gateway(),
+    )
+
+
+async def call(reg: ToolRegistry, ctx: RunContext, name: str, **args: Any):
+    return await reg.dispatch(ctx, ToolCall(id="c1", name=name, arguments=args))
+
+
+ALL_ON = Capabilities(
+    state=True,
+    history_search=True,
+    summarize=SummarizeMode.AUTO,
+    ask_question=True,
+)
+
+
+@pytest.fixture
+def reg() -> ToolRegistry:
+    """全部能力打开。默认配置的工具面要小得多，见文末的开关测试。"""
+    return ToolRegistry.for_session(
+        ALL_ON, [WorldbookEntry(name="占位", mode=WorldbookMode.ON_DEMAND)]
+    )
+
+
+# -- 契约 -------------------------------------------------------------------
+
+
+async def test_submit_outline_requires_a_prior_state_write(reg, ctx) -> None:
+    """E0 契约：强制这一次调用是为了区分"确实没变化"与"模型忘了提交"。"""
+    result = await call(reg, ctx, "submit_outline", outline="她推开门。")
+    assert result.is_error
+    assert ctx.outline is None
+
+    await call(reg, ctx, "state_write")  # 空 delta 合法
+    ok = await call(reg, ctx, "submit_outline", outline="她推开门。")
+    assert ok.outcome is ToolOutcome.TERMINATE
+    assert ctx.outline == "她推开门。"
+
+
+async def test_empty_delta_still_counts(reg, ctx) -> None:
+    await call(reg, ctx, "state_write")
+    assert ctx.state_write_count == 1
+    assert ctx.staged_delta.is_empty()
+
+
+# -- 暂存与累积 --------------------------------------------------------------
+
+
+async def test_state_writes_accumulate_into_one_delta(reg, ctx) -> None:
+    """可多次调用，累积成一份增量——节点与 run 一一对应，一个 run 只有一份增量。"""
+    await call(reg, ctx, "state_write", set={"地点": "门口"}, append={"林.知情": ["有人来了"]})
+    await call(reg, ctx, "state_write", set={"地点": "客厅"}, append={"林.知情": ["是陈"]})
+
+    assert ctx.state_write_count == 2
+    assert ctx.staged_delta.set["地点"] == "客厅"
+    assert ctx.staged_delta.append["林.知情"] == ["有人来了", "是陈"]
+
+
+async def test_unmentioned_keys_survive(reg, ctx) -> None:
+    """离场再出场天然成立：只改提到的键，其余保持原状。不需要"角色实体"这类预设。"""
+    await call(reg, ctx, "state_write", set={"陈.在场": True}, append={"陈.知情": ["照片"]})
+    await call(reg, ctx, "state_write", set={"陈.在场": False})
+
+    after = ctx.current_state().values
+    assert after["陈.在场"] is False
+    assert after["陈.知情"] == ["照片"]
+
+    await call(reg, ctx, "state_write", set={"陈.在场": True})
+    assert ctx.current_state().values["陈.在场"] is True
+
+
+async def test_any_shape_of_key_is_accepted(reg, ctx) -> None:
+    """时间、地点、角色属性的粒度与形态都取决于故事，存储层不预设任何维度。"""
+    await call(
+        reg,
+        ctx,
+        "state_write",
+        set={"时间": "下午一点", "地点.场合": "婚礼进行中", "林与陈.关系": "疏远"},
+    )
+    result = await call(reg, ctx, "state_query", keys=["时间", "地点.场合", "林与陈.关系"])
+    assert "下午一点" in result.content
+    assert "婚礼进行中" in result.content
+
+
+async def test_staged_delta_is_not_persisted_until_run_ends(reg, ctx) -> None:
+    """D56：run 内暂存。否则中途失败会造成"增量已落盘但正文不存在"。"""
+    await call(reg, ctx, "state_write", set={"地点": "厨房"})
+    assert ctx.repo.all_nodes() == {}
+    assert ctx.current_state().values["地点"] == "厨房"
+    assert ctx.base_state().values == {}
+
+
+# -- 可恢复错误 --------------------------------------------------------------
+
+
+async def test_unknown_tool_is_recoverable(reg, ctx) -> None:
+    result = await reg.dispatch(ctx, ToolCall(id="c", name="nope", arguments={}))
+    assert result.is_error
+    assert "可用" in result.content
+
+
+async def test_malformed_json_arguments_are_recoverable(reg, ctx) -> None:
+    call_ = ToolCall.from_raw("c", "state_write", "{坏的")
+    result = await reg.dispatch(ctx, call_)
+    assert result.is_error
+    assert "重新调用" in result.content
+
+
+async def test_invalid_params_are_recoverable(reg, ctx) -> None:
+    result = await call(reg, ctx, "ask_question", question="?", options=["只有一个"])
+    assert result.is_error
+
+
+async def test_unknown_state_key_returns_available_keys(reg, ctx) -> None:
+    """未知键回给模型可用键列表，顺带起到防键名漂移的作用。"""
+    await call(reg, ctx, "state_write", set={"林与陈.关系": "疏远"})
+    result = await call(reg, ctx, "state_query", keys=["心情"])
+    assert result.is_error
+    assert "林与陈.关系" in result.content
+
+
+# -- 查询 -------------------------------------------------------------------
+
+
+async def test_state_query_reads_staged_value(reg, ctx) -> None:
+    await call(reg, ctx, "state_write", append={"林.知情": ["照片的存在"]})
+    result = await call(reg, ctx, "state_query", keys=["林.知情"])
+    assert "照片的存在" in result.content
+
+
+# -- history / worldinfo ----------------------------------------------------
+
+
+async def test_history_search_marks_hits_without_filtering(reg, ctx) -> None:
+    """**命中只做标注，不筛掉任何一轮**（D62）。
+
+    此前 `query` 是子串过滤器：查不中就返回空列表，而模型会把"空"读成
+    "没这回事"——这正是 lorebook 关键词触发不合格的那条理由，我们自己却犯了。
+    早前埋的伏笔常常换了个说法，逐字查不中是**常态**，不是例外。
+    """
+    a = Node(outline="她推开门，屋里没人。")
+    b = Node(parent_id=a.id, outline="陈从阳台走进来。")
+    ctx.repo.save_node(a)
+    ctx.repo.save_node(b)
+    ctx.parent_id = b.id
+
+    index = await call(reg, ctx, "history_search", query="阳台")
+    assert b.id in index.content
+    assert a.id in index.content, "没命中的轮次仍必须出现在索引里"
+    assert "命中" in index.content
+    # 空结果的含义要写在结果里，不能靠模型自己领会
+    assert "没命中不等于没发生过" in index.content
+
+    body = await call(reg, ctx, "history_read", run_ids=[a.id])
+    assert "屋里没人" in body.content
+
+
+async def test_history_read_expands_the_whole_segment(reg, ctx) -> None:
+    """**索引按段给 ref，展开也必须按段给回全文**（D110）。
+
+    摘要在上下文里顶替的是**整段**——那几轮的细纲、当时查了什么，全被它替掉了。
+    只还回末节点那一轮比不展开更糟：模型会以为自己已经看全了。
+    """
+    a = Node(outline="第一轮：她推开门。")
+    b = Node(parent_id=a.id, outline="第二轮：陈从里屋出来。")
+    c = Node(parent_id=b.id, outline="第三轮：他把门锁上。", outline_summary="她进店，他锁门。")
+    c.segment_span = 3
+    for node in (a, b, c):
+        ctx.repo.save_node(node)
+    ctx.parent_id = c.id
+
+    body = await call(reg, ctx, "history_read", run_ids=[c.id])
+
+    assert "她推开门" in body.content
+    assert "陈从里屋出来" in body.content
+    assert "他把门锁上" in body.content
+
+
+async def test_history_read_rejects_unknown_ids(reg, ctx) -> None:
+    result = await call(reg, ctx, "history_read", run_ids=["run_ghost"])
+    assert result.is_error
+
+
+async def test_worldinfo_index_covers_everything(reg, ctx) -> None:
+    """索引必须覆盖**全部**条目，不做预筛选（D62）——筛选子集式的规则不合格，
+    因为漏掉时模型根本不知道条目存在。
+    """
+    for i in range(3):
+        ctx.repo.save_worldbook_entry(
+            WorldbookEntry(name=f"设定{i}", content="内容" * 50, mode=WorldbookMode.ON_DEMAND)
+        )
+
+    index = await call(reg, ctx, "worldinfo_list")
+    assert index.content.count("ref") == 3
+    assert "chars" in index.content
+
+
+# -- summarize --------------------------------------------------------------
+
+
+async def test_summarize_caches_and_reuses(reg, ctx) -> None:
+    """懒惰生成 + 系统缓存（D69）：第二次调用不再打模型。"""
+    entry = WorldbookEntry(name="教团", content="很长的设定" * 100)
+    ctx.repo.save_worldbook_entry(entry)
+
+    first = await call(reg, ctx, "summarize", source=f"wi:{entry.id}")
+    assert first.content == "摘要文本"
+    assert ctx.repo.load_worldbook_entry(entry.id).summary == "摘要文本"
+
+    ctx.gateway = fake_gateway("不该被调用")
+    second = await call(reg, ctx, "summarize", source=f"wi:{entry.id}")
+    assert second.content == "摘要文本"
+    assert second.label == "复用了已有摘要"
+
+
+async def test_summary_falls_back_to_head_in_index(reg, ctx) -> None:
+    """尚无摘要的条目回退到"前 N 字 + 字数"——仍满足 D62。"""
+    ctx.repo.save_worldbook_entry(
+        WorldbookEntry(name="教团", content="甲乙丙丁" * 100, mode=WorldbookMode.ON_DEMAND)
+    )
+    index = await call(reg, ctx, "worldinfo_list")
+    assert "…" in index.content
+
+
+async def test_summarize_rejects_bad_source(reg, ctx) -> None:
+    result = await call(reg, ctx, "summarize", source="乱写")
+    assert result.is_error
+
+
+# -- ask_question -----------------------------------------------------------
+
+
+async def test_ask_question_awaits_user(reg, ctx) -> None:
+    asked: list[tuple[str, list[str]]] = []
+
+    async def ask(question: str, options: list[str]) -> str:
+        asked.append((question, options))
+        return options[1]
+
+    ctx.ask_user = ask
+    result = await call(reg, ctx, "ask_question", question="她怎么反应？", options=["否认", "沉默"])
+
+    assert asked == [("她怎么反应？", ["否认", "沉默"])]
+    assert "沉默" in result.content
+
+
+# -- 工具面 -----------------------------------------------------------------
+
+
+async def test_history_never_leaks_prose(reg, ctx) -> None:
+    """D54 的基础：director 从不读 run 的正文。它能覆盖五倍历史跨度正是因为这一点，
+    这条一破，整个隔离设计作废。
+
+    行为检查而非字符串检查：history 的两个工具都必须只吐细纲。
+    """
+    node = Node(outline="细纲：她推开门。", prose="正文：门轴发出一声长长的呻吟，她站在门口。")
+    ctx.repo.save_node(node)
+    ctx.parent_id = node.id
+
+    index = await call(reg, ctx, "history_search")
+    body = await call(reg, ctx, "history_read", run_ids=[node.id])
+
+    for result in (index, body):
+        assert "门轴" not in result.content
+        assert "门轴" not in str(result.payload)
+
+    assert "细纲" in body.content
+    assert "text.quote" not in reg.names
+
+
+async def test_specs_are_valid_json_schema(reg) -> None:
+    for spec in reg.specs():
+        assert spec.parameters["type"] == "object"
+        assert spec.to_wire()["type"] == "function"
+
+
+def test_state_write_says_what_to_record() -> None:
+    """判据必须在**工具描述**里，不能只在系统提示词里——模型是照着工具描述填参数的。
+
+    **state 是 history 的捷径，不是第二份记录**（D99）。这一句定位撑起了整个判据：
+    它是**双条件**的，两条各排掉一类实测出现过的错记——
+
+    - 「照片朝向」过不了"约束后面能写什么"；
+    - 「本轮剧情摘要」过不了"值得随时看见"（前情里就是它）。
+
+    单说"这是状态不是事件"两类都拦不住：物件朝向确实是状态。
+    （第三类误解「把设定抄进 state」不靠描述解决，靠 worldbook 种子移除诱因，D90。）
+    """
+    desc = next(t.description for t in build_tools(ALL_ON) if t.name == "state_write")
+
+    # 定位：捷径而非记录。删键不丢信息这条推论也要在，否则模型不敢删。
+    assert "不是第二份记录" in desc
+    assert "删了不算丢东西" in desc
+
+    # 门槛
+    assert "不该为它去翻前情" in desc
+
+    # **两类，忘了的后果不同。** 只有约束类时判据是"会不会出逻辑错误"，
+    # 而契诃夫之枪过不了这一关：忘了它不产生任何矛盾，只会烂尾（D109）。
+    assert "约束类" in desc
+    assert "悬置类" in desc
+    assert "最容易漏的一类" in desc
+    # 判据要够窄，否则布景会被当成伏笔全记进来
+    assert "有人特意让它出现，而它还没有下文" in desc
+    assert "没人在意的东西不是伏笔，是布景" in desc
+    # 悬置项兑现即删，否则欠账清单只增不减
+    assert "兑现了" in desc
+
+    # **存续时长不是判据**：冷却只剩两回合，活不过几轮却必须记（D95 的修正，
+    # 由数据化世界暴露）。这条否定必须在描述里，否则"只在这一两轮有意义的不记"
+    # 这类经验会把资源与冷却一起误杀。
+    assert "存在时间长短不是判据" in desc
+    assert "冷却" in desc
+
+    # 鼓励结构化——不设 schema，但要说清形状（D99）
+    assert "能用数字就别用句子" in desc
+    assert "同类的事用同一套键名" in desc
+    assert "一个键只装一件事" in desc
+    assert "值的形状保持不变" in desc
+    assert "不要记「未明」" in desc
+    # state 只增不减会把重要的几条淹掉
+    assert "该删就删" in desc
+
+    # 实测的真 bug：场景跳到夜里，模型新造了 `林昭.位置` 而没动已有的 `时间`，
+    # 于是 state 里同时是"下午，快收摊"和"当天夜里"——**自相矛盾且不会报错**。
+    # 两个症状同源：旧值没跟着改 + 新建了近义键。
+    assert "过期的值比没有值更糟" in desc
+    assert "先看上面有没有已经在说同一件事的键" in desc
+
+    # 写入冗余在两个世界都是最高的一类（各 40%），证据完全一致：模型把
+    # **这一秒的画面**当状态记（"侧扑已至近前，即将落身"、"她刚把照片推过去"）。
+    # 判据里早就点名禁过这类，说明光加禁令没用——换成一个可执行的自检。
+    assert "下一轮开始时，这条还成立吗" in desc
+    assert "画面归正文" in desc
+
+    # 实测：御剑斩冷却从「三回合」直接跳到「一回合」——中间那轮写进了一个裸键
+    # `冷却`，`沈砚.冷却` 没被递减，下一轮再对账就跳了两格。
+    # **倒计时不会自己走，而漏一轮不报错**，只在几轮后变成一个对不上的数。
+    assert "带倒计时的值每一轮都要重算" in desc
+
+
+def test_worldinfo_seeds_become_the_replay_base(tmp_path: Path) -> None:
+    """设定条目是混的：静态部分留在 worldinfo，会变的部分作为**种子**迁移进 state。
+
+    这样模型不必把设定抄进 state——那种副本会在设定被改动后与之分叉。
+    诱因消失了，比在提示词里禁止可靠。
+    """
+    repo = Store(tmp_path).create_session(Session())
+    repo.save_worldbook_entry(
+        WorldbookEntry(
+            name="林昭",
+            content="记者，做事谨慎。",  # 静态，留在 worldinfo
+            seeds={"林昭.在场": False, "林昭.知情": ["匿名信里的照片"]},
+        )
+    )
+
+    # 种子是一切分支共同的起点，空路径也能读到。
+    assert repo.state_at(None).values["林昭.在场"] is False
+
+    node = Node(state_delta=StateDelta(set={"林昭.在场": True}))
+    repo.save_node(node)
+    after = repo.state_at(node.id).values
+    assert after["林昭.在场"] is True
+    assert after["林昭.知情"] == ["匿名信里的照片"]  # 未提及的种子保持原状
+
+
+def test_tool_names_match_the_api_pattern() -> None:
+    """OpenAI 兼容端点要求工具名匹配 `^[a-zA-Z0-9_-]+$`。
+
+    **点号会被 400 拒掉。** 最初用的是 `state.query` 这类命名，第一次真实调用
+    就撞上了——而且是整个请求被拒，不是某个工具不可用。
+    """
+    pattern = re.compile(r"^[a-zA-Z0-9_-]+$")
+    every = build_tools(ALL_ON, [WorldbookEntry(name="x", mode=WorldbookMode.ON_DEMAND)])
+    for tool_ in every:
+        assert pattern.match(tool_.name), tool_.name
+
+
+# -- 能力开关：关闭即**不注册** -----------------------------------------------
+
+
+def names_for(caps: Capabilities, worldinfo: list[WorldbookEntry] | None = None) -> set[str]:
+    return set(ToolRegistry.for_session(caps, worldinfo).names)
+
+
+def test_submit_outline_always_exists() -> None:
+    """它是 loop 的唯一终止点（D53），不可关闭。"""
+    assert "submit_outline" in names_for(
+        Capabilities(state=False, ask_question=False, history_search=False)
+    )
+
+
+def test_each_switch_removes_its_tools() -> None:
+    """**不注册**比「注册了但拒绝」强：模型看不到，不会浪费尝试，也不占 prompt 体量。"""
+    assert names_for(Capabilities(state=True)) >= {"state_query", "state_write"}
+    assert names_for(Capabilities(state=False)).isdisjoint({"state_query", "state_write"})
+
+    assert names_for(Capabilities(history_search=True)) >= {"history_search", "history_read"}
+    assert names_for(Capabilities(history_search=False)).isdisjoint(
+        {"history_search", "history_read"}
+    )
+
+    assert "summarize" in names_for(Capabilities(summarize=SummarizeMode.AUTO))
+    assert "summarize" not in names_for(Capabilities(summarize=SummarizeMode.MANUAL))
+
+    assert "ask_question" in names_for(Capabilities(ask_question=True))
+    assert "ask_question" not in names_for(Capabilities(ask_question=False))
+
+
+def test_worldinfo_tools_only_when_something_is_expandable() -> None:
+    """全部条目都常驻注入时不注册——没有东西可展开，留着只是白占 prompt 体量。"""
+    always = [WorldbookEntry(name="甲", mode=WorldbookMode.ALWAYS)]
+    mixed = [*always, WorldbookEntry(name="乙", mode=WorldbookMode.ON_DEMAND)]
+
+    assert names_for(Capabilities(), []).isdisjoint({"worldinfo_list", "worldinfo_read"})
+    assert names_for(Capabilities(), always).isdisjoint({"worldinfo_list", "worldinfo_read"})
+    assert names_for(Capabilities(), mixed) >= {"worldinfo_list", "worldinfo_read"}
+
+
+async def test_state_off_drops_the_e0_contract(tmp_path: Path) -> None:
+    """state 关闭时没有 state_write 可调，就不能再要求先提交增量。"""
+    repo = Store(tmp_path).create_session(Session(capabilities=Capabilities(state=False)))
+    ctx = RunContext("run_x", repo, repo.load_session(), fake_gateway())
+    registry = ToolRegistry.for_session(ctx.capabilities)
+
+    result = await call(registry, ctx, "submit_outline", outline="她推开门。")
+    assert not result.is_error
+    assert ctx.outline == "她推开门。"
+
+
+def test_submit_description_mentions_contract_only_when_relevant() -> None:
+    with_state = ToolRegistry.for_session(Capabilities(state=True))
+    without = ToolRegistry.for_session(Capabilities(state=False))
+
+    def describe(reg: ToolRegistry) -> str:
+        return next(s.description for s in reg.specs() if s.name == "submit_outline")
+
+    assert "state_write" in describe(with_state)
+    assert "state_write" not in describe(without)
+
+
+def test_base_state_uses_parent_path(tmp_path: Path) -> None:
+    """状态是路径的函数（D48）：run 的基线来自它挂载的父节点，不是全局。"""
+    repo = Store(tmp_path).create_session(Session())
+    root = Node(state_delta=StateDelta(set={"地点": "门口"}))
+    left = Node(parent_id=root.id, state_delta=StateDelta(set={"地点": "客厅"}))
+    repo.save_node(root)
+    repo.save_node(left)
+
+    on_root = RunContext("r", repo, repo.load_session(), fake_gateway(), parent_id=root.id)
+    on_left = RunContext("r", repo, repo.load_session(), fake_gateway(), parent_id=left.id)
+
+    assert on_root.base_state().values["地点"] == "门口"
+    assert on_left.base_state().values["地点"] == "客厅"

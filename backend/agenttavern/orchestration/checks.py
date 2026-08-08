@@ -1,0 +1,148 @@
+"""eval 采样标记。
+
+**这里不做结构性检查。** 曾设想比对"时间单调""说话者 ⊆ 在场""地点可达"，
+实现时发现当前数据模型都支撑不了：``time.absolute`` 是自然语言无法机械比较、
+从正文抽说话者是语义工作（D30）、``location`` 只是字符串没有拓扑。而
+"知情者是否在场"这类比对看似成立，实则也不可靠——信息可以通过转述、书信、
+监听获得，不在场并不蕴含不知情。
+
+**硬做只会得到假警报，而假警报比不检查更糟——它会让人不再信任系统。**
+
+因此本模块只产出**采样标记**：正则不是判断器，是采样器（D43）——把可疑样本挑出来
+定向送 human / AI eval，让覆盖率不必靠盲抽。标记从不影响运行时行为（D44：
+重生成成本高，决定权在用户）。
+
+这里的每一条都只看**形状**，不看内容：长度、比例、有没有提交。凡是需要判断
+"这条记得对不对""这个细节该不该记"的，都不在代码这一侧。
+"""
+
+from __future__ import annotations
+
+from ..models import ExpansionDensity, StateDelta
+
+_DENSITY_MIN_CHARS = {
+    ExpansionDensity.SPARSE: 80,
+    ExpansionDensity.NORMAL: 150,
+    ExpansionDensity.RICH: 300,
+}
+
+
+EXPANSION_MIN_RATIO = 1.6
+"""正文 / 细纲的长度比下限。低于此值说明 writer 没有在展开，只是在照抄。
+
+**这个数不是质量判据，是隔离是否生效的指标**（D93）：细纲写事实、正文写描写，
+两者体量本就该拉开。实测越界时是 1.0，分工修好后是 2.1–3.3。取 1.6 是留了余量的
+下限——它要抓的是"塌回 1.0"，不是给正常波动划线。
+"""
+
+
+STATE_VALUE_MAX_CHARS = 60
+"""单个状态值的长度上限。超过通常说明这个键装了不止一件事。
+
+state 的用处是**让模型在很多轮之后不写出矛盾**，因此每个键应当是一条可被违反的约束。
+一个塞进小传的值（"已故男子，照片中的另一人；名字由陈屿说出；与陈屿相识；……"）
+既不好改也不好读，等于把细纲复述了一遍。**这不判断内容对错，只报告形状。**
+"""
+
+
+def _bloated_keys(values: dict[str, object]) -> list[str]:
+    """挑出形状可疑的键：值过长，或值里串了多件事。"""
+    suspect = []
+    for key, value in values.items():
+        if not isinstance(value, str):
+            continue
+        if len(value) > STATE_VALUE_MAX_CHARS or value.count("；") >= 2:
+            suspect.append(key)
+    return suspect
+
+
+def _shadowed_keys(before: dict[str, object], written: dict[str, object]) -> list[str]:
+    """挑出与已有键**只差一个前缀**的新键。
+
+    实测：``沈砚.冷却`` 已存在，模型另起了一个裸键 ``冷却``——那一轮 state 里
+    两个冷却键并存且值不同。它下一轮自己发现并删掉了，但中间那一轮是脏的，
+    而**没有任何检查报得出来**：值的形状没变、没有超长、也不算漏记。
+
+    只报"一个裸键 vs 一个带前缀的同名键"这一种。``林昭.知情`` 与 ``陈屿.知情``
+    共享词尾却都是对的——**两边都带前缀就不是歧义**，那是正常的分组。
+    """
+    keys = set(before) | set(written)
+    suspect = []
+    for key in written:
+        tail = key.rpartition(".")[2]
+        bare = "." not in key
+        for other in keys:
+            if other == key or other.rpartition(".")[2] != tail:
+                continue
+            if bare != ("." not in other):
+                suspect.append(f"{key} / {other}")
+                break
+    return suspect
+
+
+def _kind(value: object) -> str:
+    if isinstance(value, bool):
+        return "真假"
+    if isinstance(value, int | float):
+        return "数字"
+    if isinstance(value, list):
+        return "清单"
+    if isinstance(value, dict):
+        return "字典"
+    return "文字"
+
+
+def _reshaped_keys(before: dict[str, object], after: dict[str, object]) -> list[str]:
+    """挑出被写成另一种形状的键。
+
+    实测：种子给的是 `"沈砚.灵石": 3` 和 `["青锋剑", "止血符 ×2", …]`，模型写回
+    `"1"` 和 `"青锋剑、止血符 ×4、…"`——数字变文字、清单被拍平成一句话。
+    清单一旦拍平就再也没法单独增删其中一项，**且不可逆**。
+
+    只比对类型，不比对内容。形状变化有时是合理的（`受伤: false` → `受伤: "左肩"`），
+    所以这是采样标记而非约束。
+    """
+    return [
+        key
+        for key, value in after.items()
+        if key in before and value is not None and _kind(before[key]) != _kind(value)
+    ]
+
+
+def sampling_flags(
+    *,
+    delta: StateDelta,
+    prose: str,
+    density: ExpansionDensity,
+    deviation: str | None,
+    outline: str = "",
+    state_before: dict[str, object] | None = None,
+) -> list[str]:
+    """返回可疑之处。空列表表示这一 run 没有值得优先送审的特征。"""
+    flags: list[str] = []
+
+    if bloated := _bloated_keys(delta.set):
+        flags.append(f"状态值偏长或串了多件事，可能该拆成几个键：{'、'.join(bloated)}")
+
+    if state_before and (reshaped := _reshaped_keys(state_before, delta.set)):
+        flags.append(f"状态值被写成了另一种形状（数字/清单/文字）：{'、'.join(reshaped)}")
+
+    if shadowed := _shadowed_keys(state_before or {}, delta.set):
+        flags.append(f"新键与已有键只差一个前缀，可能是同一件事的两个写法：{'、'.join(shadowed)}")
+
+    if outline and prose and len(prose) < len(outline) * EXPANSION_MIN_RATIO:
+        flags.append(
+            f"正文只比细纲长 {len(prose) / len(outline):.1f} 倍，"
+            "writer 可能在照抄而非展开（细纲越界写了描写？）"
+        )
+
+    if delta.is_empty() and len(prose) > _DENSITY_MIN_CHARS[density] * 2:
+        flags.append("正文不短却没有任何状态变化，可能有遗漏的记录")
+
+    if prose and len(prose) < _DENSITY_MIN_CHARS[density] // 2:
+        flags.append(f"正文明显短于当前展开密度（{density.value}）的预期")
+
+    if deviation:
+        flags.append(f"writer 报告了偏离：{deviation}")
+
+    return flags
