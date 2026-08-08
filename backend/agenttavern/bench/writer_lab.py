@@ -88,6 +88,27 @@ def load_takes(
     return session.meta, session.control, takes[:limit] if limit else takes
 
 
+TERSE_CRAFT = """用网文的笔法写，像讲给人听，别端着。
+台词由你写，细纲只给了意思；话里的信息不能改。"""
+"""**收束版**：把「台词 / 落笔 / 避开定式」三节（约 1400 字细则）换成两句话。
+
+问的是一个很实在的问题：**那 1400 字在挣它占的位置吗。** 细则越多，
+提示词越贵、越难改、越容易内部打架（`_CRAFT` 压过 `prose_style` 就是一例）。
+如果两句话能到同样的水平，那些细则就该删。
+
+保留的两点是**不能靠"文风"二字推出来的契约**：台词归 writer（D97），
+信息不能改（D57 的前提）。其余全是手艺建议，而手艺建议正是模型自己有的。
+"""
+
+
+def _terse_prompt(meta: SessionMeta, control: ControlDimensions) -> str:
+    """把三节细则整段换掉，其余原样。"""
+    full = writer_system_prompt(meta, control)
+    start = full.index("## 台词")
+    end = full.index("## 文风")
+    return full[:start] + f"## 落笔\n{TERSE_CRAFT}\n\n" + full[end:]
+
+
 async def render_once(
     gateway: LLMGateway,
     meta: SessionMeta,
@@ -95,8 +116,10 @@ async def render_once(
     take: Take,
     *,
     thinking: bool | None = None,
+    terse: bool = False,
 ) -> Rendering:
-    messages = [Message(role=Role.SYSTEM, content=writer_system_prompt(meta, control))]
+    system = _terse_prompt(meta, control) if terse else writer_system_prompt(meta, control)
+    messages = [Message(role=Role.SYSTEM, content=system)]
     if take.upstream:
         messages.append(Message(role=Role.USER, content=f"## 上文\n{take.upstream}"))
     messages.append(Message(role=Role.USER, content=f"## 本轮细纲\n{take.outline}"))
@@ -121,6 +144,7 @@ async def run_lab(
     repeat: int = 1,
     limit: int | None = None,
     thinking: bool | None = None,
+    terse: bool = False,
 ) -> LabResult:
     meta, control, takes = load_takes(settings, session_id, limit)
     result = LabResult(session_id=session_id, takes=takes)
@@ -128,7 +152,9 @@ async def run_lab(
     async with LLMGateway(settings) as gateway:
         for take in takes:
             for attempt in range(repeat):
-                rendering = await render_once(gateway, meta, control, take, thinking=thinking)
+                rendering = await render_once(
+                    gateway, meta, control, take, thinking=thinking, terse=terse
+                )
                 rendering.attempt = attempt + 1
                 result.renderings.append(rendering)
                 print(f"  第{take.index}轮 第{attempt + 1}次：{len(rendering.prose)} 字")
@@ -145,6 +171,11 @@ def main() -> int:
         choices=["on", "off"],
         help="显式开关思考模式。不传则用服务端默认（DeepSeek 上是开启）",
     )
+    p.add_argument(
+        "--terse",
+        action="store_true",
+        help="收束版提示词：把台词/落笔/避开定式三节换成两句话",
+    )
     p.add_argument("--out", help="把产出写到这个文件")
     args = p.parse_args()
 
@@ -156,7 +187,14 @@ def main() -> int:
     thinking = None if args.thinking is None else args.thinking == "on"
     print(f"细纲取自 {args.session}　模型 {settings.llm_model}　thinking={args.thinking or '默认'}")
     result = asyncio.run(
-        run_lab(settings, args.session, repeat=args.repeat, limit=args.limit, thinking=thinking)
+        run_lab(
+            settings,
+            args.session,
+            repeat=args.repeat,
+            limit=args.limit,
+            thinking=thinking,
+            terse=args.terse,
+        )
     )
 
     lines: list[str] = []
