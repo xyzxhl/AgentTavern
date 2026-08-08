@@ -395,10 +395,10 @@ def test_user_actions_are_attempts_not_accomplished_facts() -> None:
     """
     d = prompt_for()
 
-    assert "用户写出的是他做了什么，不是这件事成没成" in d
+    assert "用户写出的是他的角色做了什么，不是这件事成没成" in d
     assert "结果由世界决定" in d
     # 只说"可以失败"不够——不写出失败的过程，就退化成了偷偷换动作
-    assert "写清他确实试了、以及为什么没成" in d
+    assert "写清用户的角色试过了，以及为什么没成" in d
 
 
 def test_dialogue_wording_belongs_to_writer_meaning_belongs_to_director() -> None:
@@ -435,7 +435,7 @@ def test_anti_formula_lives_on_the_writer_side_only() -> None:
     assert "同一个写法" not in d
 
     # director 侧保留停止判据：它要回答"推进到哪里就收"，那是写什么的问题。
-    assert "细纲停在最后一件真的发生的事上" in d
+    assert "细纲停在最后一件已经发生的事上" in d
 
 
 def test_waiting_is_a_stop_condition_not_a_beat_to_write() -> None:
@@ -447,7 +447,7 @@ def test_waiting_is_a_stop_condition_not_a_beat_to_write() -> None:
     """
     d = prompt_for(control=ControlDimensions(allow_speaking_for_user=False))
 
-    assert "细纲停在最后一件真的发生的事上" in d
+    assert "细纲停在最后一件已经发生的事上" in d
     # 停止条件说「推进到需要用户回应为止」，**不描述那个局面长什么样**——
     # 一旦描述，它就从判据退化成内容模板（D124：列举里排第一的会变成默认选项）。
     assert "直到制造出需要用户回应的局面" in d
