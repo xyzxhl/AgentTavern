@@ -407,4 +407,143 @@ PULP = Scenario(
 )
 
 
-SCENARIOS = {s.name: s for s in (NOIR, DATA, LONG, CHAPTERS, PULP)}
+# -- 古风：称呼、自称与不能出现的现代词 -------------------------------------------
+
+# 挑这个题材是因为它压的是**别的场景压不到的东西**：
+# 一是**称呼与自称**（奴婢/妾身/本宫/你我），用户给的对白设计里专门点了这条——
+#   称呼的变化比一句解释更能说明关系；
+# 二是**时代词汇的边界**，现代词一冒出来就出戏，而这是 program grader 查不了、
+#   统计指标也看不见的东西，只能人读。
+
+
+def _gufeng_session() -> Session:
+    return Session(
+        meta=SessionMeta(
+            title="回归·古风",
+            genre_tone="架空古代，宫廷。含蓄，话里有话，礼数是武器。",
+            pov="第三人称，跟随沈玉茹",
+            prose_style="文白相间，但不掉书袋。对白讲究称呼与自称，"
+            "身份差一级说话方式就不同。心思多写，话少说。",
+            character_voices={
+                "沈玉茹": "话不说满，越紧张越客气",
+                "崔嬷嬷": "句句合规矩，规矩就是她的刀",
+            },
+            forbidden=[
+                "不要出现任何现代词汇（比如「情绪」「压力」「沟通」「状态」）",
+                "不要让崔嬷嬷把话挑明",
+            ],
+        ),
+        control=ControlDimensions(),
+        capabilities=Capabilities(trace=True),
+    )
+
+
+GUFENG_WORLDBOOK = [
+    WorldbookEntry(
+        name="沈玉茹",
+        mode=WorldbookMode.ALWAYS,
+        content="十七岁，新入宫的选侍，父亲是外放的六品小官。识字，会画，不谙宫里的规矩。",
+        seeds={
+            "沈玉茹.在场": True,
+            "沈玉茹.位分": "选侍",
+            "沈玉茹.知情": ["昨夜有人往她窗下放了一支断簪"],
+        },
+    ),
+    WorldbookEntry(
+        name="崔嬷嬷",
+        mode=WorldbookMode.ALWAYS,
+        content="掌事嬷嬷，在宫里三十二年。管教新人，也替上头递话。从不说重话，也从不放过错处。",
+        seeds={"崔嬷嬷.在场": True, "崔嬷嬷.知情": ["断簪是谁放的"]},
+    ),
+    WorldbookEntry(
+        name="拾翠殿",
+        mode=WorldbookMode.ON_DEMAND,
+        content="偏殿，住着四位新入宫的选侍。院里一口井，一棵老石榴。"
+        "晨昏各一次点卯，迟到要记。宫规：选侍不得私出宫门，不得与外臣通信。",
+        seeds={"地点": "拾翠殿", "时间": "清晨，点卯前"},
+    ),
+]
+
+
+GUFENG = Scenario(
+    name="gufeng",
+    make_session=_gufeng_session,
+    worldbook=GUFENG_WORLDBOOK,
+    inputs=[
+        "我把那支断簪收进袖子，推门出去。",
+        "崔嬷嬷已经站在院里了。我上前行礼。",
+        "「嬷嬷，昨夜我窗下落了样东西。」我把断簪双手递过去。",
+        "她没有接。",
+        "我把手收回来，簪子还在掌心里。",
+    ],
+    note="压称呼、自称、时代词汇边界。这三样统计看不见，只能读。",
+)
+
+
+# -- 西幻：专名密度与「翻译腔」 ----------------------------------------------------
+
+# 西幻是**翻译腔最容易冒出来的地方**：人名地名是音译，句式容易跟着英文走
+# （「他有着一双……」「这是一个……的男人」），而这正是用户点的
+# 「地道的中文本土化表达」要对治的东西。
+# 同时它压**专名一致性**：一轮里蹦出五个生造名词，读者记不住，state 也会炸。
+
+
+def _xihuan_session() -> Session:
+    return Session(
+        meta=SessionMeta(
+            title="回归·西幻",
+            genre_tone="低魔西幻，边境小镇。冷硬，务实，魔法昂贵且有代价。",
+            pov="第三人称，跟随卡伦",
+            prose_style="干净利落的中文，不要翻译腔。少用长定语，"
+            "不写「有着一双……的眼睛」这类句式。专名少而稳，别一段冒一个新词。",
+            character_voices={"教士艾德蒙": "引经据典，但话里全是价钱"},
+            forbidden=["不要解释魔法体系的原理", "不要让艾德蒙直接开价"],
+        ),
+        control=ControlDimensions(),
+        capabilities=Capabilities(trace=True),
+    )
+
+
+XIHUAN_WORLDBOOK = [
+    WorldbookEntry(
+        name="卡伦",
+        mode=WorldbookMode.ALWAYS,
+        content="三十岁，退役边境兵，如今替人跑腿收账。左手缺两指。不信神，但会照规矩画十字。",
+        seeds={
+            "卡伦.在场": True,
+            "卡伦.身上钱": "十一枚银币",
+            "卡伦.知情": ["雇主要他在日落前拿回一只封蜡的木匣"],
+        },
+    ),
+    WorldbookEntry(
+        name="教士艾德蒙",
+        mode=WorldbookMode.ALWAYS,
+        content="镇上唯一的教士，也是唯一能验魔物的人。收费从不明说，只说「随心奉献」。",
+        seeds={"艾德蒙.在场": True, "艾德蒙.知情": ["木匣里是什么"]},
+    ),
+    WorldbookEntry(
+        name="灰岩镇",
+        mode=WorldbookMode.ON_DEMAND,
+        content="边境上的矿镇，三百来口人。一条主街，一座石头教堂，一家挂着铁锚招牌的酒馆。"
+        "镇上规矩：日落后关门，谁也不给开。验一次魔物的行价是三枚银币。",
+        seeds={"地点": "灰岩镇教堂", "时间": "午后，离日落还有三个时辰"},
+    ),
+]
+
+
+XIHUAN = Scenario(
+    name="xihuan",
+    make_session=_xihuan_session,
+    worldbook=XIHUAN_WORLDBOOK,
+    inputs=[
+        "我推开教堂的门，把木匣放在长凳上。",
+        "「验一下。」",
+        "艾德蒙没有动手。",
+        "我把三枚银币摞在木匣旁边。",
+        "他终于伸手，把木匣转了个方向。",
+    ],
+    note="压翻译腔与专名密度。低魔设定下钱是硬约束，同时可查资源结算。",
+)
+
+
+SCENARIOS = {s.name: s for s in (NOIR, DATA, LONG, CHAPTERS, PULP, GUFENG, XIHUAN)}
