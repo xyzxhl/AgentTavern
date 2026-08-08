@@ -220,7 +220,7 @@ def test_writer_never_sees_state_or_history(tmp_path: Path) -> None:
     # 混成了一条，后半句会压过 session 自己的 `prose_style`（`pulp` 明写
     # 「心理活动直接写出来」，产出里却一个念头都没有）。**钉措辞会让提示词改不动。**
     assert "## 落笔" in prompt
-    assert "少给情绪贴标签" in prompt
+    assert "视角人物每一段都该在想事情" in prompt
     assert "剧情锚点" not in prompt
     assert "实质变化" not in prompt
 
