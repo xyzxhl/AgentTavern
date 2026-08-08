@@ -265,15 +265,6 @@ def test_no_speaking_still_means_advancing() -> None:
     assert "允许替用户的角色说话" in allowed
 
 
-def test_pacing_forbids_filler() -> None:
-    """篇幅按场景性质走，且明确列出不许拿来凑字数的东西。
-
-    这条讲给 **writer**——凑字数是正文才有的病，director 那侧根本没有篇幅概念。
-    """
-    prompt = writer_system_prompt(make_meta(), ControlDimensions())
-    assert "天气描写、家具陈列、路程经过" in prompt
-
-
 def test_state_pack_inlines_small_values_and_defers_large_ones() -> None:
     """与 history / worldinfo 同一模式（D63 全量索引 + 按需展开）：
     键名全给，体量小的值内联，大的只给体量，由模型按需 state_query 展开。
@@ -416,8 +407,8 @@ def test_dialogue_wording_belongs_to_writer_meaning_belongs_to_director() -> Non
     细纲写"说了什么意思"，正文写"这句话怎么出口"。此前细纲直接写定台词，
     writer 只能照抄——`character_voices` 因此完全是死的：语言习惯没有落点。
 
-    唯一的例外是用户已经写出的原话（剧情锚点），它靠**引号**标记：
-    细纲里除此之外不出现引号，两侧据同一个约定识别。
+    引号约定原先两侧都写着，后来判定为不必要的约束，已删。
+    这里断言的是**职责划分**本身，不是任何一条具体措辞。
     """
     d = prompt_for()
     w = writer_system_prompt(make_meta(), ControlDimensions())
@@ -429,37 +420,22 @@ def test_dialogue_wording_belongs_to_writer_meaning_belongs_to_director() -> Non
     assert "必须写死" in d
     assert "话里的信息不能变" in w
 
-    # 引号约定必须两侧一致，否则 writer 认不出哪些词不能动
-    assert "唯一该出现引号的地方" in d
-    assert "带引号的句子是用户写的原话" in w
 
+def test_anti_formula_lives_on_the_writer_side_only() -> None:
+    """避开定式是**怎么写**的问题，只该在 writer 一侧。
 
-def test_anti_formula_rules_pair_a_ban_with_a_replacement() -> None:
-    """禁止一个收尾方式时必须同时给出**停在哪里**，否则模型没有别的落点。
-
-    实测过一版只说"不要补静止收尾镜头"的表述，两次都没生效。
+    原先这条还断言 writer 里有"停在最后一件真的发生的事上"与"某人在等"两条禁令，
+    它们已按判定删除——那是 director 的停止判据，writer 不需要重复一遍。
     """
     w = writer_system_prompt(make_meta(), ControlDimensions())
     d = prompt_for(control=ControlDimensions(allow_speaking_for_user=False))
 
-    for prompt in (w, d):
-        assert "停在最后一件真的发生的事" in prompt  # 替代
-        assert "不要用「某人在等」收尾" in prompt or "不要用它收尾" in prompt  # 禁止
+    assert "同一个写法，一篇里不用第二次" in w
+    assert "结尾必须落在角色一个可见的动作上" in w
+    assert "同一个写法" not in d
 
-    assert "结尾不做总结、不点题、不升华" in w
-    # 这些是**怎么写**的问题，只该在 writer 一侧
-    assert "不要每段都从环境起笔" not in d
-
-
-def test_writer_may_drop_the_handoff_beat_without_it_counting_as_deviation() -> None:
-    """「某人在等」不是事实，因此跳过它不违反"不要增删实质内容"。
-
-    不说这句，writer 会把它当成细纲给的事实照写——**它照写才是对的**，
-    所以必须明确把它划到事实之外。
-    """
-    w = writer_system_prompt(make_meta(), ControlDimensions())
-    assert "跳过它" in w
-    assert "漏掉它不算偏离" in w
+    # director 侧保留停止判据：它要回答"推进到哪里就收"，那是写什么的问题。
+    assert "细纲停在最后一件真的发生的事上" in d
 
 
 def test_waiting_is_a_stop_condition_not_a_beat_to_write() -> None:
@@ -472,8 +448,14 @@ def test_waiting_is_a_stop_condition_not_a_beat_to_write() -> None:
     d = prompt_for(control=ControlDimensions(allow_speaking_for_user=False))
 
     assert "细纲停在最后一件真的发生的事上" in d
-    assert "是你停笔的判据，不是内容" in d
+    # 停止条件说「推进到需要用户回应为止」，**不描述那个局面长什么样**——
+    # 一旦描述，它就从判据退化成内容模板（D124：列举里排第一的会变成默认选项）。
+    assert "直到制造出需要用户回应的局面" in d
     assert "做出了等待回应的动作" not in d
+
+    # 「不要用"某人在等"收尾」那一段已删：它是在治症状，而根因是上面那条
+    # 停止条件曾经把局面描述了出来。判据留着，禁令不必留。
+    assert "谁在等、等着谁开口" not in d
 
 
 def test_speaking_rule_reaches_the_writer_too() -> None:
