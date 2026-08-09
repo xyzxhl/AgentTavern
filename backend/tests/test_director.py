@@ -5,8 +5,7 @@ from pathlib import Path
 import pytest
 from conftest import ScriptedLLM, text, tool, tools
 
-from agenttavern.agents import DirectorFailed, run_director
-from agenttavern.agents import prompts as prompts_module
+from agenttavern.agents import DirectorFailed, prompt_text, run_director
 from agenttavern.agents.prompt_text import text as _real_text
 from agenttavern.agents.prompts import (
     director_static_prefix,
@@ -439,7 +438,9 @@ def test_empty_optional_injects_no_section(monkeypatch) -> None:
     部署方的内容，随时会变（也确实变过）。**钉出厂内容的测试保护不了行为，
     只会在别人填内容时红。**
     """
-    monkeypatch.setattr(prompts_module, "optional", lambda side, key: "")
+    # 打 `prompt_text.optional`：装配器在同一个模块里按名字取它，
+    # 所以替换模块全局就够（D135 之后 `prompts.py` 已经不直接引用它了）。
+    monkeypatch.setattr(prompt_text, "optional", lambda side, key: "")
 
     meta = make_meta()
     for prompt in (writer_system_prompt(meta, ControlDimensions()), prompt_for(meta=meta)):
@@ -454,9 +455,7 @@ def test_nsfw_and_jailbreak_reach_both_agents(monkeypatch) -> None:
     是两次独立的模型调用——只解开一半等于没解开。
     """
     filled = {"nsfw": "情色指导占位", "jailbreak": "破限占位"}
-    # **必须打 prompts 模块里的那个名字**：它是 `from .prompt_text import optional`
-    # 导入的，持有自己的引用，打 prompt_text 上的原件不会生效。
-    monkeypatch.setattr(prompts_module, "optional", lambda side, key: filled.get(key, ""))
+    monkeypatch.setattr(prompt_text, "optional", lambda side, key: filled.get(key, ""))
 
     meta = make_meta()
     w = writer_system_prompt(meta, ControlDimensions())
@@ -529,3 +528,61 @@ def test_missing_optional_file_is_not_an_error(monkeypatch, tmp_path: Path) -> N
         assert prompt_text.optional("director", "nsfw") == ""
     finally:
         prompt_text._optional.cache_clear()
+
+
+# -- 可编排的装配器（D135） -----------------------------------------------------
+
+
+def test_sections_order_comes_from_yaml(monkeypatch) -> None:
+    """**顺序由 YAML 决定，不在代码里。** 移动条目就换了位置。"""
+    monkeypatch.setattr(
+        prompt_text,
+        "load",
+        lambda name: {
+            "sections": [
+                {"title": "乙", "text": "第二段"},
+                {"title": "甲", "text": "第一段"},
+            ]
+        },
+    )
+    out = prompt_text.assemble("writer", {})
+    assert out.index("乙") < out.index("甲")
+
+
+def test_a_new_section_needs_only_yaml(monkeypatch) -> None:
+    """新增一节**只写 YAML**，不动代码——这正是这个装配器存在的理由。"""
+    monkeypatch.setattr(
+        prompt_text,
+        "load",
+        lambda name: {"sections": [{"title": "新加的", "text": "随便写点什么"}]},
+    )
+    assert prompt_text.assemble("writer", {}) == "## 新加的\n随便写点什么"
+
+
+def test_empty_section_is_skipped_title_and_all(monkeypatch) -> None:
+    """正文为空的条目**整条跳过**，标题也不出现。
+
+    空标题白占体量，还会让模型以为这里本该有内容。
+    """
+    monkeypatch.setattr(
+        prompt_text,
+        "load",
+        lambda name: {
+            "sections": [
+                {"title": "有内容", "text": "在"},
+                {"title": "空的", "slot": "nothing"},
+            ]
+        },
+    )
+    assert prompt_text.assemble("writer", {"nothing": "  "}) == "## 有内容\n在"
+
+
+def test_unknown_slot_raises(monkeypatch) -> None:
+    """未知 slot **直接报错**，不静默跳过。
+
+    静默跳过会让一整节悄悄消失，而产出看起来只是“变差了一点”——
+    那是最难查的一类问题（同 D125：没生效的东西不会报错）。
+    """
+    monkeypatch.setattr(prompt_text, "load", lambda name: {"sections": [{"slot": "根本没有这个"}]})
+    with pytest.raises(KeyError):
+        prompt_text.assemble("writer", {})

@@ -83,3 +83,52 @@ def optional(side: str, key: str) -> str:
     """
     group = _optional().get(side) or {}
     return str(group.get(key) or "").strip()
+
+
+def assemble(name: str, slots: dict[str, str]) -> str:
+    """按 YAML 里 ``sections`` 的顺序装配一份提示词。
+
+    **顺序即列表顺序。** 想调位置就移动条目，想加一节就插一条，
+    都只改 YAML，不动代码。
+
+    每一条是四种之一：
+
+    - ``text``  —— 正文直接写在这一条里。**新增短提示词走这条**。
+    - ``key``   —— 引用本文件顶层的一个命名块。长文本留在原处更好编辑，
+      `sections` 只排顺序。
+    - ``slot``  —— 内容由代码算出来（state、世界设定、否定项、按控制维度选的那档……），
+      YAML 只决定它出现在哪、叫什么标题。
+    - ``option`` —— 来自 `optional.yaml`，缺了就是空。
+
+    ``title`` 可选：给了就渲染成 ``## 标题``，不给就直接拼正文。
+
+    **正文为空的条目整条跳过**，连标题都不出现——空标题白占体量，
+    还会让模型以为这里本该有内容。
+
+    未知的 ``slot`` 名直接报错：那说明 YAML 和代码脱节了，
+    静默跳过会让一整节悄悄消失，而产出看起来只是"变差了一点"（同 D125）。
+    """
+    out: list[str] = []
+    for index, item in enumerate(load(name).get("sections") or []):
+        if not isinstance(item, dict):
+            raise TypeError(f"{name}.yaml sections[{index}] 必须是映射")
+
+        if "text" in item:
+            body = str(item["text"] or "").strip()
+        elif "key" in item:
+            body = text(name, str(item["key"]))
+        elif "slot" in item:
+            slot = str(item["slot"])
+            if slot not in slots:
+                raise KeyError(f"{name}.yaml sections[{index}] 用了未知的 slot `{slot}`")
+            body = slots[slot].strip()
+        elif "option" in item:
+            body = optional(name, str(item["option"]))
+        else:
+            raise KeyError(f"{name}.yaml sections[{index}] 需要 text / key / slot / option 之一")
+
+        if not body:
+            continue
+        title = item.get("title")
+        out.append(f"## {title}\n{body}" if title else body)
+    return "\n\n".join(out)

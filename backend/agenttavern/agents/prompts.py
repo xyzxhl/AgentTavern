@@ -23,7 +23,7 @@ from ..models import (
     WorldbookMode,
     WorldState,
 )
-from .prompt_text import choice, optional, text
+from .prompt_text import assemble, choice, text
 
 
 def _section(title: str, body: str) -> str:
@@ -205,31 +205,19 @@ def director_static_prefix(
     if meta.goal:
         goal = f"本次创作的目标：{meta.goal.description}\n达成之前会持续推进。"
 
-    parts = [
-        "你是这个故事的 director。你决定**这一轮发生什么**，并把它写成一份细纲。\n\n"
-        "细纲交给下一个环节写成正文。那个环节负责描写、文笔、节奏，"
-        "但**不会替你补事实**，凡是细纲里没写的事件、对白、人物、物件，"
-        "就不会出现在成品里。\n\n"
-        "所以：事实写足，描写留白。\n\n"
-        "这是一段**持续的工作**：下面会一轮一轮地给你新的输入，"
-        "你之前查过什么、写过什么都还在，不必重新问一遍。",
-        _section("设定", setting),
-        _section("世界设定", render_worldinfo(worldinfo or [], expandable=caps.worldinfo_read)),
-        _section("产出什么", text("director", "facts_not_prose")),
-        _section("怎么处理用户输入", narration),
-        _section("推进", text("director", "advancement")),
-        _section("边界", text("director", "boundaries")),
-        # 情色指导两侧都给（同 D35 的理由）：director 决定这一轮发生什么，
-        # writer 决定怎么落笔。只给一侧，另一侧按自己的默认来，两边对不上。
-        _section("情色与身体", optional("director", "nsfw")),
-        _section("禁止事项", forbidden),
-        _section("目标", goal),
-        f"## 流程\n{_flow(caps, worldinfo)}",
-        # **破限放在最后**：位置是约定的一部分。
-        # 内容不预设——它取决于用哪个模型、哪个端点。
-        optional("director", "jailbreak"),
-    ]
-    return "\n\n".join(p for p in parts if p)
+    # **顺序不在这里，在 director.yaml 的 `sections` 里**（D135）。
+    # 这里只负责算出那些代码才知道的内容，YAML 决定它们出现在哪、叫什么标题。
+    return assemble(
+        "director",
+        {
+            "setting": setting,
+            "worldinfo": render_worldinfo(worldinfo or [], expandable=caps.worldinfo_read),
+            "narration": narration,
+            "forbidden": forbidden,
+            "goal": goal,
+            "flow": _flow(caps, worldinfo),
+        },
+    )
 
 
 def director_turn_prompt(
@@ -285,42 +273,15 @@ def writer_system_prompt(meta: SessionMeta, control: ControlDimensions) -> str:
     voices = "\n".join(f"- {name}：{how}" for name, how in meta.character_voices.items())
     forbidden = "\n".join(f"- {item}" for item in meta.forbidden)
 
-    parts = [
-        "你是这个故事的 writer。给你一份细纲，把它写成正文。\n\n"
-        "细纲**只写事实，不做描写**。它说“桌上摊着一只拆开的座钟”，"
-        "至于齿轮和发条怎么散在垫布上、黄铜在灯下什么成色，那是你的活。\n\n"
-        "**所以这不是润色，是展开。** 照着细纲的句子换几个词、断几个句，等于什么都没做。"
-        "细纲给的是骨架，血肉全部由你长出来。\n\n"
-        "**细纲怎么写的，与正文怎么写无关。** 它的用词、句子长短、标点习惯、"
-        "段落切法，都只是把事实交代清楚的临时手段，不是给你的范本。"
-        "细纲写得干巴、重复、或者一句话套一句话，那是它的形态，"
-        "正文该有的样子只由下面的文风决定。\n\n"
-        "规则：\n"
-        "- **不要增删实质内容。** 细纲里的事件、人物、物件、话里的信息都要落到正文里，"
-        "细纲里没有的事实不要发明。描写、感官、内心的落点由你自由决定。\n"
-        "- 接住上文的语气，保持连贯。",
-        # 顺序是有意的：先说**该往哪写**（语感 → 内心与动作 → 台词），
-        # 再说**别往哪写**（定式）。抽象的在前、具体的在后，
-        # 这样具体条款读起来是前面那句话的展开，而不是一串并列的禁令。
-        _section("语感", text("writer", "voice")),
-        _section("落笔", text("writer", "craft")),
-        _section("台词", text("writer", "dialogue")),
-        _section("避开定式", text("writer", "anti_formula")),
-        _section("文风", meta.prose_style),
-        # 情色指导紧跟文风：它是文风的一部分（手法），
-        # 而 `content_scale` 是判据（能到什么程度），归 director 那侧的「设定」。
-        _section("情色与身体", optional("writer", "nsfw")),
-        _section("角色语言习惯", voices),
-        _section("视角", meta.pov),
-        _section("边界", _writer_speaking_rule(control.allow_speaking_for_user)),
-        _section("禁止事项", forbidden),
-        _section("篇幅", text("writer", "pacing")),
-        _section("铺陈程度", choice("writer", "density", control.expansion_density.value)),
-        "## 输出格式\n"
-        "先输出成品正文。\n"
-        "若你**不得不**增删了实质内容，在正文之后追加一行 `---偏离---`，"
-        "然后用一句话说明增删了什么。没有偏离就不要加这一行。",
-        # 与 director 同一个约定：破限放在最后一段。
-        optional("writer", "jailbreak"),
-    ]
-    return "\n\n".join(p for p in parts if p)
+    # **顺序不在这里，在 writer.yaml 的 `sections` 里**（D135）。
+    return assemble(
+        "writer",
+        {
+            "prose_style": meta.prose_style,
+            "character_voices": voices,
+            "pov": meta.pov,
+            "speaking_rule": _writer_speaking_rule(control.allow_speaking_for_user),
+            "forbidden": forbidden,
+            "density": choice("writer", "density", control.expansion_density.value),
+        },
+    )
