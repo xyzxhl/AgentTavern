@@ -218,9 +218,16 @@ def director_static_prefix(
         _section("产出什么", text("director", "facts_not_prose")),
         _section("怎么处理用户输入", narration),
         _section("推进", text("director", "advancement")),
+        _section("边界", text("director", "boundaries")),
+        # 情色指导两侧都给（同 D35 的理由）：director 决定这一轮发生什么，
+        # writer 决定怎么落笔。只给一侧，另一侧按自己的默认来，两边对不上。
+        _section("情色与身体", meta.nsfw_guidance),
         _section("禁止事项", forbidden),
         _section("目标", goal),
         f"## 流程\n{_flow(caps, worldinfo)}",
+        # **破限放在最后**：位置是约定的一部分，越靠后权重越高。
+        # 内容由用户填，本项目不预设——它取决于用哪个模型、哪个端点。
+        meta.jailbreak,
     ]
     return "\n\n".join(p for p in parts if p)
 
@@ -300,6 +307,9 @@ def writer_system_prompt(meta: SessionMeta, control: ControlDimensions) -> str:
         _section("台词", text("writer", "dialogue")),
         _section("避开定式", text("writer", "anti_formula")),
         _section("文风", meta.prose_style),
+        # 情色指导紧跟文风：它是文风的一部分（手法），
+        # 而 `content_scale` 是判据（能到什么程度），归 director 那侧的「设定」。
+        _section("情色与身体", meta.nsfw_guidance),
         _section("角色语言习惯", voices),
         _section("视角", meta.pov),
         _section("边界", _writer_speaking_rule(control.allow_speaking_for_user)),
@@ -310,5 +320,7 @@ def writer_system_prompt(meta: SessionMeta, control: ControlDimensions) -> str:
         "先输出成品正文。\n"
         "若你**不得不**增删了实质内容，在正文之后追加一行 `---偏离---`，"
         "然后用一句话说明增删了什么。没有偏离就不要加这一行。",
+        # 与 director 同一个约定：破限放在最后一段。
+        meta.jailbreak,
     ]
     return "\n\n".join(p for p in parts if p)

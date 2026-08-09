@@ -507,3 +507,63 @@ async def test_the_nudge_still_asks_for_the_write_when_it_is_missing(tmp_path: P
 
     nudge = llm.messages_of(1)[-1]["content"]
     assert "state_write" in nudge
+
+
+# -- 情色指导与破限：默认空，空则整节不注入 -------------------------------------
+
+
+def test_nsfw_and_jailbreak_are_absent_by_default() -> None:
+    """两者**默认空，空则整节不注入**。
+
+    默认注入一段空标题会白占体量，还会让模型以为这里本该有内容。
+    """
+    meta = make_meta()
+    assert meta.nsfw_guidance == ""
+    assert meta.jailbreak == ""
+
+    for prompt in (
+        writer_system_prompt(meta, ControlDimensions()),
+        prompt_for(meta=meta),
+    ):
+        assert "## 情色与身体" not in prompt
+
+
+def test_nsfw_and_jailbreak_reach_both_agents() -> None:
+    """**两侧都要**（同 D35 的理由）。
+
+    director 决定这一轮发生什么，writer 决定怎么落笔；只给一侧，
+    另一侧会按自己的默认来，两边对不上。破限则是因为 director 与 writer
+    是两次独立的模型调用——只解开一半等于没解开。
+    """
+    meta = make_meta()
+    meta.nsfw_guidance = "情色指导占位"
+    meta.jailbreak = "破限占位"
+
+    w = writer_system_prompt(meta, ControlDimensions())
+    d = prompt_for(meta=meta)
+
+    assert "情色指导占位" in w
+    assert "情色指导占位" in d
+    assert "破限占位" in w
+    assert "破限占位" in d
+
+
+def test_jailbreak_sits_at_the_end_of_the_system_prompt() -> None:
+    """位置是约定的一部分：**系统提示词的最后一段**。
+
+    与 SillyTavern 的约定有一处不同，值得写下来：那边把破限放在**整个请求的
+    最后一条消息**（历史之后），取的是最高的近因权重。我们放在系统提示词末尾，
+    因为对话跨轮持续（D114），system 是缓存前缀——放这里它只付一次钱，
+    放最后一条消息则每轮都在变的那段里，虽然也不破坏缓存，但两个 agent
+    的装配方式就不一致了（writer 那侧最后一条是细纲）。
+
+    **哪个更有效没有实测过**，这里先取一致性。
+    """
+    meta = make_meta()
+    meta.jailbreak = "破限占位"
+
+    w = writer_system_prompt(meta, ControlDimensions())
+    d = director_static_prefix(meta, ControlDimensions(), capabilities=ALL_ON, worldinfo=[])
+
+    assert w.rstrip().endswith("破限占位")
+    assert d.rstrip().endswith("破限占位")
