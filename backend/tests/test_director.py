@@ -7,7 +7,6 @@ from conftest import ScriptedLLM, text, tool, tools
 
 from agenttavern.agents import DirectorFailed, run_director
 from agenttavern.agents import prompts as prompts_module
-from agenttavern.agents.prompt_text import optional as _optional
 from agenttavern.agents.prompt_text import text as _real_text
 from agenttavern.agents.prompts import (
     director_static_prefix,
@@ -223,7 +222,6 @@ def test_writer_never_sees_state_or_history(tmp_path: Path) -> None:
     # 混成了一条，后半句会压过 session 自己的 `prose_style`（`pulp` 明写
     # 「心理活动直接写出来」，产出里却一个念头都没有）。**钉措辞会让提示词改不动。**
     assert "## 落笔" in prompt
-    assert "视角人物每一段都该在想事情" in prompt
     assert "剧情锚点" not in prompt
     assert "实质变化" not in prompt
 
@@ -434,14 +432,14 @@ async def test_the_nudge_still_asks_for_the_write_when_it_is_missing(tmp_path: P
 # -- 情色指导与破限：YAML 槽位，默认空 -----------------------------------------
 
 
-def test_nsfw_and_jailbreak_default_to_empty() -> None:
-    """两者**默认空，空则整节不注入**。
+def test_empty_optional_injects_no_section(monkeypatch) -> None:
+    """**空则整节不注入**：连标题都不出现。
 
-    默认注入一个空标题会白占体量，还会让模型以为这里本该有内容。
+    断言的是**机制**，不是 `optional.yaml` 里当前恰好填了什么——那份文件是
+    部署方的内容，随时会变（也确实变过）。**钉出厂内容的测试保护不了行为，
+    只会在别人填内容时红。**
     """
-    for side in ("writer", "director"):
-        assert _optional(side, "nsfw") == ""
-        assert _optional(side, "jailbreak") == ""
+    monkeypatch.setattr(prompts_module, "optional", lambda side, key: "")
 
     meta = make_meta()
     for prompt in (writer_system_prompt(meta, ControlDimensions()), prompt_for(meta=meta)):
