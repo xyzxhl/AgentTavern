@@ -362,30 +362,6 @@ def test_density_reaches_both_sides_in_opposite_directions() -> None:
     assert "多推进几件事" in prompt_for(control=sparse)
 
 
-def test_description_belongs_to_writer_facts_belong_to_director() -> None:
-    """outline 与 prose 差异过小的根因：director 拿到了篇幅要求，只能靠描写去凑。
-
-    篇幅是**正文**的属性，只讲给 writer；director 那侧换成事件密度。
-    这条分工要在两边都说明——单侧声明拦不住越界（同 D35 的理由）。
-    """
-    d = prompt_for()
-    w = writer_system_prompt(make_meta(), ControlDimensions())
-
-    # 篇幅分级只在 writer 一侧
-    assert "篇幅跟着场景性质走" in w
-    assert "篇幅跟着场景性质走" not in d
-
-    # 同一组对照写在两边：事实归 director，描写归 writer
-    assert "只写事实，不做描写" in d
-    assert "只写事实，不做描写" in w
-    assert "座钟" in d and "座钟" in w
-
-    # director 被明确告知描写不归它管，且写了也白写
-    assert "只会照抄" in d
-    # writer 被明确告知这是展开而非润色
-    assert "不是润色，是展开" in w
-
-
 def test_user_actions_are_attempts_not_accomplished_facts() -> None:
     """**转述规则与世界规则会正面冲突**，必须明说谁让谁（D104）。
 
@@ -401,63 +377,6 @@ def test_user_actions_are_attempts_not_accomplished_facts() -> None:
     assert "结果由世界决定" in d
     # 只说"可以失败"不够——不写出失败的过程，就退化成了偷偷换动作
     assert "写清用户的角色试过了，以及为什么没成" in d
-
-
-def test_dialogue_wording_belongs_to_writer_meaning_belongs_to_director() -> None:
-    """**语言描写也是描写**（D97）。
-
-    细纲写"说了什么意思"，正文写"这句话怎么出口"。此前细纲直接写定台词，
-    writer 只能照抄——`character_voices` 因此完全是死的：语言习惯没有落点。
-
-    引号约定原先两侧都写着，后来判定为不必要的约束，已删。
-    这里断言的是**职责划分**本身，不是任何一条具体措辞。
-    """
-    d = prompt_for()
-    w = writer_system_prompt(make_meta(), ControlDimensions())
-
-    assert "对白写意思，不写原话" in d
-    assert "台词是你写的" in w
-
-    # 放开措辞不等于放开内容——具体的东西两侧都要钉死
-    assert "必须写死" in d
-    assert "话里的信息不能变" in w
-
-
-def test_anti_formula_lives_on_the_writer_side_only() -> None:
-    """避开定式是**怎么写**的问题，只该在 writer 一侧。
-
-    原先这条还断言 writer 里有"停在最后一件真的发生的事上"与"某人在等"两条禁令，
-    它们已按判定删除——那是 director 的停止判据，writer 不需要重复一遍。
-    """
-    w = writer_system_prompt(make_meta(), ControlDimensions())
-    d = prompt_for(control=ControlDimensions(allow_speaking_for_user=False))
-
-    assert "同一个写法，一篇里不用第二次" in w
-    assert "结尾必须落在角色一个可见的动作上" in w
-    assert "同一个写法" not in d
-
-    # director 侧保留停止判据：它要回答"推进到哪里就收"，那是写什么的问题。
-    assert "细纲停在最后一件已经发生的事上" in d
-
-
-def test_waiting_is_a_stop_condition_not_a_beat_to_write() -> None:
-    """结尾定式的**根在 director**，不在 writer（D98）。
-
-    抢话规则原先把停止条件列成"做出了等待回应的动作"，模型据此把「等」写进细纲，
-    writer 只是忠实渲染——四份样本 4/4 以同一画面收尾。只在 writer 侧说"别老这么收尾"
-    治不了：那是细纲给的事实，writer 照写才是对的。
-    """
-    d = prompt_for(control=ControlDimensions(allow_speaking_for_user=False))
-
-    assert "细纲停在最后一件已经发生的事上" in d
-    # 停止条件说「推进到需要用户回应为止」，**不描述那个局面长什么样**——
-    # 一旦描述，它就从判据退化成内容模板（D124：列举里排第一的会变成默认选项）。
-    assert "直到制造出需要用户回应的局面" in d
-    assert "做出了等待回应的动作" not in d
-
-    # 「不要用"某人在等"收尾」那一段已删：它是在治症状，而根因是上面那条
-    # 停止条件曾经把局面描述了出来。判据留着，禁令不必留。
-    assert "谁在等、等着谁开口" not in d
 
 
 def test_speaking_rule_reaches_the_writer_too() -> None:
@@ -556,3 +475,42 @@ def test_nsfw_and_jailbreak_reach_both_agents(monkeypatch) -> None:
         # 最后一条消息是细纲，放那儿两侧的装配方式就不一致了。
         # **哪个更有效没有实测过**，这里先取一致性。
         assert prompt.rstrip().endswith("破限占位")
+
+
+def test_each_side_gets_its_own_sections_and_none_of_the_others() -> None:
+    """**隔离的断言必须钉结构，不能钉措辞。**
+
+    这条测试换过三版。前两版断言的是具体句子（"情感落在外在"、"只写事实，不做描写"、
+    "对白写意思，不写原话"），于是每改一次提示词就红一次——而提示词是这个项目里
+    改得最频繁的东西。**钉措辞的测试不保护不变量，只是把文案冻住。**
+
+    真正的不变量是 D33：哪一节进哪一侧。写法、措辞、例子都可以随便改，
+    但 writer 永远拿不到 director 的推进与转述规则，director 永远拿不到文风。
+    """
+    meta = make_meta()
+    w = writer_system_prompt(meta, ControlDimensions())
+    d = prompt_for(meta=meta)
+
+    writer_only = ["voice", "craft", "dialogue", "anti_formula", "pacing"]
+    director_only = ["facts_not_prose", "narration", "advancement", "boundaries"]
+
+    for key in writer_only:
+        body = _real_text("writer", key)
+        assert body and body in w, f"writer.yaml 的 {key} 没进 writer"
+        assert body not in d, f"writer.yaml 的 {key} 漏进了 director"
+
+    for key in director_only:
+        body = _real_text("director", key)
+        assert body and body in d, f"director.yaml 的 {key} 没进 director"
+        assert body not in w, f"director.yaml 的 {key} 漏进了 writer"
+
+
+def test_style_and_prose_never_reach_the_director() -> None:
+    """D33 的隔离基础，用 session 自己的配置来验——它不随提示词改动而变。"""
+    meta = make_meta()
+    d = prompt_for(meta=meta)
+
+    assert meta.prose_style not in d
+    assert "说话总是绕圈子" not in d
+    # 否定项是唯一两边都给的（D35）
+    assert "不要提前揭示照片的来源" in d
