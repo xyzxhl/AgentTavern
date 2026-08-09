@@ -6,6 +6,7 @@ import pytest
 from conftest import ScriptedLLM, text, tool, tools
 
 from agenttavern.agents import DirectorFailed, prompt_text, run_director
+from agenttavern.agents.prompt_text import choice as _real_choice
 from agenttavern.agents.prompt_text import text as _real_text
 from agenttavern.agents.prompts import (
     director_static_prefix,
@@ -221,8 +222,6 @@ def test_writer_never_sees_state_or_history(tmp_path: Path) -> None:
     # 混成了一条，后半句会压过 session 自己的 `prose_style`（`pulp` 明写
     # 「心理活动直接写出来」，产出里却一个念头都没有）。**钉措辞会让提示词改不动。**
     assert "## 落笔" in prompt
-    assert "剧情锚点" not in prompt
-    assert "实质变化" not in prompt
 
 
 def test_authority_maps_to_ask_question_eagerness() -> None:
@@ -241,28 +240,32 @@ def test_input_handling_three_ways() -> None:
     assert "不要推进后续剧情" in only
     assert "不要转述" in advance
 
-    # 不转述时不必讲怎么转述——省下的是每 run 都要付的 token。
-    assert "剧情锚点" in only
-    assert "剧情锚点" not in advance
+    # **不转述时整节不注入**——省下的是每 run 都要付的 token。
+    # 断言的是这一节在不在，不是它里面写了什么（D136）。
+    narration = _real_choice("director", "narration", "narrate_only")
+    assert narration and narration in only
+    assert "## 怎么处理用户输入" not in advance
 
 
-def test_narration_and_speaking_are_contrasted() -> None:
-    """转述与抢话必须对照着说——两者最容易混，只分开讲模型会在边界上摇摆。"""
-    prompt = prompt_for(control=ControlDimensions(allow_speaking_for_user=False))
+def test_speaking_rule_is_a_choice_not_a_toggle_in_code() -> None:
+    """抢话在两侧都是**选项组**，选项名就是 allowed / forbidden（D136）。
 
-    assert "转述只处理用户已经写出的" in prompt
-    assert "抢话是替用户写尚未发生的" in prompt
+    以前这是代码里的 if：allowed 返回一段、forbidden 返回另一段，YAML 那边
+    看不出还有第二种可能。现在两档都写在 YAML 里，改一档不用碰 Python。
+    """
+    for side, prompt_of in (
+        ("director", lambda c: prompt_for(control=c)),
+        ("writer", lambda c: writer_system_prompt(make_meta(), c)),
+    ):
+        forbidden = _real_choice(side, "speaking_rule", "forbidden")
+        allowed = _real_choice(side, "speaking_rule", "allowed")
 
+        strict = prompt_of(ControlDimensions(allow_speaking_for_user=False))
+        assert forbidden and forbidden in strict
+        assert not allowed or allowed not in strict
 
-def test_no_speaking_still_means_advancing() -> None:
-    """禁止抢话不等于停在原地等指令——要给出可执行的**停止条件**。"""
-    prompt = prompt_for(control=ControlDimensions(allow_speaking_for_user=False))
-
-    assert "直到制造出需要用户回应的局面" in prompt
-    assert "允许替用户的角色说话" not in prompt
-
-    allowed = prompt_for(control=ControlDimensions(allow_speaking_for_user=True))
-    assert "允许替用户的角色说话" in allowed
+        loose = prompt_of(ControlDimensions(allow_speaking_for_user=True))
+        assert forbidden not in loose
 
 
 def test_state_pack_inlines_small_values_and_defers_large_ones() -> None:
@@ -350,45 +353,30 @@ def test_empty_state_renders_cleanly() -> None:
 
 
 def test_density_reaches_both_sides_in_opposite_directions() -> None:
-    """展开密度同时影响两侧，但含义相反：铺陈多 → 正文写得开，细纲少推进几件事。"""
-    rich = ControlDimensions(expansion_density=ExpansionDensity.RICH)
-    assert "充分铺陈" in writer_system_prompt(SessionMeta(), rich)
-    assert "少推进几件事" in prompt_for(control=rich)
+    """展开密度**同时影响两侧，而两侧读的是两组不同的文本**。
 
-    sparse = ControlDimensions(expansion_density=ExpansionDensity.SPARSE)
-    assert "克制铺陈" in writer_system_prompt(SessionMeta(), sparse)
-    assert "多推进几件事" in prompt_for(control=sparse)
-
-
-def test_user_actions_are_attempts_not_accomplished_facts() -> None:
-    """**转述规则与世界规则会正面冲突**，必须明说谁让谁（D104）。
-
-    实测：数据化世界里用户写「我再来一记御剑斩」，而御剑斩还在冷却，
-    否定项又明写着"不要让冷却中的法术生效"。两条规则都成立，指向相反。
-
-    模型当时选对了（写成催动失败），但**设计里没有任何地方这么规定过**——
-    它是蒙对的。规则定为：动作是锚点，结果归世界；落空要写得可见、有据。
+    writer 读「铺陈多少」，director 读「推进几件事」——同一个控制维度的
+    正反两面（D93：director 不该知道篇幅）。断言的是两组文本各自到位，
+    不是它们此刻的措辞。
     """
-    d = prompt_for()
+    for value in ("sparse", "normal", "rich"):
+        control = ControlDimensions(expansion_density=ExpansionDensity(value))
+        w = _real_choice("writer", "density", value)
+        d = _real_choice("director", "event_density", value)
 
-    assert "用户写出的是他的角色做了什么，不是这件事成没成" in d
-    assert "结果由世界决定" in d
-    # 只说"可以失败"不够——不写出失败的过程，就退化成了偷偷换动作
-    assert "写清用户的角色试过了，以及为什么没成" in d
+        assert w and w in writer_system_prompt(SessionMeta(), control)
+        assert d and d in prompt_for(control=control)
+        # 两组文本必须不同——一样就说明有一侧被另一侧的措辞污染了。
+        assert w != d
+        assert w not in prompt_for(control=control)
 
 
-def test_speaking_rule_reaches_the_writer_too() -> None:
-    """抢话是两侧共有的越界方式，规则也必须两侧都在（D35）。
+def test_the_writer_side_speaking_rule_disappears_when_allowed() -> None:
+    """允许抢话时这一节**整体消失**，而不是留个空标题。
 
-    writer 只做照抄时够不着这条线；一旦它真的在展开，就会顺手把用户角色
-    往前推一步——所以这条规则跟着「展开」一起加。
+    writer 侧这条规则本身是 D35 的实例（否定项两边都要）：writer 只做照抄时
+    够不着这条线，一旦它真的在展开，就会顺手把用户角色往前推一步。
     """
-    strict = ControlDimensions(allow_speaking_for_user=False)
-    w = writer_system_prompt(make_meta(), strict)
-    assert "不要替用户的角色新增动作" in w
-    assert "细纲在哪里收住，正文就在哪里收住" in w
-
-    # 允许抢话时这一节整体消失，而不是留个空标题
     loose = ControlDimensions(allow_speaking_for_user=True)
     assert "## 边界" not in writer_system_prompt(make_meta(), loose)
 
@@ -431,16 +419,14 @@ async def test_the_nudge_still_asks_for_the_write_when_it_is_missing(tmp_path: P
 # -- 情色指导与破限：YAML 槽位，默认空 -----------------------------------------
 
 
-def test_empty_optional_injects_no_section(monkeypatch) -> None:
-    """**空则整节不注入**：连标题都不出现。
+def test_nsfw_defaults_to_empty_and_injects_nothing() -> None:
+    """情色指导**出厂为空**，空则整节不注入——连标题都不出现。
 
-    断言的是**机制**，不是 `optional.yaml` 里当前恰好填了什么——那份文件是
-    部署方的内容，随时会变（也确实变过）。**钉出厂内容的测试保护不了行为，
-    只会在别人填内容时红。**
+    这条钉的是「不预设内容」这个决定本身：它是部署方按自己的模型填的东西，
+    我们在仓库里写任何示例都会被当成推荐值。
     """
-    # 打 `prompt_text.optional`：装配器在同一个模块里按名字取它，
-    # 所以替换模块全局就够（D135 之后 `prompts.py` 已经不直接引用它了）。
-    monkeypatch.setattr(prompt_text, "optional", lambda side, key: "")
+    for side in ("writer", "director"):
+        assert _real_text(side, "nsfw") == ""
 
     meta = make_meta()
     for prompt in (writer_system_prompt(meta, ControlDimensions()), prompt_for(meta=meta)):
@@ -454,8 +440,9 @@ def test_nsfw_and_jailbreak_reach_both_agents(monkeypatch) -> None:
     另一侧会按自己的默认来，两边对不上。破限则是因为 director 与 writer
     是两次独立的模型调用——只解开一半等于没解开。
     """
+    real = prompt_text.load
     filled = {"nsfw": "情色指导占位", "jailbreak": "破限占位"}
-    monkeypatch.setattr(prompt_text, "optional", lambda side, key: filled.get(key, ""))
+    monkeypatch.setattr(prompt_text, "load", lambda name: {**real(name), **filled})
 
     meta = make_meta()
     w = writer_system_prompt(meta, ControlDimensions())
@@ -487,8 +474,8 @@ def test_each_side_gets_its_own_sections_and_none_of_the_others() -> None:
     w = writer_system_prompt(meta, ControlDimensions())
     d = prompt_for(meta=meta)
 
-    writer_only = ["voice", "craft", "dialogue", "anti_formula", "pacing"]
-    director_only = ["facts_not_prose", "narration", "advancement", "boundaries"]
+    writer_only = ["voice", "craft", "dialogue", "anti_formula"]
+    director_only = ["facts_not_prose", "advancement", "boundaries"]
 
     for key in writer_only:
         body = _real_text("writer", key)
@@ -499,6 +486,9 @@ def test_each_side_gets_its_own_sections_and_none_of_the_others() -> None:
         body = _real_text("director", key)
         assert body and body in d, f"director.yaml 的 {key} 没进 director"
         assert body not in w, f"director.yaml 的 {key} 漏进了 writer"
+
+    narration = _real_choice("director", "narration", "narrate_and_advance")
+    assert narration and narration in d and narration not in w
 
 
 def test_style_and_prose_never_reach_the_director() -> None:
@@ -512,51 +502,27 @@ def test_style_and_prose_never_reach_the_director() -> None:
     assert "不要提前揭示照片的来源" in d
 
 
-def test_missing_optional_file_is_not_an_error(monkeypatch, tmp_path: Path) -> None:
-    """`optional.yaml` **不存在时系统照常跑**。
-
-    这与主文件缺键必须报错是故意相反的：主文件少一个键说明装配和文案脱节了，
-    那是 bug；而这份文件本来就可能被 `.gitignore` 掉、或者部署方根本没建过，
-    **“没有”是它的正常状态之一**。
-    """
-    from agenttavern.agents import prompt_text
-
-    prompt_text._optional.cache_clear()
-    monkeypatch.setattr(prompt_text, "_DIR", tmp_path)
-    try:
-        assert prompt_text.optional("writer", "jailbreak") == ""
-        assert prompt_text.optional("director", "nsfw") == ""
-    finally:
-        prompt_text._optional.cache_clear()
+# -- 可编排的装配器（D135 / D136） ---------------------------------------------
 
 
-# -- 可编排的装配器（D135） -----------------------------------------------------
+def fake_yaml(monkeypatch, doc: dict) -> None:
+    monkeypatch.setattr(prompt_text, "load", lambda name: doc)
 
 
 def test_sections_order_comes_from_yaml(monkeypatch) -> None:
     """**顺序由 YAML 决定，不在代码里。** 移动条目就换了位置。"""
-    monkeypatch.setattr(
-        prompt_text,
-        "load",
-        lambda name: {
-            "sections": [
-                {"title": "乙", "text": "第二段"},
-                {"title": "甲", "text": "第一段"},
-            ]
-        },
+    fake_yaml(
+        monkeypatch,
+        {"sections": [{"title": "乙", "text": "第二段"}, {"title": "甲", "text": "第一段"}]},
     )
-    out = prompt_text.assemble("writer", {})
+    out = prompt_text.assemble("writer")
     assert out.index("乙") < out.index("甲")
 
 
 def test_a_new_section_needs_only_yaml(monkeypatch) -> None:
     """新增一节**只写 YAML**，不动代码——这正是这个装配器存在的理由。"""
-    monkeypatch.setattr(
-        prompt_text,
-        "load",
-        lambda name: {"sections": [{"title": "新加的", "text": "随便写点什么"}]},
-    )
-    assert prompt_text.assemble("writer", {}) == "## 新加的\n随便写点什么"
+    fake_yaml(monkeypatch, {"sections": [{"title": "新加的", "text": "随便写点什么"}]})
+    assert prompt_text.assemble("writer") == "## 新加的\n随便写点什么"
 
 
 def test_empty_section_is_skipped_title_and_all(monkeypatch) -> None:
@@ -564,25 +530,88 @@ def test_empty_section_is_skipped_title_and_all(monkeypatch) -> None:
 
     空标题白占体量，还会让模型以为这里本该有内容。
     """
-    monkeypatch.setattr(
-        prompt_text,
-        "load",
-        lambda name: {
+    fake_yaml(
+        monkeypatch,
+        {
             "sections": [
                 {"title": "有内容", "text": "在"},
-                {"title": "空的", "slot": "nothing"},
+                {"title": "空的", "inject": "nothing"},
             ]
         },
     )
-    assert prompt_text.assemble("writer", {"nothing": "  "}) == "## 有内容\n在"
+    assert prompt_text.assemble("writer", blocks={"nothing": "  "}) == "## 有内容\n在"
 
 
-def test_unknown_slot_raises(monkeypatch) -> None:
-    """未知 slot **直接报错**，不静默跳过。
+def test_three_kinds_of_content_are_declared_separately(monkeypatch) -> None:
+    """一节的内容有三种来源，YAML 里**分别声明**（D136）。
+
+    看一眼 sections 就知道这一节是整段注入、模板替换，还是按选项切换——
+    以前它们全叫 `slot`，从 YAML 那侧分不出来。
+    """
+    fake_yaml(
+        monkeypatch,
+        {
+            "sections": [
+                {"title": "整段注入", "inject": "worldinfo"},
+                {"title": "模板替换", "text": "视角：{{pov}}"},
+                {"title": "选择控制", "choice": "density"},
+            ],
+            "density": {"sparse": "少写点", "rich": "多写点"},
+        },
+    )
+    out = prompt_text.assemble(
+        "writer",
+        blocks={"worldinfo": "### 教团\n信奉旧神。"},
+        values={"pov": "第三人称限知"},
+        options={"density": "rich"},
+    )
+    assert "### 教团" in out
+    assert "视角：第三人称限知" in out
+    assert "多写点" in out
+    assert "少写点" not in out
+
+
+def test_an_empty_variable_takes_its_line_with_it(monkeypatch) -> None:
+    """变量为空 → **整行删掉**；一行不剩 → 整节不出现。
+
+    不这么做就会留下「视角：」这种半截的行，比没有更糟：
+    模型会以为这里本该有内容而自己补一个。
+    """
+    fake_yaml(
+        monkeypatch,
+        {
+            "sections": [
+                {"title": "设定", "text": "题材：{{genre}}\n视角：{{pov}}"},
+                {"title": "目标", "text": "本次目标：{{goal}}。"},
+            ]
+        },
+    )
+    out = prompt_text.assemble("writer", values={"genre": "悬疑", "pov": "", "goal": ""})
+    assert out == "## 设定\n题材：悬疑"
+
+
+def test_injected_content_is_not_parsed_as_a_template(monkeypatch) -> None:
+    """**注入进来的是数据，不是模板。**
+
+    用户的世界设定里完全可能出现 `{{` ——按模板解析它，轻则报错，
+    重则把用户的设定当成变量名吞掉。
+    """
+    fake_yaml(monkeypatch, {"sections": [{"inject": "worldinfo"}]})
+    assert prompt_text.assemble("writer", blocks={"worldinfo": "{{不是变量}}"}) == "{{不是变量}}"
+
+
+def test_names_that_do_not_line_up_raise(monkeypatch) -> None:
+    """名字对不上**直接报错**，不静默跳过。
 
     静默跳过会让一整节悄悄消失，而产出看起来只是“变差了一点”——
     那是最难查的一类问题（同 D125：没生效的东西不会报错）。
     """
-    monkeypatch.setattr(prompt_text, "load", lambda name: {"sections": [{"slot": "根本没有这个"}]})
-    with pytest.raises(KeyError):
-        prompt_text.assemble("writer", {})
+    cases: list[dict] = [
+        {"sections": [{"inject": "根本没有这个"}]},
+        {"sections": [{"text": "{{没人给值}}"}]},
+        {"sections": [{"choice": "density"}], "density": {"rich": "多写点"}},
+    ]
+    for doc in cases:
+        fake_yaml(monkeypatch, doc)
+        with pytest.raises(KeyError):
+            prompt_text.assemble("writer")

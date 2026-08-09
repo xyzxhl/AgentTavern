@@ -17,41 +17,21 @@ from __future__ import annotations
 from ..models import (
     Capabilities,
     ControlDimensions,
-    InputHandling,
     SessionMeta,
     WorldbookEntry,
     WorldbookMode,
     WorldState,
 )
-from .prompt_text import assemble, choice, text
+from .prompt_text import assemble, choice
 
 
 def _section(title: str, body: str) -> str:
     return f"## {title}\n{body}" if body.strip() else ""
 
 
-def _speaking_rule(allowed: bool) -> str:
-    """抢话规则。
-
-    **转述与抢话必须对照着说**，两者最容易混，而它们的边界是可以钉死的：
-    转述处理的是**已经写出的**，抢话是替用户写**尚未发生的**。
-    只分开说各自的规则，模型会在边界上摇摆。
-    """
-    if allowed:
-        return text("director", "speaking_allowed")
-    return text("director", "speaking_forbidden")
-
-
-def _writer_speaking_rule(allowed: bool) -> str:
-    """writer 侧的抢话规则。
-
-    **这条以前不需要**：writer 只会照抄细纲，够不着这条线。现在它有了发挥空间，
-    就会顺手把用户角色再往前推一步，“她低头，指尖压了一下照片”这种。
-    在 director 那边写了不算数，越界发生在这一侧（D35：否定项两边都要）。
-    """
-    if allowed:
-        return ""
-    return text("writer", "speaking_forbidden")
+def _speaking(allowed: bool) -> str:
+    """抢话是个二选一的控制维度，所以在 YAML 里是选项组，选项名就是这两个。"""
+    return "allowed" if allowed else "forbidden"
 
 
 STATE_INLINE_LIMIT = 200
@@ -184,39 +164,24 @@ def director_static_prefix(
     因此 state 与前情移到每一轮的用户消息里（``director_turn_prompt``），
     这里只留：身份与分工、题材设定、世界设定、写法规则、禁止事项、流程。
     """
-    setting = "\n".join(
-        filter(
-            None,
-            [
-                f"题材与基调：{meta.genre_tone}" if meta.genre_tone else "",
-                f"尺度：{meta.content_scale}" if meta.content_scale else "",
-                f"视角：{meta.pov}" if meta.pov else "",
-            ],
-        )
-    )
     caps = capabilities or Capabilities()
-    narration = (
-        text("director", "narration")
-        if control.input_handling is not InputHandling.ADVANCE_ONLY
-        else ""
-    )
-    forbidden = "\n".join(f"- {item}" for item in meta.forbidden)
-    goal = ""
-    if meta.goal:
-        goal = f"本次创作的目标：{meta.goal.description}\n达成之前会持续推进。"
 
-    # **顺序不在这里，在 director.yaml 的 `sections` 里**（D135）。
-    # 这里只负责算出那些代码才知道的内容，YAML 决定它们出现在哪、叫什么标题。
+    # **顺序、标题、格式都不在这里，在 director.yaml 的 `sections` 里**（D135/D136）。
+    # 这里只回答三个问题：整段注入什么、变量的值是什么、选项组选哪一档。
     return assemble(
         "director",
-        {
-            "setting": setting,
+        blocks={
             "worldinfo": render_worldinfo(worldinfo or [], expandable=caps.worldinfo_read),
-            "narration": narration,
-            "forbidden": forbidden,
-            "goal": goal,
+            "forbidden": "\n".join(f"- {item}" for item in meta.forbidden),
             "flow": _flow(caps, worldinfo),
         },
+        values={
+            "genre_tone": meta.genre_tone,
+            "content_scale": meta.content_scale,
+            "pov": meta.pov,
+            "goal": meta.goal.description if meta.goal else "",
+        },
+        options={"narration": control.input_handling.value},
     )
 
 
@@ -244,7 +209,7 @@ def director_turn_prompt(
             f"- 输入处理：{handling}",
             f"- 事件密度：{density}",
             f"- 剧情控制权：{authority}",
-            "- " + _speaking_rule(control.allow_speaking_for_user),
+            "- " + choice("director", "speaking_rule", _speaking(control.allow_speaking_for_user)),
         ]
     )
     rendered_state = render_state(state, expandable=caps.state_query) if caps.state else ""
@@ -270,18 +235,18 @@ def writer_system_prompt(meta: SessionMeta, control: ControlDimensions) -> str:
     它拿不到 state 的值、拿不到世界设定、拿不到用户原始指令，那些都已经在细纲里了。
     它的职责是改写，不是补充。
     """
-    voices = "\n".join(f"- {name}：{how}" for name, how in meta.character_voices.items())
-    forbidden = "\n".join(f"- {item}" for item in meta.forbidden)
-
-    # **顺序不在这里，在 writer.yaml 的 `sections` 里**（D135）。
+    # **顺序、标题、格式都不在这里，在 writer.yaml 的 `sections` 里**（D135/D136）。
     return assemble(
         "writer",
-        {
-            "prose_style": meta.prose_style,
-            "character_voices": voices,
-            "pov": meta.pov,
-            "speaking_rule": _writer_speaking_rule(control.allow_speaking_for_user),
-            "forbidden": forbidden,
-            "density": choice("writer", "density", control.expansion_density.value),
+        blocks={
+            "character_voices": "\n".join(
+                f"- {name}：{how}" for name, how in meta.character_voices.items()
+            ),
+            "forbidden": "\n".join(f"- {item}" for item in meta.forbidden),
+        },
+        values={"prose_style": meta.prose_style, "pov": meta.pov},
+        options={
+            "speaking_rule": _speaking(control.allow_speaking_for_user),
+            "density": control.expansion_density.value,
         },
     )
