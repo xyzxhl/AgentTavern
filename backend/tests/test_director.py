@@ -7,6 +7,7 @@ from conftest import ScriptedLLM, text, tool, tools
 
 from agenttavern.agents import DirectorFailed, run_director
 from agenttavern.agents import prompts as prompts_module
+from agenttavern.agents.prompt_text import optional as _optional
 from agenttavern.agents.prompt_text import text as _real_text
 from agenttavern.agents.prompts import (
     director_static_prefix,
@@ -439,8 +440,8 @@ def test_nsfw_and_jailbreak_default_to_empty() -> None:
     默认注入一个空标题会白占体量，还会让模型以为这里本该有内容。
     """
     for side in ("writer", "director"):
-        assert _real_text(side, "nsfw") == ""
-        assert _real_text(side, "jailbreak") == ""
+        assert _optional(side, "nsfw") == ""
+        assert _optional(side, "jailbreak") == ""
 
     meta = make_meta()
     for prompt in (writer_system_prompt(meta, ControlDimensions()), prompt_for(meta=meta)):
@@ -455,11 +456,9 @@ def test_nsfw_and_jailbreak_reach_both_agents(monkeypatch) -> None:
     是两次独立的模型调用——只解开一半等于没解开。
     """
     filled = {"nsfw": "情色指导占位", "jailbreak": "破限占位"}
-    # **必须打 prompts 模块里的那个名字**：它是 `from .prompt_text import text`
+    # **必须打 prompts 模块里的那个名字**：它是 `from .prompt_text import optional`
     # 导入的，持有自己的引用，打 prompt_text 上的原件不会生效。
-    monkeypatch.setattr(
-        prompts_module, "text", lambda side, key: filled.get(key, _real_text(side, key))
-    )
+    monkeypatch.setattr(prompts_module, "optional", lambda side, key: filled.get(key, ""))
 
     meta = make_meta()
     w = writer_system_prompt(meta, ControlDimensions())
@@ -514,3 +513,21 @@ def test_style_and_prose_never_reach_the_director() -> None:
     assert "说话总是绕圈子" not in d
     # 否定项是唯一两边都给的（D35）
     assert "不要提前揭示照片的来源" in d
+
+
+def test_missing_optional_file_is_not_an_error(monkeypatch, tmp_path: Path) -> None:
+    """`optional.yaml` **不存在时系统照常跑**。
+
+    这与主文件缺键必须报错是故意相反的：主文件少一个键说明装配和文案脱节了，
+    那是 bug；而这份文件本来就可能被 `.gitignore` 掉、或者部署方根本没建过，
+    **“没有”是它的正常状态之一**。
+    """
+    from agenttavern.agents import prompt_text
+
+    prompt_text._optional.cache_clear()
+    monkeypatch.setattr(prompt_text, "_DIR", tmp_path)
+    try:
+        assert prompt_text.optional("writer", "jailbreak") == ""
+        assert prompt_text.optional("director", "nsfw") == ""
+    finally:
+        prompt_text._optional.cache_clear()

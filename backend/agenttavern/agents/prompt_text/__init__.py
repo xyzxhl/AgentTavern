@@ -58,3 +58,28 @@ def choice(name: str, key: str, option: str) -> str:
     if option not in group:
         raise KeyError(f"{name}.yaml 的 `{key}` 里没有 `{option}`")
     return str(group[option]).strip()
+
+
+@functools.cache
+def _optional() -> dict[str, Any]:
+    """`optional.yaml`。**文件不存在就当全空**，不报错。
+
+    这与 `text()` 缺键必须报错是**故意相反**的：主文件里少一个键说明装配和
+    文案脱节了，那是 bug；而这份文件本来就可能被 `.gitignore` 掉、或者部署方
+    根本没建过——**"没有"就是它的正常状态之一**。
+    """
+    path = _DIR / "optional.yaml"
+    if not path.exists():
+        return {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return data if isinstance(data, dict) else {}
+
+
+def optional(side: str, key: str) -> str:
+    """取一段可选提示词。缺文件、缺分组、缺键、值为空，一律返回空串。
+
+    调用方拿到空串后整节不注入——默认插一个空标题会白占体量，
+    还会让模型以为这里本该有内容。
+    """
+    group = _optional().get(side) or {}
+    return str(group.get(key) or "").strip()

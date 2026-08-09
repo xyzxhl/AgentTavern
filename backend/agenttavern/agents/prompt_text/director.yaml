@@ -158,9 +158,3 @@ authority:
   high: 你主导剧情走向。**不要调用 ask_question**，自己拿主意。
   medium: 剧情走向以你为主。若本轮存在真正的分岔，可调用一次 ask_question 让用户选。
   low: 用户主导剧情走向。遇到任何值得由用户决定的分岔，都调用 ask_question 征询，一轮内可以多次。
-
-# 与 writer 侧同名两项。**两侧都要**（同 D35 的理由）：
-# director 决定这一轮发生什么，writer 决定怎么落笔，只给一侧另一侧按自己的默认来；
-# 破限则是因为 director 与 writer 是两次独立的模型调用，只解开一半等于没解开。
-nsfw: ""
-jailbreak: ""
