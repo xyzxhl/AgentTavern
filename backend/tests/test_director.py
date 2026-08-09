@@ -6,6 +6,8 @@ import pytest
 from conftest import ScriptedLLM, text, tool, tools
 
 from agenttavern.agents import DirectorFailed, run_director
+from agenttavern.agents import prompts as prompts_module
+from agenttavern.agents.prompt_text import text as _real_text
 from agenttavern.agents.prompts import (
     director_static_prefix,
     director_turn_prompt,
@@ -509,61 +511,48 @@ async def test_the_nudge_still_asks_for_the_write_when_it_is_missing(tmp_path: P
     assert "state_write" in nudge
 
 
-# -- 情色指导与破限：默认空，空则整节不注入 -------------------------------------
+# -- 情色指导与破限：YAML 槽位，默认空 -----------------------------------------
 
 
-def test_nsfw_and_jailbreak_are_absent_by_default() -> None:
+def test_nsfw_and_jailbreak_default_to_empty() -> None:
     """两者**默认空，空则整节不注入**。
 
-    默认注入一段空标题会白占体量，还会让模型以为这里本该有内容。
+    默认注入一个空标题会白占体量，还会让模型以为这里本该有内容。
     """
-    meta = make_meta()
-    assert meta.nsfw_guidance == ""
-    assert meta.jailbreak == ""
+    for side in ("writer", "director"):
+        assert _real_text(side, "nsfw") == ""
+        assert _real_text(side, "jailbreak") == ""
 
-    for prompt in (
-        writer_system_prompt(meta, ControlDimensions()),
-        prompt_for(meta=meta),
-    ):
+    meta = make_meta()
+    for prompt in (writer_system_prompt(meta, ControlDimensions()), prompt_for(meta=meta)):
         assert "## 情色与身体" not in prompt
 
 
-def test_nsfw_and_jailbreak_reach_both_agents() -> None:
+def test_nsfw_and_jailbreak_reach_both_agents(monkeypatch) -> None:
     """**两侧都要**（同 D35 的理由）。
 
     director 决定这一轮发生什么，writer 决定怎么落笔；只给一侧，
     另一侧会按自己的默认来，两边对不上。破限则是因为 director 与 writer
     是两次独立的模型调用——只解开一半等于没解开。
     """
+    filled = {"nsfw": "情色指导占位", "jailbreak": "破限占位"}
+    # **必须打 prompts 模块里的那个名字**：它是 `from .prompt_text import text`
+    # 导入的，持有自己的引用，打 prompt_text 上的原件不会生效。
+    monkeypatch.setattr(
+        prompts_module, "text", lambda side, key: filled.get(key, _real_text(side, key))
+    )
+
     meta = make_meta()
-    meta.nsfw_guidance = "情色指导占位"
-    meta.jailbreak = "破限占位"
-
-    w = writer_system_prompt(meta, ControlDimensions())
-    d = prompt_for(meta=meta)
-
-    assert "情色指导占位" in w
-    assert "情色指导占位" in d
-    assert "破限占位" in w
-    assert "破限占位" in d
-
-
-def test_jailbreak_sits_at_the_end_of_the_system_prompt() -> None:
-    """位置是约定的一部分：**系统提示词的最后一段**。
-
-    与 SillyTavern 的约定有一处不同，值得写下来：那边把破限放在**整个请求的
-    最后一条消息**（历史之后），取的是最高的近因权重。我们放在系统提示词末尾，
-    因为对话跨轮持续（D114），system 是缓存前缀——放这里它只付一次钱，
-    放最后一条消息则每轮都在变的那段里，虽然也不破坏缓存，但两个 agent
-    的装配方式就不一致了（writer 那侧最后一条是细纲）。
-
-    **哪个更有效没有实测过**，这里先取一致性。
-    """
-    meta = make_meta()
-    meta.jailbreak = "破限占位"
-
     w = writer_system_prompt(meta, ControlDimensions())
     d = director_static_prefix(meta, ControlDimensions(), capabilities=ALL_ON, worldinfo=[])
 
-    assert w.rstrip().endswith("破限占位")
-    assert d.rstrip().endswith("破限占位")
+    for prompt in (w, d):
+        assert "情色指导占位" in prompt
+        # 位置是约定的一部分：破限在**系统提示词的最后一段**。
+        #
+        # 与 SillyTavern 的约定有一处不同：那边放在整个请求的最后一条消息
+        # （历史之后），取最高的近因权重。我们放系统提示词末尾，因为对话跨轮
+        # 持续（D114），system 是缓存前缀，放这里只付一次钱；而且 writer 那侧
+        # 最后一条消息是细纲，放那儿两侧的装配方式就不一致了。
+        # **哪个更有效没有实测过**，这里先取一致性。
+        assert prompt.rstrip().endswith("破限占位")
