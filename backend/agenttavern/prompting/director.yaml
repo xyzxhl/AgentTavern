@@ -4,45 +4,64 @@
 # 正是因为它从不读正文（D54）。否定项是唯一两边都给的东西（D35）。
 #
 # ============================================================================
-# 装配顺序 = 下面 `sections` 的顺序。四种条目：
+# 装配顺序 = 下面 `sections` 的顺序。**一个条目 = 一条消息，role 写在条目上。**
+# 四种正文来源：
 #
-#   text    正文直接写在这里 —— **新增提示词走这条**
-#   key     引用本文件顶层的命名块（长文本留在原处更好编辑）
-#   inject  整段注入，内容由代码渲染（世界设定、否定项、流程……）
-#   choice  选择控制，**二级标题就是选项名**，代码只负责说选哪个
+#   text     正文直接写在这里 —— **新增提示词走这条**
+#   key      引用本文件顶层的命名块（长文本留在原处更好编辑）
+#   context  系统控制的 context，由代码渲染整段注入（世界设定、状态、前情……）
+#   choice   选择控制，**二级标题就是选项名**，代码只负责说选哪个
 #
 #   text / key 里的 {{var}} 会被替换；**变量为空就删掉它所在的那一行**，
 #   一行都不剩这一节就不出现。约定一行一个变量。
 #
-#   title 可选；正文为空的条目整条跳过，连标题都不出现。
+#   title 可选；正文为空的条目整条跳过，连这条消息都不出现。
 #
 # 想调位置就移动条目，想加一节就插一条，都不用动代码。
 # ============================================================================
+#
+# **`history` 之前的都是缓存前缀**（D114）：对话跨轮持续，前缀每轮不变才打得中
+# 缓存。所以凡是每轮会变的东西都排在 `history` 之后——它们本来就是这一轮的话。
+# 想学 SillyTavern 把破限压到历史之后，把那一条移到下面去即可。
 
 sections:
-  - {key: intro}
-  - title: 设定
+  - {role: system, key: intro}
+  - role: system
+    title: 设定
     text: |
       题材与基调：{{genre_tone}}
       尺度：{{content_scale}}
       视角：{{pov}}
-  - {title: 世界设定, inject: worldinfo}
-  - {title: 产出什么, key: facts_not_prose}
-  - {title: 怎么处理用户输入, choice: narration}
-  - {title: 推进, key: advancement}
-  - {title: 边界, key: boundaries}
+  - {role: system, title: 世界设定, context: worldinfo}
+  - {role: system, title: 产出什么, key: facts_not_prose}
+  - {role: system, title: 怎么处理用户输入, choice: narration}
+  - {role: system, title: 推进, key: advancement}
+  - {role: system, title: 边界, key: boundaries}
 
   # 情色指导两侧都给（同 D35 的理由）：director 决定这一轮发生什么，
   # writer 决定怎么落笔。只给一侧，另一侧按自己的默认来，两边对不上。
-  - {title: 情色与身体, key: nsfw}
+  - {role: system, title: 情色与身体, key: nsfw}
 
-  - {title: 禁止事项, inject: forbidden}
-  - {title: 目标, text: "本次创作的目标：{{goal}}。达成之前会持续推进。"}
-  - {title: 流程, inject: flow}
+  - {role: system, title: 禁止事项, context: forbidden}
+  - {role: system, title: 目标, text: "本次创作的目标：{{goal}}。达成之前会持续推进。"}
+  - {role: system, title: 流程, context: flow}
 
-  # **破限放在最后**：位置是约定的一部分。
+  # **破限放在系统提示词的最后一段**：位置是约定的一部分。
   # 内容不预设——它取决于用哪个模型、哪个端点。
-  - {key: jailbreak}
+  - {role: system, key: jailbreak}
+
+  # 前情：摘要 + 扁平化的历史轮次，各自带着自己的 role，所以这一条不写 role。
+  # 被打断挂起的那半轮（D118）也跟在这里——它的位置不能选，必须紧接前情、
+  # 排在这一轮的输入之前。
+  - {context: history}
+
+  # ---- 以下每轮都变，所以必须排在 history 之后 ----
+  - {role: user, title: 当前状态, context: state}
+  - {role: user, title: 输入处理, choice: input_handling}
+  - {role: user, title: 事件密度, choice: event_density}
+  - {role: user, title: 剧情控制权, choice: authority}
+  - {role: user, title: 抢话, choice: speaking_rule}
+  - {role: user, title: 用户输入, context: user_input}
 
 intro: |
   你负责生成正文的细纲。细纲不是压缩版正文，也不是简略叙述，而是正文必须满足的语义约束。
@@ -177,6 +196,9 @@ event_density:
   sparse: 本轮在不破坏角色性格、关系阶段和剧情逻辑的前提下加速推进。
   normal: 本轮按照自然节奏推进剧情。
   rich: 本轮放慢节奏，写足互动过程，充分表达情感。
+
+# 没有新输入时顶上的那句话。它是提示词，所以在这里，不在 Python 里。
+no_user_input: （没有新的用户输入，按当前设定继续推进。）
 
 input_handling:
   narrate_and_advance: 先把用户这一步写进本轮内容，再继续推进。转述不可省略。

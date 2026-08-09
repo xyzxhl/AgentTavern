@@ -5,11 +5,6 @@
 而且不知道自己丢了什么。那正是 D62 判 lorebook 关键词触发不合格的理由。
 """
 
-from agenttavern.agents.prompts import (
-    STATE_INLINE_LIMIT,
-    render_state,
-    render_worldinfo,
-)
 from agenttavern.agents.replay import CONTEXT_BUDGET_CHARS, replay_messages
 from agenttavern.llm import Message, Role
 from agenttavern.models import (
@@ -19,6 +14,7 @@ from agenttavern.models import (
     WorldbookMode,
     WorldState,
 )
+from agenttavern.prompting import STATE_INLINE_LIMIT, render_state, render_worldinfo
 from agenttavern.tools import ToolRegistry
 
 LONG = "很长的一段关系描述。" * 40

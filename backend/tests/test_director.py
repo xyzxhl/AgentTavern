@@ -5,21 +5,14 @@ from pathlib import Path
 import pytest
 from conftest import ScriptedLLM, text, tool, tools
 
-from agenttavern.agents import DirectorFailed, prompt_text, run_director
-from agenttavern.agents.prompt_text import choice as _real_choice
-from agenttavern.agents.prompt_text import text as _real_text
-from agenttavern.agents.prompts import (
-    director_static_prefix,
-    director_turn_prompt,
-    writer_system_prompt,
-)
+from agenttavern.agents import DirectorFailed, run_director
+from agenttavern.llm import Message, Role
 from agenttavern.models import (
     Capabilities,
     ControlDimensions,
     ExpansionDensity,
     InputHandling,
     ModelAuthority,
-    Node,
     Session,
     SessionMeta,
     StateDelta,
@@ -29,6 +22,9 @@ from agenttavern.models import (
     WorldState,
     replay,
 )
+from agenttavern.prompting import assembler, director_prompt, writer_prompt
+from agenttavern.prompting.assembler import choice as _real_choice
+from agenttavern.prompting.assembler import text as _real_text
 from agenttavern.storage import Store
 from agenttavern.tools import RunContext, ToolRegistry
 from agenttavern.tracing import Tracer
@@ -48,36 +44,39 @@ def make_ctx(tmp_path: Path, llm: ScriptedLLM, session: Session | None = None):
     return ctx, Tracer(repo, "run_1", persist=ctx.capabilities.trace), registry
 
 
-def prompt_for(
+def joined(messages: list[Message]) -> str:
+    """把装配出来的一串消息拼成一整块文字。
+
+    **内容断言用这个，位置断言不要用。** 哪一节在哪一侧、有没有出现，是内容问题；
+    它是第几条消息、什么 role，是另一回事，那些直接断言消息本身（见文件末尾）。
+    """
+    return "\n\n".join(m.content or "" for m in messages)
+
+
+def director_messages(
     meta: SessionMeta | None = None,
     control: ControlDimensions | None = None,
     state: WorldState | None = None,
-    path: list[Node] | None = None,
     capabilities: Capabilities | None = None,
     worldinfo: list[WorldbookEntry] | None = None,
-) -> str:
-    """director 收到的全部文字：静态前缀 + 这一轮的用户消息。
+) -> list[Message]:
+    return director_prompt(
+        meta or SessionMeta(),
+        control or ControlDimensions(),
+        state or WorldState(),
+        None,
+        capabilities=capabilities or ALL_ON,
+        worldinfo=worldinfo,
+    ).messages
 
-    对话跨轮持续之后（D114），提示词拆成了两块——**跨轮不变的进 system**，
-    **每轮都变的（state、控制维度、用户输入）进这一轮的消息**。
-    这里拼起来断言，是因为分工规则该在哪一侧是内容问题，不是位置问题。
-    """
-    caps = capabilities or ALL_ON
-    return (
-        director_static_prefix(
-            meta or SessionMeta(),
-            control or ControlDimensions(),
-            capabilities=caps,
-            worldinfo=worldinfo,
-        )
-        + "\n\n"
-        + director_turn_prompt(
-            control or ControlDimensions(),
-            state or WorldState(),
-            None,
-            capabilities=caps,
-        )
-    )
+
+def prompt_for(**kwargs) -> str:
+    """director 收到的全部文字。"""
+    return joined(director_messages(**kwargs))
+
+
+def writer_text(meta: SessionMeta, control: ControlDimensions) -> str:
+    return joined(writer_prompt(meta, control).messages)
 
 
 async def test_happy_path(tmp_path: Path) -> None:
@@ -207,7 +206,7 @@ def test_director_never_sees_style_or_prose(tmp_path: Path) -> None:
 
 def test_writer_never_sees_state_or_history(tmp_path: Path) -> None:
     """writer 只承担文风。它拿不到状态值、世界设定、用户原始指令——都已在细纲里。"""
-    prompt = writer_system_prompt(make_meta(), ControlDimensions())
+    prompt = writer_text(make_meta(), ControlDimensions())
 
     assert "短句，冷调" in prompt
     assert "说话总是绕圈子" in prompt
@@ -255,7 +254,7 @@ def test_speaking_rule_is_a_choice_not_a_toggle_in_code() -> None:
     """
     for side, prompt_of in (
         ("director", lambda c: prompt_for(control=c)),
-        ("writer", lambda c: writer_system_prompt(make_meta(), c)),
+        ("writer", lambda c: writer_text(make_meta(), c)),
     ):
         forbidden = _real_choice(side, "speaking_rule", "forbidden")
         allowed = _real_choice(side, "speaking_rule", "allowed")
@@ -364,7 +363,7 @@ def test_density_reaches_both_sides_in_opposite_directions() -> None:
         w = _real_choice("writer", "density", value)
         d = _real_choice("director", "event_density", value)
 
-        assert w and w in writer_system_prompt(SessionMeta(), control)
+        assert w and w in writer_text(SessionMeta(), control)
         assert d and d in prompt_for(control=control)
         # 两组文本必须不同——一样就说明有一侧被另一侧的措辞污染了。
         assert w != d
@@ -378,7 +377,7 @@ def test_the_writer_side_speaking_rule_disappears_when_allowed() -> None:
     够不着这条线，一旦它真的在展开，就会顺手把用户角色往前推一步。
     """
     loose = ControlDimensions(allow_speaking_for_user=True)
-    assert "## 边界" not in writer_system_prompt(make_meta(), loose)
+    assert "## 边界" not in writer_text(make_meta(), loose)
 
 
 async def test_the_nudge_stops_asking_for_a_write_already_done(tmp_path: Path) -> None:
@@ -429,7 +428,7 @@ def test_nsfw_defaults_to_empty_and_injects_nothing() -> None:
         assert _real_text(side, "nsfw") == ""
 
     meta = make_meta()
-    for prompt in (writer_system_prompt(meta, ControlDimensions()), prompt_for(meta=meta)):
+    for prompt in (writer_text(meta, ControlDimensions()), prompt_for(meta=meta)):
         assert "## 情色与身体" not in prompt
 
 
@@ -440,24 +439,24 @@ def test_nsfw_and_jailbreak_reach_both_agents(monkeypatch) -> None:
     另一侧会按自己的默认来，两边对不上。破限则是因为 director 与 writer
     是两次独立的模型调用——只解开一半等于没解开。
     """
-    real = prompt_text.load
+    real = assembler.load
     filled = {"nsfw": "情色指导占位", "jailbreak": "破限占位"}
-    monkeypatch.setattr(prompt_text, "load", lambda name: {**real(name), **filled})
+    monkeypatch.setattr(assembler, "load", lambda name: {**real(name), **filled})
 
     meta = make_meta()
-    w = writer_system_prompt(meta, ControlDimensions())
-    d = director_static_prefix(meta, ControlDimensions(), capabilities=ALL_ON, worldinfo=[])
+    both = (writer_prompt(meta, ControlDimensions()).messages, director_messages(meta=meta))
 
-    for prompt in (w, d):
-        assert "情色指导占位" in prompt
-        # 位置是约定的一部分：破限在**系统提示词的最后一段**。
+    for messages in both:
+        assert "情色指导占位" in joined(messages)
+        # 位置是约定的一部分：破限是**最后一条 system 消息**。
         #
-        # 与 SillyTavern 的约定有一处不同：那边放在整个请求的最后一条消息
-        # （历史之后），取最高的近因权重。我们放系统提示词末尾，因为对话跨轮
-        # 持续（D114），system 是缓存前缀，放这里只付一次钱；而且 writer 那侧
-        # 最后一条消息是细纲，放那儿两侧的装配方式就不一致了。
-        # **哪个更有效没有实测过**，这里先取一致性。
-        assert prompt.rstrip().endswith("破限占位")
+        # 与 SillyTavern 的约定有一处不同：那边压在整个请求的最后（历史之后），
+        # 取最高的近因权重。我们放在系统消息的末尾，因为对话跨轮持续（D114），
+        # 那一段是缓存前缀，放这里只付一次钱。**哪个更有效没有实测过。**
+        # 想换成 ST 的做法，把 YAML 里那一条移到 history 之后即可——
+        # 这正是 D137 把 role 写进条目要换来的东西。
+        system = [m for m in messages if m.role is Role.SYSTEM]
+        assert system[-1].content == "破限占位"
 
 
 def test_each_side_gets_its_own_sections_and_none_of_the_others() -> None:
@@ -471,7 +470,7 @@ def test_each_side_gets_its_own_sections_and_none_of_the_others() -> None:
     但 writer 永远拿不到 director 的推进与转述规则，director 永远拿不到文风。
     """
     meta = make_meta()
-    w = writer_system_prompt(meta, ControlDimensions())
+    w = writer_text(meta, ControlDimensions())
     d = prompt_for(meta=meta)
 
     writer_only = ["voice", "craft", "dialogue", "anti_formula"]
@@ -502,73 +501,134 @@ def test_style_and_prose_never_reach_the_director() -> None:
     assert "不要提前揭示照片的来源" in d
 
 
-# -- 可编排的装配器（D135 / D136） ---------------------------------------------
+# -- 提示词组装器（D135 / D136 / D137） -----------------------------------------
 
 
 def fake_yaml(monkeypatch, doc: dict) -> None:
-    monkeypatch.setattr(prompt_text, "load", lambda name: doc)
+    monkeypatch.setattr(assembler, "load", lambda name: doc)
 
 
 def test_sections_order_comes_from_yaml(monkeypatch) -> None:
     """**顺序由 YAML 决定，不在代码里。** 移动条目就换了位置。"""
     fake_yaml(
         monkeypatch,
-        {"sections": [{"title": "乙", "text": "第二段"}, {"title": "甲", "text": "第一段"}]},
+        {
+            "sections": [
+                {"role": "system", "title": "乙", "text": "第二段"},
+                {"role": "system", "title": "甲", "text": "第一段"},
+            ]
+        },
     )
-    out = prompt_text.assemble("writer")
+    out = joined(assembler.assemble("writer").messages)
     assert out.index("乙") < out.index("甲")
 
 
 def test_a_new_section_needs_only_yaml(monkeypatch) -> None:
-    """新增一节**只写 YAML**，不动代码——这正是这个装配器存在的理由。"""
-    fake_yaml(monkeypatch, {"sections": [{"title": "新加的", "text": "随便写点什么"}]})
-    assert prompt_text.assemble("writer") == "## 新加的\n随便写点什么"
+    """新增一节**只写 YAML**，不动代码——这正是这个组装器存在的理由。"""
+    fake_yaml(monkeypatch, {"sections": [{"role": "user", "title": "新加的", "text": "随便写点"}]})
+    assert assembler.assemble("writer").messages == [
+        Message(role=Role.USER, content="## 新加的\n随便写点")
+    ]
 
 
-def test_empty_section_is_skipped_title_and_all(monkeypatch) -> None:
-    """正文为空的条目**整条跳过**，标题也不出现。
+def test_each_section_is_one_message_and_carries_its_own_role(monkeypatch) -> None:
+    """**一个条目 = 一条消息，role 写在条目上**（D137）。
 
-    空标题白占体量，还会让模型以为这里本该有内容。
+    以前整份提示词是一大块 system 文本，「这一段用什么 role」「破限压在历史
+    之后还是之前」这类决定只能在代码里改。现在它们都在 YAML 里。
     """
     fake_yaml(
         monkeypatch,
         {
             "sections": [
-                {"title": "有内容", "text": "在"},
-                {"title": "空的", "inject": "nothing"},
+                {"role": "system", "text": "你是谁"},
+                {"role": "user", "text": "这一轮的输入"},
+                {"role": "assistant", "text": "好的"},
             ]
         },
     )
-    assert prompt_text.assemble("writer", blocks={"nothing": "  "}) == "## 有内容\n在"
+    assert [m.role for m in assembler.assemble("writer").messages] == [
+        Role.SYSTEM,
+        Role.USER,
+        Role.ASSISTANT,
+    ]
+
+
+def test_a_section_without_a_role_raises(monkeypatch) -> None:
+    """**role 必须写出来。** 默认成 system 会让人忘了这是个决定。"""
+    fake_yaml(monkeypatch, {"sections": [{"text": "没写 role"}]})
+    with pytest.raises(KeyError):
+        assembler.assemble("writer")
+
+
+def test_empty_section_is_skipped_message_and_all(monkeypatch) -> None:
+    """正文为空的条目**整条跳过**，标题、这条消息都不出现。
+
+    空消息白占体量，还会让模型以为这里本该有内容。
+    """
+    fake_yaml(
+        monkeypatch,
+        {
+            "sections": [
+                {"role": "system", "title": "有内容", "text": "在"},
+                {"role": "system", "title": "空的", "context": "nothing"},
+            ]
+        },
+    )
+    assert assembler.assemble("writer", contexts={"nothing": "  "}).messages == [
+        Message(role=Role.SYSTEM, content="## 有内容\n在")
+    ]
 
 
 def test_three_kinds_of_content_are_declared_separately(monkeypatch) -> None:
     """一节的内容有三种来源，YAML 里**分别声明**（D136）。
 
-    看一眼 sections 就知道这一节是整段注入、模板替换，还是按选项切换——
+    看一眼 sections 就知道这一节是系统控制的 context、模板替换，还是按选项切换——
     以前它们全叫 `slot`，从 YAML 那侧分不出来。
     """
     fake_yaml(
         monkeypatch,
         {
             "sections": [
-                {"title": "整段注入", "inject": "worldinfo"},
-                {"title": "模板替换", "text": "视角：{{pov}}"},
-                {"title": "选择控制", "choice": "density"},
+                {"role": "system", "title": "系统控制的 context", "context": "worldinfo"},
+                {"role": "system", "title": "模板替换", "text": "视角：{{pov}}"},
+                {"role": "system", "title": "选择控制", "choice": "density"},
             ],
             "density": {"sparse": "少写点", "rich": "多写点"},
         },
     )
-    out = prompt_text.assemble(
-        "writer",
-        blocks={"worldinfo": "### 教团\n信奉旧神。"},
-        values={"pov": "第三人称限知"},
-        options={"density": "rich"},
+    out = joined(
+        assembler.assemble(
+            "writer",
+            contexts={"worldinfo": "### 教团\n信奉旧神。"},
+            values={"pov": "第三人称限知"},
+            options={"density": "rich"},
+        ).messages
     )
     assert "### 教团" in out
     assert "视角：第三人称限知" in out
     assert "多写点" in out
     assert "少写点" not in out
+
+
+def test_a_context_can_be_a_run_of_messages(monkeypatch) -> None:
+    """前情是唯一一个**一条顶多条**的 context——它本来就是对话本身。
+
+    摘要、历史轮次各自带着自己的 role，压不成一条；所以这种条目上
+    **不写 role**，写了也不生效，那就直接报错（同 D125）。
+    """
+    history = [
+        Message(role=Role.USER, content="上一轮的输入"),
+        Message(role=Role.ASSISTANT, content="上一轮的细纲"),
+    ]
+    fake_yaml(monkeypatch, {"sections": [{"context": "history"}, {"role": "user", "text": "现在"}]})
+    prompt = assembler.assemble("writer", contexts={"history": history})
+    assert prompt.messages[:2] == history
+    assert prompt.starts["history"] == 0
+
+    fake_yaml(monkeypatch, {"sections": [{"role": "user", "context": "history"}]})
+    with pytest.raises(KeyError):
+        assembler.assemble("writer", contexts={"history": history})
 
 
 def test_an_empty_variable_takes_its_line_with_it(monkeypatch) -> None:
@@ -581,23 +641,24 @@ def test_an_empty_variable_takes_its_line_with_it(monkeypatch) -> None:
         monkeypatch,
         {
             "sections": [
-                {"title": "设定", "text": "题材：{{genre}}\n视角：{{pov}}"},
-                {"title": "目标", "text": "本次目标：{{goal}}。"},
+                {"role": "system", "title": "设定", "text": "题材：{{genre}}\n视角：{{pov}}"},
+                {"role": "system", "title": "目标", "text": "本次目标：{{goal}}。"},
             ]
         },
     )
-    out = prompt_text.assemble("writer", values={"genre": "悬疑", "pov": "", "goal": ""})
-    assert out == "## 设定\n题材：悬疑"
+    prompt = assembler.assemble("writer", values={"genre": "悬疑", "pov": "", "goal": ""})
+    assert joined(prompt.messages) == "## 设定\n题材：悬疑"
 
 
-def test_injected_content_is_not_parsed_as_a_template(monkeypatch) -> None:
+def test_injected_context_is_not_parsed_as_a_template(monkeypatch) -> None:
     """**注入进来的是数据，不是模板。**
 
     用户的世界设定里完全可能出现 `{{` ——按模板解析它，轻则报错，
     重则把用户的设定当成变量名吞掉。
     """
-    fake_yaml(monkeypatch, {"sections": [{"inject": "worldinfo"}]})
-    assert prompt_text.assemble("writer", blocks={"worldinfo": "{{不是变量}}"}) == "{{不是变量}}"
+    fake_yaml(monkeypatch, {"sections": [{"role": "system", "context": "worldinfo"}]})
+    prompt = assembler.assemble("writer", contexts={"worldinfo": "{{不是变量}}"})
+    assert prompt.messages[0].content == "{{不是变量}}"
 
 
 def test_names_that_do_not_line_up_raise(monkeypatch) -> None:
@@ -607,11 +668,38 @@ def test_names_that_do_not_line_up_raise(monkeypatch) -> None:
     那是最难查的一类问题（同 D125：没生效的东西不会报错）。
     """
     cases: list[dict] = [
-        {"sections": [{"inject": "根本没有这个"}]},
-        {"sections": [{"text": "{{没人给值}}"}]},
-        {"sections": [{"choice": "density"}], "density": {"rich": "多写点"}},
+        {"sections": [{"role": "system", "context": "根本没有这个"}]},
+        {"sections": [{"role": "system", "text": "{{没人给值}}"}]},
+        {"sections": [{"role": "system", "choice": "density"}], "density": {"rich": "多写点"}},
     ]
     for doc in cases:
         fake_yaml(monkeypatch, doc)
         with pytest.raises(KeyError):
-            prompt_text.assemble("writer")
+            assembler.assemble("writer")
+
+
+def test_the_turn_starts_after_the_history(monkeypatch) -> None:
+    """`starts` 是给调用方定位用的：**本轮从哪一条开始**。
+
+    director 靠它把这一轮新增的消息单独存进节点（D114 存增量不存快照）。
+    草稿（D118）跟着前情一起进那个位置，所以起点要再往前挪 `len(prior)`——
+    续跑的那几条属于**同一个节点**，不是新的一轮。
+    """
+    prior = [Message(role=Role.USER, content="上一轮")]
+    carried = [Message(role=Role.ASSISTANT, content="被打断那半轮")]
+    fake_yaml(
+        monkeypatch,
+        {
+            "sections": [
+                {"role": "system", "text": "前缀"},
+                {"context": "history"},
+                {"role": "user", "text": "本轮输入"},
+            ]
+        },
+    )
+    prompt = assembler.assemble("writer", contexts={"history": [*prior, *carried]})
+    assert prompt.starts["history"] == 1
+    assert prompt.messages[prompt.starts["history"] + len(prior) :] == [
+        *carried,
+        Message(role=Role.USER, content="本轮输入"),
+    ]

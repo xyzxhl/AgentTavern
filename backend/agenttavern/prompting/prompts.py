@@ -1,4 +1,4 @@
-"""上下文装配。
+"""谁收到什么。
 
 **哪些 context 给谁，是整个拓扑的地基**（D33 / Generation.md §3）。切法是：
 director 只读细纲历史、不读正文；writer 读正文上文以保证衔接。这一刀切开了最大的
@@ -14,6 +14,9 @@ director 只读细纲历史、不读正文；writer 读正文上文以保证衔�
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
+from ..llm import Message
 from ..models import (
     Capabilities,
     ControlDimensions,
@@ -22,11 +25,7 @@ from ..models import (
     WorldbookMode,
     WorldState,
 )
-from .prompt_text import assemble, choice
-
-
-def _section(title: str, body: str) -> str:
-    return f"## {title}\n{body}" if body.strip() else ""
+from .assembler import Prompt, assemble, text
 
 
 def _speaking(allowed: bool) -> str:
@@ -49,26 +48,26 @@ def _render_value(value: object, *, expandable: bool = True) -> str:
     if isinstance(value, list):
         if not value:
             return "（清单，空）"
-        text = "、".join(str(v) for v in value)
+        body = "、".join(str(v) for v in value)
         prefix = "清单："
     elif isinstance(value, dict):
         # 空字典曾渲染成「（无）」，形状信息全丢——与 D96 里空清单的病一模一样。
         # 实测后果：种子给的 `沈砚.冷却: {}` 被写回成一个字符串。
         if not value:
             return "（无，可逐项填）"
-        text = "；".join(f"{k}={v}" for k, v in value.items())
+        body = "；".join(f"{k}={v}" for k, v in value.items())
         prefix = ""
     elif isinstance(value, bool):
-        text, prefix = ("是" if value else "否"), ""
+        body, prefix = ("是" if value else "否"), ""
     else:
-        text, prefix = str(value), ""
+        body, prefix = str(value), ""
 
     # **只有还能展开时才允许截断。** 截断 + 按需展开是无损降维；一旦没了展开的路，
     # 它就变成有损筛选——模型看得见键名却永远拿不到内容，而且不知道自己丢了什么。
     # 那正是 D62 判 lorebook 关键词触发不合格的同一条理由。
-    if expandable and len(text) > STATE_INLINE_LIMIT:
-        return f"（{len(text)} 字，用 state_query 展开）"
-    return prefix + text
+    if expandable and len(body) > STATE_INLINE_LIMIT:
+        return f"（{len(body)} 字，用 state_query 展开）"
+    return prefix + body
 
 
 def render_state(state: WorldState, *, expandable: bool = True) -> str:
@@ -148,32 +147,37 @@ def _flow(caps: Capabilities, worldinfo: list[WorldbookEntry] | None) -> str:
     return "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
 
 
-def director_static_prefix(
+def director_prompt(
     meta: SessionMeta,
     control: ControlDimensions,
+    state: WorldState,
+    user_text: str | None,
     *,
+    history: Sequence[Message] = (),
     capabilities: Capabilities | None = None,
     worldinfo: list[WorldbookEntry] | None = None,
-) -> str:
-    """**跨轮不变的那部分**，用作持续对话的 system prompt（D114）。
+) -> Prompt:
+    """装配 director 收到的整串消息。
 
-    对话跨轮持续之后，system prompt 就是缓存前缀的开头，**凡是每轮都会变的
-    东西都不能放在这里**，否则前缀每轮都变，缓存永远打不中，而且旧值会以
-    "写在最前面的权威信息"的姿态留在上下文里。
+    **顺序、标题、role 都不在这里，在 director.yaml 的 `sections` 里**（D135–D137）。
+    这里只回答三个问题：每段 context 注入什么、变量的值是什么、选项组选哪一档。
 
-    因此 state 与前情移到每一轮的用户消息里（``director_turn_prompt``），
-    这里只留：身份与分工、题材设定、世界设定、写法规则、禁止事项、流程。
+    但有一条约束是这里保证不了的、也不该由这里保证：**前情之前的部分跨轮不变**
+    （D114）。对话跨轮持续，那一段就是缓存前缀，凡是每轮会变的东西排在它前面，
+    缓存就永远打不中，而且旧值会以"写在最前面的权威信息"的姿态留着。
+    所以 state 与本轮要求都排在 `history` 之后——**这是 YAML 里的顺序决定的**，
+    改动它会付出缓存代价。
     """
     caps = capabilities or Capabilities()
-
-    # **顺序、标题、格式都不在这里，在 director.yaml 的 `sections` 里**（D135/D136）。
-    # 这里只回答三个问题：整段注入什么、变量的值是什么、选项组选哪一档。
     return assemble(
         "director",
-        blocks={
+        contexts={
             "worldinfo": render_worldinfo(worldinfo or [], expandable=caps.worldinfo_read),
             "forbidden": "\n".join(f"- {item}" for item in meta.forbidden),
             "flow": _flow(caps, worldinfo),
+            "history": history,
+            "state": render_state(state, expandable=caps.state_query) if caps.state else "",
+            "user_input": user_text or text("director", "no_user_input"),
         },
         values={
             "genre_tone": meta.genre_tone,
@@ -181,44 +185,16 @@ def director_static_prefix(
             "pov": meta.pov,
             "goal": meta.goal.description if meta.goal else "",
         },
-        options={"narration": control.input_handling.value},
+        options={
+            "narration": control.input_handling.value,
+            "input_handling": control.input_handling.value,
+            # **事件密度是「铺陈密度」的反向投影**：director 不该知道篇幅（D93），
+            # 所以同一个控制维度在两侧读的是两组不同的措辞。
+            "event_density": control.expansion_density.value,
+            "authority": control.model_authority.value,
+            "speaking_rule": _speaking(control.allow_speaking_for_user),
+        },
     )
-
-
-def director_turn_prompt(
-    control: ControlDimensions,
-    state: WorldState,
-    user_text: str | None,
-    *,
-    capabilities: Capabilities | None = None,
-) -> str:
-    """**每一轮都会变的那部分**，放在这一轮的用户消息里。
-
-    state 必须在这里而不是 system prompt 里：持续对话中 system 是缓存前缀，
-    放在那儿的状态会过期，而且会以"写在最前面"的权威姿态误导模型。
-    放在最新一轮，则它天然是最新的一份。
-    """
-    caps = capabilities or Capabilities()
-    handling = choice("director", "input_handling", control.input_handling.value)
-    # **事件密度是「铺陈密度」的反向投影**：director 不该知道篇幅（D93），
-    # 所以同一个控制维度在两侧读的是两组不同的措辞。
-    density = choice("director", "event_density", control.expansion_density.value)
-    authority = choice("director", "authority", control.model_authority.value)
-    directives = "\n".join(
-        [
-            f"- 输入处理：{handling}",
-            f"- 事件密度：{density}",
-            f"- 剧情控制权：{authority}",
-            "- " + choice("director", "speaking_rule", _speaking(control.allow_speaking_for_user)),
-        ]
-    )
-    rendered_state = render_state(state, expandable=caps.state_query) if caps.state else ""
-    parts = [
-        _section("当前状态", rendered_state),
-        _section("本轮要求", directives),
-        _section("用户输入", user_text or "（没有新的用户输入，按当前设定继续推进。）"),
-    ]
-    return "\n\n".join(p for p in parts if p)
 
 
 def _has_lookup_tools(caps: Capabilities, worldinfo: list[WorldbookEntry] | None) -> bool:
@@ -229,20 +205,27 @@ def _has_lookup_tools(caps: Capabilities, worldinfo: list[WorldbookEntry] | None
     )
 
 
-def writer_system_prompt(meta: SessionMeta, control: ControlDimensions) -> str:
-    """writer 的上下文：**只有文风相关的东西 + 否定项**。
+def writer_prompt(
+    meta: SessionMeta,
+    control: ControlDimensions,
+    *,
+    outline: str = "",
+    upstream: str = "",
+) -> Prompt:
+    """装配 writer 收到的整串消息：**只有文风相关的东西 + 否定项 + 上文 + 细纲**。
 
     它拿不到 state 的值、拿不到世界设定、拿不到用户原始指令，那些都已经在细纲里了。
     它的职责是改写，不是补充。
     """
-    # **顺序、标题、格式都不在这里，在 writer.yaml 的 `sections` 里**（D135/D136）。
     return assemble(
         "writer",
-        blocks={
+        contexts={
             "character_voices": "\n".join(
                 f"- {name}：{how}" for name, how in meta.character_voices.items()
             ),
             "forbidden": "\n".join(f"- {item}" for item in meta.forbidden),
+            "upstream": upstream,
+            "outline": outline,
         },
         values={"prose_style": meta.prose_style, "pov": meta.pov},
         options={

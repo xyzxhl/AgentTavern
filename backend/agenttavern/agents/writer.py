@@ -11,11 +11,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..llm import Message, Role, Usage
+from ..llm import Usage
 from ..models import Actor, Node, TraceEventType
+from ..prompting import writer_prompt
 from ..tools import RunContext
 from ..tracing import Tracer
-from .prompts import writer_system_prompt
 
 DEVIATION_MARKER = "---偏离---"
 
@@ -33,15 +33,13 @@ class WriterResult:
 
 
 async def run_writer(ctx: RunContext, tracer: Tracer, outline: str) -> WriterResult:
-    system = writer_system_prompt(ctx.session.meta, ctx.session.control)
-
-    messages = [Message(role=Role.SYSTEM, content=system)]
-
     upstream = _recent_prose(ctx)
-    if upstream:
-        messages.append(Message(role=Role.USER, content=f"## 上文\n{upstream}"))
-
-    messages.append(Message(role=Role.USER, content=f"## 本轮细纲\n{outline}"))
+    messages = writer_prompt(
+        ctx.session.meta,
+        ctx.session.control,
+        outline=outline,
+        upstream=upstream,
+    ).messages
 
     tracer.emit(
         TraceEventType.CONTEXT_ASSEMBLED,

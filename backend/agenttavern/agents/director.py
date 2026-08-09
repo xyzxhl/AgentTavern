@@ -23,9 +23,9 @@ from ..models import (
     UserInput,
     trim_dangling_tool_call,
 )
+from ..prompting import director_prompt
 from ..tools import RunContext, ToolOutcome, ToolRegistry
 from ..tracing import Tracer
-from .prompts import director_static_prefix, director_turn_prompt
 from .replay import INTERJECTION_MARK, replay_messages, turn_messages
 
 MAX_ROUNDS = 24
@@ -76,7 +76,15 @@ async def run_director(
     session = ctx.session
     history = ctx.repo.path_to(ctx.parent_id) if ctx.parent_id else []
 
-    # **对话跨轮持续**（D114）：system 只放不变的部分，之前几轮接在后面，
+    prior = replay_messages(history, readable=session.capabilities.history_search)
+
+    # **打断是挂起**（D118）：上次被截断处之前的对话原样接回来，新输入接在它后面。
+    # 草稿存的是"本轮新增的那几条"，历史仍然每次从路径重建——两者不重复。
+    # 它跟着前情一起进 `history` 那个位置：**它的位置不可选**，必须紧接前情、
+    # 排在这一轮的输入之前，所以不单独占一个可编排的条目。
+    carried = list(resume.messages) if resume else []
+
+    # **对话跨轮持续**（D114）：前情之前的部分跨轮不变，之前几轮接在后面，
     # 这一轮只追加变化的部分。前缀因此稳定，缓存打得中。
     #
     # 之前几轮是**扁平化**过的（D121）：调了什么、返回了什么、细纲是什么，
@@ -84,13 +92,8 @@ async def run_director(
     # 自己上一轮**查过什么、写下了什么**，但看不见**为什么那么想**——推理只活到
     # 产出它的那个 run 结束（D120）。这是笔账：一轮推理一万五千字，而决定本身
     # 以细纲的形式完整留着。
-    system = director_static_prefix(
+    prompt = director_prompt(
         meta=session.meta,
-        control=session.control,
-        capabilities=session.capabilities,
-        worldinfo=ctx.repo.worldbook(),
-    )
-    turn = director_turn_prompt(
         control=session.control,
         # 用 `current_state` 而不是 `base_state`：续跑时（D118）暂存区里已经有
         # 上次打断前写下的增量，注入的状态必须**把它算进去**——否则模型刚看完
@@ -98,30 +101,23 @@ async def run_director(
         # 没有草稿时暂存区是空的，两者等价。
         state=ctx.current_state(),
         user_text=user_input.text if user_input else None,
+        history=[*prior, *carried],
         capabilities=session.capabilities,
+        worldinfo=ctx.repo.worldbook(),
     )
+    messages = prompt.messages
 
-    prior = replay_messages(history, readable=session.capabilities.history_search)
-
-    # **打断是挂起**（D118）：上次被截断处之前的对话原样接回来，新输入接在它后面。
-    # 草稿存的是"本轮新增的那几条"，历史仍然每次从路径重建——两者不重复。
-    carried = list(resume.messages) if resume else []
-    messages = [
-        Message(role=Role.SYSTEM, content=system),
-        *prior,
-        *carried,
-        Message(role=Role.USER, content=turn),
-    ]
     # 续跑的那几条**属于同一个节点**：这一轮最终提交时，它们和后面新增的一起
     # 存进 `director_messages`，所以起点要划在草稿之前，不是新输入之前。
-    turn_start = 1 + len(prior)
+    turn_start = prompt.starts["history"] + len(prior)
 
     tracer.emit(
         TraceEventType.CONTEXT_ASSEMBLED,
         Actor.ORCHESTRATOR,
         "装配了 director 的上下文",
         {
-            "system_chars": len(system),
+            "prompt_messages": len(messages),
+            "prompt_chars": sum(len(m.content or "") for m in messages),
             "history_runs": len(history),
             "prior_messages": len(prior),
             "resumed_messages": len(carried),

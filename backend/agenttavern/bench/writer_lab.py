@@ -26,11 +26,11 @@ import asyncio
 import sys
 from dataclasses import dataclass, field
 
-from ..agents.prompts import writer_system_prompt
 from ..agents.writer import DEVIATION_MARKER, RECENT_PROSE
 from ..config import Settings, load_settings
-from ..llm import LLMGateway, Message, Role
+from ..llm import LLMGateway, Message
 from ..models import ControlDimensions, SessionMeta
+from ..prompting import writer_prompt
 from ..storage import Store
 
 
@@ -101,12 +101,20 @@ TERSE_CRAFT = """用网文的笔法写，像讲给人听，别端着。
 """
 
 
-def _terse_prompt(meta: SessionMeta, control: ControlDimensions) -> str:
-    """把三节细则整段换掉，其余原样。"""
-    full = writer_system_prompt(meta, control)
-    start = full.index("## 台词")
-    end = full.index("## 文风")
-    return full[:start] + f"## 落笔\n{TERSE_CRAFT}\n\n" + full[end:]
+def _terse(messages: list[Message]) -> list[Message]:
+    """把三节细则整段换掉，其余原样。
+
+    一个条目一条消息之后（D137），这就是**按整条消息增删**，
+    不再是在一大块文本里找下标切片。
+    """
+    out: list[Message] = []
+    for message in messages:
+        body = message.content or ""
+        if body.startswith("## 落笔"):
+            out.append(message.model_copy(update={"content": f"## 落笔\n{TERSE_CRAFT}"}))
+        elif not body.startswith(("## 台词", "## 避开定式")):
+            out.append(message)
+    return out
 
 
 async def render_once(
@@ -118,11 +126,9 @@ async def render_once(
     thinking: bool | None = None,
     terse: bool = False,
 ) -> Rendering:
-    system = _terse_prompt(meta, control) if terse else writer_system_prompt(meta, control)
-    messages = [Message(role=Role.SYSTEM, content=system)]
-    if take.upstream:
-        messages.append(Message(role=Role.USER, content=f"## 上文\n{take.upstream}"))
-    messages.append(Message(role=Role.USER, content=f"## 本轮细纲\n{take.outline}"))
+    messages = writer_prompt(meta, control, outline=take.outline, upstream=take.upstream).messages
+    if terse:
+        messages = _terse(messages)
 
     response = await gateway.complete(messages, thinking=thinking)
     raw = response.content

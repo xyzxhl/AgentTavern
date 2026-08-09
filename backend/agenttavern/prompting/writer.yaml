@@ -8,17 +8,18 @@
 # 每条尽量短。实测繁琐的条款不会更有效，只会互相压——preset 的每一条都是一两行。
 #
 # ============================================================================
-# 装配顺序 = 下面 `sections` 的顺序。四种条目：
+# 装配顺序 = 下面 `sections` 的顺序。**一个条目 = 一条消息，role 写在条目上。**
+# 四种正文来源：
 #
-#   text    正文直接写在这一条里 —— **新增短提示词走这条**
-#   key     引用本文件顶层的命名块（长文本留在原处更好编辑）
-#   inject  整段注入，内容由代码渲染（角色语言习惯、否定项……）
-#   choice  选择控制，**二级标题就是选项名**，代码只负责说选哪个
+#   text     正文直接写在这一条里 —— **新增短提示词走这条**
+#   key      引用本文件顶层的命名块（长文本留在原处更好编辑）
+#   context  系统控制的 context，由代码渲染整段注入（角色语言习惯、上文、细纲……）
+#   choice   选择控制，**二级标题就是选项名**，代码只负责说选哪个
 #
 #   text / key 里的 {{var}} 会被替换；**变量为空就删掉它所在的那一行**，
 #   一行都不剩这一节就不出现。约定一行一个变量。
 #
-#   title 可选；正文为空的条目整条跳过，连标题都不出现。
+#   title 可选；正文为空的条目整条跳过，连这条消息都不出现。
 #
 # 顺序是有意的：先说**该往哪写**（语感 → 落笔 → 台词），再说**别往哪写**（定式）。
 # 抽象的在前、具体的在后，这样具体条款读起来是前面那句话的展开，
@@ -26,25 +27,30 @@
 # ============================================================================
 
 sections:
-  - {key: intro}
-  - {title: 语感, key: voice}
-  - {title: 落笔, key: craft}
-  - {title: 台词, key: dialogue}
-  - {title: 避开定式, key: anti_formula}
-  - {title: 文风, text: "{{prose_style}}"}
+  - {role: system, key: intro}
+  - {role: system, title: 语感, key: voice}
+  - {role: system, title: 落笔, key: craft}
+  - {role: system, title: 台词, key: dialogue}
+  - {role: system, title: 避开定式, key: anti_formula}
+  - {role: system, title: 文风, text: "{{prose_style}}"}
 
   # 情色指导紧跟文风：它是文风的一部分（手法），
   # 而 content_scale 是判据（能到什么程度），归 director 那侧的「设定」。
-  - {title: 情色与身体, key: nsfw}
+  - {role: system, title: 情色与身体, key: nsfw}
 
-  - {title: 角色语言习惯, inject: character_voices}
-  - {title: 视角, text: "{{pov}}"}
-  - {title: 边界, choice: speaking_rule}
-  - {title: 禁止事项, inject: forbidden}
-  - {title: 铺陈程度, choice: density}
+  - {role: system, title: 角色语言习惯, context: character_voices}
+  - {role: system, title: 视角, text: "{{pov}}"}
+  - {role: system, title: 边界, choice: speaking_rule}
+  - {role: system, title: 禁止事项, context: forbidden}
+  - {role: system, title: 铺陈程度, choice: density}
 
-  # 与 director 同一个约定：破限放在最后一段。
-  - {key: jailbreak}
+  # 与 director 同一个约定：破限放在系统提示词的最后一段。
+  - {role: system, key: jailbreak}
+
+  # writer 没有历史——它每次都是一次干净的渲染（D52）。
+  # 上文只为接住语气，两轮就够（RECENT_PROSE）；长程记忆是 director 的事。
+  - {role: user, title: 上文, context: upstream}
+  - {role: user, title: 本轮细纲, context: outline}
 
 intro: |
   你负责根据细纲生成正文。
