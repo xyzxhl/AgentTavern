@@ -184,10 +184,13 @@ async def test_trace_carries_readable_labels(tmp_path: Path) -> None:
 # -- 上下文装配：拓扑的地基 --------------------------------------------------
 
 
+STYLE = "jishi"
+"""测试里用的文风档位。**文风归控制维度**，不归 meta——它是读者偏好，不是世界属性。"""
+
+
 def make_meta() -> SessionMeta:
     return SessionMeta(
         genre_tone="悬疑",
-        prose_style="kezhi",
         character_voices={"陈": "说话总是绕圈子"},
         forbidden=["不要提前揭示照片的来源"],
     )
@@ -197,7 +200,7 @@ def test_director_never_sees_style_or_prose(tmp_path: Path) -> None:
     """D33 的隔离基础：文风与角色语言习惯只进 writer，正文只进 writer。"""
     prompt = prompt_for(meta=make_meta())
 
-    assert _real_choice("writer", "prose_style", "kezhi") not in prompt
+    assert _real_choice("writer", "prose_style", STYLE) not in prompt
     assert "说话总是绕圈子" not in prompt
     # 「正文不进 director」现在由 test_run.py 守着——对话跨轮持续之后（D114），
     # 前情在**重放的消息**里而不在提示词里，那条断言必须看全部上下文才有意义。
@@ -205,9 +208,9 @@ def test_director_never_sees_style_or_prose(tmp_path: Path) -> None:
 
 def test_writer_never_sees_state_or_history(tmp_path: Path) -> None:
     """writer 只承担文风。它拿不到状态值、世界设定、用户原始指令——都已在细纲里。"""
-    prompt = writer_text(make_meta(), ControlDimensions())
+    prompt = writer_text(make_meta(), ControlDimensions(prose_style=STYLE))
 
-    assert _real_choice("writer", "prose_style", "kezhi") in prompt
+    assert _real_choice("writer", "prose_style", STYLE) in prompt
     assert "说话总是绕圈子" in prompt
     assert "悬疑" not in prompt
     assert "state" not in prompt.lower()
@@ -498,7 +501,7 @@ def test_style_and_prose_never_reach_the_director() -> None:
     meta = make_meta()
     d = prompt_for(meta=meta)
 
-    assert _real_choice("writer", "prose_style", meta.prose_style) not in d
+    assert _real_choice("writer", "prose_style", STYLE) not in d
     assert "说话总是绕圈子" not in d
     # **否定项现在两侧都不注入**：`forbidden` 这个 context 代码照旧供着，
     # 但两份 YAML 里都没有引用它的 section 了，所以 D35 暂时不成立。

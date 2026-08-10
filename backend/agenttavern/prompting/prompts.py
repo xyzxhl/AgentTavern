@@ -8,8 +8,9 @@ director 只读细纲历史、不读正文；writer 读正文上文以保证衔�
 
 - **文风与角色语言习惯只进 writer。** 它们不参与检索，参与每一个 token。
 - **正文只进 writer。** director 能覆盖五倍历史跨度正是因为它从不读正文（D54）。
-- **否定项两边都要。** 细纲说"会发生什么"，否定项说"不能写什么"，按定义不在细纲里；
-  writer 为求文采添细节时可能泄露伏笔（D35）。体量极小，不破坏隔离。
+
+D35（否定项两边都要）**已改设计**：两份 YAML 里都不再引用 `forbidden`。
+渲染仍然照供，想要哪一侧加一条 `context: forbidden` 即可，不用动这里。
 """
 
 from __future__ import annotations
@@ -185,7 +186,8 @@ def director_prompt(
         },
         values={
             "content_scale": meta.content_scale,
-            "pov": meta.pov,
+            # 视角是读者偏好，跟着控制维度走，不跟着世界设定走。
+            "pov": control.pov,
             "goal": meta.goal.description if meta.goal else "",
         },
         options={
@@ -215,7 +217,7 @@ def writer_prompt(
     outline: str = "",
     upstream: str = "",
 ) -> Prompt:
-    """装配 writer 收到的整串消息：**只有文风相关的东西 + 否定项 + 上文 + 细纲**。
+    """装配 writer 收到的整串消息：**只有文风相关的东西 + 上文 + 细纲**。
 
     它拿不到 state 的值、拿不到世界设定、拿不到用户原始指令，那些都已经在细纲里了。
     它的职责是改写，不是补充。
@@ -230,12 +232,12 @@ def writer_prompt(
             "upstream": upstream,
             "outline": outline,
         },
-        values={"pov": meta.pov},
+        values={"pov": control.pov},
         # **文风是选项名，不是自由文本**：档位全文写在 writer.yaml 里，
-        # session 只说选哪一档。文风是最该反复调的东西，写成自由文本时它散在
-        # 每个 session 里，改一次只影响一个故事，从提示词这侧还完全看不见。
+        # 这里只说选哪一档。而且它和铺陈程度一样来自 `control`——
+        # 文风是读者这一侧的偏好，不是这个世界的属性。
         options={
-            "prose_style": meta.prose_style,
+            "prose_style": control.prose_style,
             "density": control.expansion_density.value,
         },
     )

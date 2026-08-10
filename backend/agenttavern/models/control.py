@@ -82,6 +82,25 @@ class ControlDimensions(BaseModel):
     两种偏好都很常见，没有默认答案，推断必错一半，因此必须显式。
     """
 
+    prose_style: str = "wangwen"
+    """文风档位名。仅注入 writer（D33 的隔离基础）。
+
+    **存的是 `writer.yaml` 里 `prose_style` 那个选项组的二级标题名**（`wangwen`、
+    `gufeng`、`jishi`……），不是一段自由文本：文风是最该反复调的东西，写成自由
+    文本时它散在每个 session 里，改一次只影响一个故事，而且从提示词那侧完全看
+    不见；做成选项之后，一档就是一段可编辑的提示词，加一档只是加一个二级标题。
+
+    **它在这里而不在 `SessionMeta`**，理由和 `expansion_density` 一样：文风是
+    读者这一侧的偏好，不是这个世界的属性。同一本世界设定换个文风照样成立，
+    换个人来读就该能换。题材与基调不同——那是世界自己的事，留在 `SessionMeta`。
+
+    这里**不做成枚举**：加一档不该动 Python。名字对不上时 `choice()` 会报错，
+    错误信息里带着文件名和键名。
+    """
+
+    pov: str = ""
+    """视角。同上——读者偏好，不是世界属性。"""
+
     def merged_with(self, override: ControlOverride | None) -> ControlDimensions:
         """套用单轮覆盖。未指定的项沿用常驻设置（D45）。"""
         if override is None:
@@ -101,6 +120,8 @@ class ControlOverride(BaseModel):
     model_authority: ModelAuthority | None = None
     expansion_density: ExpansionDensity | None = None
     allow_speaking_for_user: bool | None = None
+    prose_style: str | None = None
+    pov: str | None = None
 
 
 # --------------------------------------------------------------------------
@@ -129,10 +150,11 @@ class Goal(BaseModel):
 
 
 class SessionMeta(BaseModel):
-    """Session 元指令：这个 session 要什么体验。定义目标，不定义过程。
+    """Session 元指令：**这个世界是什么**。定义目标，不定义过程。
 
-    文风与角色语言习惯归此处而非控制维度——它们不随 run 变化，
-    是 writer 的常驻输入。
+    分界线是「换个人来读还成不成立」：题材与基调、尺度、角色语言习惯、否定项
+    都是世界自己的属性，跟着世界设定走，换谁来读都一样；文风和视角不是——
+    它们是读者这一侧的偏好，所以和铺陈程度一起归 `ControlDimensions`。
     """
 
     title: str = "未命名"
@@ -140,22 +162,7 @@ class SessionMeta(BaseModel):
     """剧情尺度：暴力、性、黑暗程度。"""
 
     genre_tone: str = ""
-    """题材与基调。"""
-
-    pov: str = ""
-    """视角。"""
-
-    prose_style: str = "default"
-    """文风档位名。仅注入 writer（D33 的隔离基础）。
-
-    **存的是 `writer.yaml` 里 `prose_style` 那个选项组的二级标题名**（`wangwen`、
-    `wenbai`、`ganjing`……），不是一段自由文本。文风是最该反复调的东西，写成自由
-    文本时它散在每个 session 里，改一次只影响一个故事，而且从提示词那侧完全看不见；
-    做成选项之后，一档就是一段可编辑的提示词，加一档只是加一个二级标题（D136）。
-
-    这里**不做成枚举**：加一档不该动 Python。名字对不上时 `choice()` 会报错，
-    错误信息里带着文件名和键名。
-    """
+    """题材与基调。**这是世界自己的事**，所以留在这里而不是控制维度。"""
 
     character_voices: dict[str, str] = Field(default_factory=dict)
     """角色语言习惯：角色名 -> 说话方式。仅注入 writer。"""
@@ -163,8 +170,9 @@ class SessionMeta(BaseModel):
     forbidden: list[str] = Field(default_factory=list)
     """否定项：不能提前揭示的、不允许发明的。
 
-    **必须同时给 director 和 writer**（D35）——细纲说"会发生什么"，
-    否定项说"不能写什么"，按定义不在细纲里。体量极小，不破坏隔离。
+    **当前两侧都不注入**：D35 曾要求它同时进 director 和 writer，现已改设计——
+    两份 YAML 里都没有引用 `forbidden` 的 section 了。字段和渲染都留着，
+    想要哪一侧就在那份 YAML 里加一条 `context: forbidden`，不用动 Python。
     """
 
     goal: Goal | None = None

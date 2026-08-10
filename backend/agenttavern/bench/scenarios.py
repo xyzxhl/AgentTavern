@@ -66,12 +66,10 @@ def _noir_session() -> Session:
         meta=SessionMeta(
             title="回归·悬疑",
             genre_tone="现代，悬疑，克制",
-            pov="第三人称，跟随林昭",
-            prose_style="kezhi",
             character_voices={"陈屿": "说话绕，答非所问，很少给准话"},
             forbidden=["不要提前揭示照片的来源", "不要让陈屿直接承认任何事"],
         ),
-        control=ControlDimensions(),
+        control=ControlDimensions(prose_style="jishi", pov="第三人称，跟随林昭"),
         capabilities=Capabilities(trace=True),
     )
 
@@ -133,12 +131,10 @@ def _data_session() -> Session:
         meta=SessionMeta(
             title="回归·数据化",
             genre_tone="修真，带明确的数值系统。资源、冷却、伤势都是硬约束，不能含糊带过。",
-            pov="第三人称，跟随沈砚",
-            prose_style="pingshi",
             character_voices={"柜台执事": "公事公办，只认规矩和价钱"},
             forbidden=["不要凭空给沈砚新的灵石或丹药", "不要让冷却中的法术生效"],
         ),
-        control=ControlDimensions(),
+        control=ControlDimensions(prose_style="jishi", pov="第三人称，跟随沈砚"),
         capabilities=Capabilities(trace=True),
     )
 
@@ -324,10 +320,10 @@ CHAPTERS = Scenario(
 
 # -- pulp：文风的另一极 ---------------------------------------------------------
 
-# 前两个场景的 `prose_style` 都是克制文学向（"短句、冷调、不用夸张比喻""平实，
-# 不堆砌辞藻"），而它们产出的正文**节奏几乎一样**。这就有两种可能：writer 确实
-# 在跟着文风走、只是两种文风本来就近；或者 **writer 根本没在跟文风走**，
-# 一直在用同一副默认腔调。两个场景分不开这两种解释。
+# 前两个场景的文风都是克制文学向（现在同为 `jishi` 档），而它们产出的正文
+# **节奏几乎一样**。这就有两种可能：writer 确实在跟着文风走、只是两种文风本来就近；
+# 或者 **writer 根本没在跟文风走**，一直在用同一副默认腔调。
+# 两个场景分不开这两种解释。
 #
 # 因此需要一个**风格反差最大**的场景：节奏快、情绪外放、心理直给、爽感优先。
 # 它同时是目标"表达自然、达到主流网文水平"的量尺——拿克制文学向的样本
@@ -339,15 +335,13 @@ def _pulp_session() -> Session:
         meta=SessionMeta(
             title="回归·网文",
             genre_tone="都市异能，节奏快，爽感优先。冲突直给，不绕弯子。",
-            pov="第三人称，跟随周野",
-            prose_style="wangwen",
             character_voices={
                 "赵铖": "居高临下，说话带刺，习惯用反问压人",
                 "小满": "语速快，爱插话，情绪都在脸上",
             },
             forbidden=["不要让周野这一轮就暴露自己的能力", "不要出现说教式的旁白"],
         ),
-        control=ControlDimensions(),
+        control=ControlDimensions(prose_style="wangwen", pov="第三人称，跟随周野"),
         capabilities=Capabilities(trace=True),
     )
 
@@ -418,8 +412,6 @@ def _gufeng_session() -> Session:
         meta=SessionMeta(
             title="回归·古风",
             genre_tone="架空古代，宫廷。含蓄，话里有话，礼数是武器。",
-            pov="第三人称，跟随沈玉茹",
-            prose_style="wenbai",
             character_voices={
                 "沈玉茹": "话不说满，越紧张越客气",
                 "崔嬷嬷": "句句合规矩，规矩就是她的刀",
@@ -429,7 +421,7 @@ def _gufeng_session() -> Session:
                 "不要让崔嬷嬷把话挑明",
             ],
         ),
-        control=ControlDimensions(),
+        control=ControlDimensions(prose_style="gufeng", pov="第三人称，跟随沈玉茹"),
         capabilities=Capabilities(trace=True),
     )
 
@@ -489,12 +481,10 @@ def _xihuan_session() -> Session:
         meta=SessionMeta(
             title="回归·西幻",
             genre_tone="低魔西幻，边境小镇。冷硬，务实，魔法昂贵且有代价。",
-            pov="第三人称，跟随卡伦",
-            prose_style="ganjing",
             character_voices={"教士艾德蒙": "引经据典，但话里全是价钱"},
             forbidden=["不要解释魔法体系的原理", "不要让艾德蒙直接开价"],
         ),
-        control=ControlDimensions(),
+        control=ControlDimensions(prose_style="jishi", pov="第三人称，跟随卡伦"),
         capabilities=Capabilities(trace=True),
     )
 

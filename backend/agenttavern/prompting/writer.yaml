@@ -1,4 +1,7 @@
-# writer 的提示词。**只有文风相关的东西 + 否定项**（D33）。
+# writer 的提示词。**只有文风相关的东西**（D33）。
+#
+# 否定项曾经也在这里（D35），现已改设计——两侧都不注入（D139）。
+# `forbidden` 这个 context 代码照旧供着，想要就加一条 `context: forbidden`。
 #
 # 一条纪律：**这里的所有例子都必须来自人写的文本**——docs/novel_example/ 的参考小说，
 # 或 docs/sillytavern_preset_example/ 里经过实战打磨的 preset。

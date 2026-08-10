@@ -48,14 +48,16 @@ def test_scenarios_span_two_ends_of_prose_style() -> None:
     因此回归集里必须有一个文风反差最大的场景。它同时是"表达自然、
     达到主流网文水平"这条目标的量尺：拿克制文学向的样本去量网文水平是量错了尺子。
     """
-    styles = {name: s.make_session().meta.prose_style for name, s in SCENARIOS.items()}
-    # `prose_style` 现在是档位名，档位全文在 writer.yaml 里（D136）。
+    # `prose_style` 现在是**档位名**，档位全文在 writer.yaml 里（D136）；
+    # 而且它归控制维度不归 meta——文风是读者偏好，不是世界属性。
+    styles = {name: s.make_session().control.prose_style for name, s in SCENARIOS.items()}
     bodies = {name: choice("writer", "prose_style", value) for name, value in styles.items()}
 
-    assert "不用夸张比喻" in bodies["noir"]
-    assert "网文腔" in bodies["pulp"]
-    # 两极必须真的对立，否则这个对照没有意义
-    assert "长句" in bodies["pulp"] or "短促" in bodies["pulp"]
+    # 断言的是**两极真的对立**，不是某一档的措辞：档位正文随时会改，
+    # 「回归集里必须有反差最大的一对」才是不变量。
+    assert styles["noir"] != styles["pulp"]
+    assert "网文" in bodies["pulp"]
+    assert "克制" in bodies["noir"]
 
 
 def test_chapters_scenario_declares_boundaries_without_leaking_them() -> None:
