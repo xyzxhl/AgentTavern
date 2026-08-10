@@ -20,6 +20,7 @@ from agenttavern.models import (
     WorldbookEntry,
 )
 from agenttavern.orchestration import execute_run
+from agenttavern.prompting import choice
 from agenttavern.storage import Store
 from agenttavern.tools import ToolRegistry
 from agenttavern.tracing import Tracer
@@ -150,9 +151,10 @@ async def test_control_override_applies_for_this_run_only(tmp_path: Path) -> Non
     # 控制维度**每轮都可能变**，所以它排在前情之后、跟这一轮的输入在一起，
     # 不进跨轮不变的那一段——那段是持续对话的缓存前缀，放会变的东西进去，
     # 前缀每轮都失效（D114）。
+    directive = choice("director", "narration_and_advancement", "narrate_only")
     sent = llm.messages_of(0)
-    assert any("不要推进后续剧情" in (m["content"] or "") for m in sent)
-    assert all(m["role"] != "system" for m in sent if "不要推进后续剧情" in (m["content"] or ""))
+    assert any(directive in (m["content"] or "") for m in sent)
+    assert all(m["role"] != "system" for m in sent if directive in (m["content"] or ""))
 
 
 # -- 打断（D60） -------------------------------------------------------------

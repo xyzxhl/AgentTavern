@@ -39,20 +39,36 @@ sections:
   - {role: user, title: 输入契约, key: input_contract}
   - {role: user, title: 创作指导, key: creation_guidance}
   - {role: user, title: 台词, key: dialogue}
-  - {role: user, title: 文风, text: "{{prose_style}}"}
+  # 文风是**选项组**，档位全文写在下面。session 只存档位名。
+  - role: user
+    title: 文风
+    intro: 以下是本作的文风。它高于你自己的写作习惯；与上面的通用指导冲突时，以它为准。
+    choice: prose_style
 
   # 情色指导紧跟文风：它是文风的一部分（手法），
   # 而 content_scale 是判据（能到什么程度），归 director 那侧的「设定」。
   - {role: user, title: 情色描写, key: nsfw}
 
-  - {role: user, title: 角色语言习惯, context: character_voices}
+  - role: user
+    title: 角色语言习惯
+    intro: 以下角色各有自己的说话方式。写他们的对白时按这里的习惯来，不要写成同一个人。
+    context: character_voices
+
   - {role: user, title: 视角, text: "无论主视角如何，剧情全程必须采用第三人称创作。"}
   - {role: user, title: 铺陈程度, choice: density}
 
   # writer 没有历史——它每次都是一次干净的渲染（D52）。
   # 上文只为接住语气，两轮就够（RECENT_PROSE）；长程记忆是 director 的事。
-  - {role: user, title: 上文, context: upstream}
-  - {role: user, title: 本轮细纲, context: outline}
+  - role: user
+    title: 上文
+    intro: 以下是紧接着本段之前的正文。**它只用来接住语气和现场**，不要复述、不要续写它已经写完的事。
+    context: upstream
+
+  - role: user
+    title: 本轮细纲
+    intro: 以下是本段正文要实现的细纲。按前面所有要求把它展开成正文。
+    outro: 只输出正文，不要写标题、不要解释你的处理、不要复述细纲。
+    context: outline
 
 intro: |
   这是一个复杂的写作任务，你需要根据文风要求和写作指导，把用户提供的细纲展开为正文。
@@ -158,6 +174,41 @@ dialogue: |
   # 对白形式：
   对白单独成段，总是省略发言人（省掉“他说”“某某说”），用引号“”包裹。
   对白和描写分离，穿插交错。
+
+# 文风档位。**`SessionMeta.prose_style` 存的是这里的二级标题名**，不是一段自由文本。
+#
+# 这么改是为了「应暴露尽暴露」：文风是最该反复调的东西，写成自由文本时它散在
+# 每个 session 里，改一次只影响一个故事，而且从提示词这侧完全看不见。放进这里
+# 之后，一档就是一段可编辑的提示词，加一档只是加一个二级标题（D136）。
+#
+# 每一档只说**这一档特有的东西**。通用手艺在「创作指导」那节，
+# 两边重复只会互相压——preset 的教训（见文件开头）。
+prose_style:
+  default: |
+    平实、准确、不炫技。把事情写清楚，不追求风格化的辨识度。
+
+  kezhi: |
+    短句为主。冷调，不用夸张比喻。
+    对白简短，留白多——该说的说完就停，不替读者把话说圆。
+
+  pingshi: |
+    平实，不堆砌辞藻。
+    数值不直接报数字，用体感写出来（灵力见底、经脉刺痛、剩下的钱不够住店）。
+
+  wangwen: |
+    网文腔。句子短促有力，段落短，多分段。
+    心理活动直接写出来，不藏。对白多，节奏快。
+    关键处可以用单句成段制造停顿。不要文艺腔，不要长句套长句。
+
+  wenbai: |
+    文白相间，但不掉书袋。
+    对白讲究称呼与自称，身份差一级说话方式就不同。
+    心思多写，话少说。
+
+  ganjing: |
+    干净利落的中文，不要翻译腔。
+    少用长定语，不写「有着一双……的眼睛」这类句式。
+    专名少而稳，别一段冒一个新词。
 
 density:
   sparse: 克制铺陈，事件密度高，少描写。

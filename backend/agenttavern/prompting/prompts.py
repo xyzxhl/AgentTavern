@@ -84,6 +84,10 @@ def render_state(state: WorldState, *, expandable: bool = True) -> str:
     **不预设任何维度。** 键由模型自由命名，`.` 前缀仅用于此处分组显示，
     系统不赋予它语义，时间、地点、角色属性的粒度与形态都取决于故事，
     定不了固定 schema（见 models/state.py 的说明）。
+
+    **这里只渲染键值，一句提示词都不带。** 「这是速查表不是完整记录」「旧值不成立
+    就要改掉」那些话现在写在 `director.yaml` 那一节的 `outro` 里——它们是提示词，
+    该跟别的提示词放在一起，而不是散在 Python 里。
     """
     if not state.values:
         return "（尚无记录）"
@@ -97,13 +101,6 @@ def render_state(state: WorldState, *, expandable: bool = True) -> str:
             lines.append(f"\n{group}")
             lines += [f"  {k}：{_render_value(v, expandable=expandable)}" for k, v in items.items()]
 
-    lines.append(
-        "\n这是一张**速查表**，不是完整记录，事情本身在前情里。"
-        "**新增记录时优先复用上面已有的键名与形状**，避免同一概念出现多个写法。\n"
-        "**上面任何一个键，只要本轮之后它的值不再成立，就要改掉或删掉**，"
-        "留着的旧值会被当成事实，不会被当成过时信息。不再约束后续的键 `set` 成 `null`；"
-        "删了不算丢东西，那件事仍然在前情里。"
-    )
     return "\n".join(lines)
 
 
@@ -177,6 +174,8 @@ def director_prompt(
     return assemble(
         "director",
         contexts={
+            # 题材与基调是这个故事自己写的话——**数据，不是模板**，所以走 context。
+            "genre_tone": meta.genre_tone,
             "worldinfo": render_worldinfo(worldinfo or [], expandable=caps.worldinfo_read),
             "forbidden": "\n".join(f"- {item}" for item in meta.forbidden),
             "flow": _flow(caps, worldinfo),
@@ -185,7 +184,6 @@ def director_prompt(
             "user_input": user_text or text("director", "no_user_input"),
         },
         values={
-            "genre_tone": meta.genre_tone,
             "content_scale": meta.content_scale,
             "pov": meta.pov,
             "goal": meta.goal.description if meta.goal else "",
@@ -232,6 +230,12 @@ def writer_prompt(
             "upstream": upstream,
             "outline": outline,
         },
-        values={"prose_style": meta.prose_style, "pov": meta.pov},
-        options={"density": control.expansion_density.value},
+        values={"pov": meta.pov},
+        # **文风是选项名，不是自由文本**：档位全文写在 writer.yaml 里，
+        # session 只说选哪一档。文风是最该反复调的东西，写成自由文本时它散在
+        # 每个 session 里，改一次只影响一个故事，从提示词这侧还完全看不见。
+        options={
+            "prose_style": meta.prose_style,
+            "density": control.expansion_density.value,
+        },
     )

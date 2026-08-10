@@ -67,7 +67,7 @@ def _noir_session() -> Session:
             title="回归·悬疑",
             genre_tone="现代，悬疑，克制",
             pov="第三人称，跟随林昭",
-            prose_style="短句为主。冷调，不用夸张比喻。对白简短，留白多。",
+            prose_style="kezhi",
             character_voices={"陈屿": "说话绕，答非所问，很少给准话"},
             forbidden=["不要提前揭示照片的来源", "不要让陈屿直接承认任何事"],
         ),
@@ -134,8 +134,7 @@ def _data_session() -> Session:
             title="回归·数据化",
             genre_tone="修真，带明确的数值系统。资源、冷却、伤势都是硬约束，不能含糊带过。",
             pov="第三人称，跟随沈砚",
-            prose_style="平实，不堆砌辞藻。数值不直接报数字，用体感写出来"
-            "（灵力见底、经脉刺痛、剩下的钱不够住店）。",
+            prose_style="pingshi",
             character_voices={"柜台执事": "公事公办，只认规矩和价钱"},
             forbidden=["不要凭空给沈砚新的灵石或丹药", "不要让冷却中的法术生效"],
         ),
@@ -341,9 +340,7 @@ def _pulp_session() -> Session:
             title="回归·网文",
             genre_tone="都市异能，节奏快，爽感优先。冲突直给，不绕弯子。",
             pov="第三人称，跟随周野",
-            prose_style="网文腔。句子短促有力，段落短，多分段。"
-            "心理活动直接写出来，不藏。对白多，节奏快。"
-            "关键处可以用单句成段制造停顿。不要文艺腔，不要长句套长句。",
+            prose_style="wangwen",
             character_voices={
                 "赵铖": "居高临下，说话带刺，习惯用反问压人",
                 "小满": "语速快，爱插话，情绪都在脸上",
@@ -422,8 +419,7 @@ def _gufeng_session() -> Session:
             title="回归·古风",
             genre_tone="架空古代，宫廷。含蓄，话里有话，礼数是武器。",
             pov="第三人称，跟随沈玉茹",
-            prose_style="文白相间，但不掉书袋。对白讲究称呼与自称，"
-            "身份差一级说话方式就不同。心思多写，话少说。",
+            prose_style="wenbai",
             character_voices={
                 "沈玉茹": "话不说满，越紧张越客气",
                 "崔嬷嬷": "句句合规矩，规矩就是她的刀",
@@ -494,8 +490,7 @@ def _xihuan_session() -> Session:
             title="回归·西幻",
             genre_tone="低魔西幻，边境小镇。冷硬，务实，魔法昂贵且有代价。",
             pov="第三人称，跟随卡伦",
-            prose_style="干净利落的中文，不要翻译腔。少用长定语，"
-            "不写「有着一双……的眼睛」这类句式。专名少而稳，别一段冒一个新词。",
+            prose_style="ganjing",
             character_voices={"教士艾德蒙": "引经据典，但话里全是价钱"},
             forbidden=["不要解释魔法体系的原理", "不要让艾德蒙直接开价"],
         ),

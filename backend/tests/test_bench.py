@@ -9,6 +9,7 @@ from agenttavern.bench.grader import parse
 from agenttavern.bench.report import attribution_table, render
 from agenttavern.config import Settings
 from agenttavern.models import Capabilities, StateDelta
+from agenttavern.prompting import choice
 
 # -- 回归集 ------------------------------------------------------------------
 
@@ -48,11 +49,13 @@ def test_scenarios_span_two_ends_of_prose_style() -> None:
     达到主流网文水平"这条目标的量尺：拿克制文学向的样本去量网文水平是量错了尺子。
     """
     styles = {name: s.make_session().meta.prose_style for name, s in SCENARIOS.items()}
+    # `prose_style` 现在是档位名，档位全文在 writer.yaml 里（D136）。
+    bodies = {name: choice("writer", "prose_style", value) for name, value in styles.items()}
 
-    assert "不用夸张比喻" in styles["noir"]
-    assert "网文腔" in styles["pulp"]
+    assert "不用夸张比喻" in bodies["noir"]
+    assert "网文腔" in bodies["pulp"]
     # 两极必须真的对立，否则这个对照没有意义
-    assert "长句" in styles["pulp"] or "短促" in styles["pulp"]
+    assert "长句" in bodies["pulp"] or "短促" in bodies["pulp"]
 
 
 def test_chapters_scenario_declares_boundaries_without_leaking_them() -> None:

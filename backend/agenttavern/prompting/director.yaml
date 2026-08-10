@@ -37,10 +37,17 @@ sections:
   - role: assistant
     text: 好的，我已充分理解了本次任务。请您继续提供各类要求、资料和指示，我将全力配合。
   - {role: user, title: 创作指导, key: creation_guidance}
+  # 题材与基调是**这个故事自己的话**，所以走 context 而不是 {{var}}：
+  # 它是数据，不当模板解析（用户完全可能在里面写 `{{`），也可能是好几行。
   - role: user
     title: 基础设定
-    text: 题材与基调：{{genre_tone}}
-  - {role: user, title: 世界设定, context: worldinfo}
+    intro: 以下是本次创作的题材与基调。它决定故事的类型、气氛与读者预期，后面所有判断都在它之内。
+    context: genre_tone
+
+  - role: user
+    title: 世界设定
+    intro: 以下是这个世界既有的设定。它是既成事实，不要与之矛盾，也不要重新解释它。
+    context: worldinfo
   - {role: user, title: 输出契约, key: output_contract}
   - {role: user, title: 边界, key: boundaries}
 
@@ -57,12 +64,22 @@ sections:
   - {context: history}
 
   # ---- 以下每轮都变，所以必须排在 history 之后 ----
-  - {role: user, title: 当前状态, context: state}
+  # 这一节的说明文字以前拼在 `render_state` 里，也就是写在 Python 里。
+  # 挪到这儿之后，代码只负责渲染键值，怎么用它是提示词的事。
+  - role: user
+    title: 当前状态
+    context: state
+    outro: |
+      这是一张**速查表**，不是完整记录，事情本身在前情里。**新增记录时优先复用上面已有的键名与形状**，避免同一概念出现多个写法。
+      **上面任何一个键，只要本轮之后它的值不再成立，就要改掉或删掉**，留着的旧值会被当成事实，不会被当成过时信息。不再约束后续的键 `set` 成 `null`；删了不算丢东西，那件事仍然在前情里。
   - {role: user, title: 事件密度, choice: event_density}
   - {role: user, title: 剧情控制权, choice: authority}
   - {role: user, title: 转述与推进, choice: narration_and_advancement}
   - {role: user, title: 抢话, choice: speaking_rule}
-  - {role: user, title: 用户输入, context: user_input}
+  - role: user
+    title: 用户输入
+    intro: 以下是用户这一轮的输入。按上面「转述与推进」那一档处理它。
+    context: user_input
 
 intro: |
   这是一个复杂的创意写作任务，包含诸多设定、写作指导和格式要求。你需要根据用户的剧情指令或元指令生成正文的细纲。你不是故事中的任何角色，而是与用户合作的创作者。

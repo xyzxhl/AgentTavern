@@ -145,8 +145,17 @@ class SessionMeta(BaseModel):
     pov: str = ""
     """视角。"""
 
-    prose_style: str = ""
-    """文风指导。仅注入 writer（D33 的隔离基础）。"""
+    prose_style: str = "default"
+    """文风档位名。仅注入 writer（D33 的隔离基础）。
+
+    **存的是 `writer.yaml` 里 `prose_style` 那个选项组的二级标题名**（`wangwen`、
+    `wenbai`、`ganjing`……），不是一段自由文本。文风是最该反复调的东西，写成自由
+    文本时它散在每个 session 里，改一次只影响一个故事，而且从提示词那侧完全看不见；
+    做成选项之后，一档就是一段可编辑的提示词，加一档只是加一个二级标题（D136）。
+
+    这里**不做成枚举**：加一档不该动 Python。名字对不上时 `choice()` 会报错，
+    错误信息里带着文件名和键名。
+    """
 
     character_voices: dict[str, str] = Field(default_factory=dict)
     """角色语言习惯：角色名 -> 说话方式。仅注入 writer。"""

@@ -187,7 +187,7 @@ async def test_trace_carries_readable_labels(tmp_path: Path) -> None:
 def make_meta() -> SessionMeta:
     return SessionMeta(
         genre_tone="悬疑",
-        prose_style="短句，冷调，不用比喻",
+        prose_style="kezhi",
         character_voices={"陈": "说话总是绕圈子"},
         forbidden=["不要提前揭示照片的来源"],
     )
@@ -197,9 +197,8 @@ def test_director_never_sees_style_or_prose(tmp_path: Path) -> None:
     """D33 的隔离基础：文风与角色语言习惯只进 writer，正文只进 writer。"""
     prompt = prompt_for(meta=make_meta())
 
-    assert "短句，冷调" not in prompt
+    assert _real_choice("writer", "prose_style", "kezhi") not in prompt
     assert "说话总是绕圈子" not in prompt
-    assert "不要提前揭示照片的来源" in prompt  # 否定项两边都要（D35）
     # 「正文不进 director」现在由 test_run.py 守着——对话跨轮持续之后（D114），
     # 前情在**重放的消息**里而不在提示词里，那条断言必须看全部上下文才有意义。
 
@@ -208,9 +207,8 @@ def test_writer_never_sees_state_or_history(tmp_path: Path) -> None:
     """writer 只承担文风。它拿不到状态值、世界设定、用户原始指令——都已在细纲里。"""
     prompt = writer_text(make_meta(), ControlDimensions())
 
-    assert "短句，冷调" in prompt
+    assert _real_choice("writer", "prose_style", "kezhi") in prompt
     assert "说话总是绕圈子" in prompt
-    assert "不要提前揭示照片的来源" in prompt
     assert "悬疑" not in prompt
     assert "state" not in prompt.lower()
 
@@ -233,18 +231,19 @@ def test_authority_maps_to_ask_question_eagerness() -> None:
 
 
 def test_input_handling_three_ways() -> None:
-    only = prompt_for(control=ControlDimensions(input_handling=InputHandling.NARRATE_ONLY))
-    advance = prompt_for(control=ControlDimensions(input_handling=InputHandling.ADVANCE_ONLY))
+    """三档各注入各的那一段，**互不串味**。
 
-    assert "不要推进后续剧情" in only
-    assert "不要转述" in advance
-
-    # 静态前缀里那一节（转述与推进）也跟着切档，且**三档互不串味**。
-    # 断言的是哪一档进去了，不是它里面写了什么（D136）。
-    narration = _real_choice("director", "narration_and_advancement", "narrate_only")
-    other = _real_choice("director", "narration_and_advancement", "advance_only")
-    assert narration and narration in only and narration not in advance
-    assert other and other in advance and other not in only
+    断言的是哪一档进去了，不是它里面写了什么（D136）。以前这是两节——静态前缀
+    一节讲「转述和推进分别是什么」，每轮一节讲「这一轮做哪个」——现在合成了一节，
+    排在前情之后（它每轮都可能变，不能进缓存前缀）。
+    """
+    for value in ("narrate_and_advance", "narrate_only", "advance_only"):
+        control = ControlDimensions(input_handling=InputHandling(value))
+        prompt = prompt_for(control=control)
+        for other in ("narrate_and_advance", "narrate_only", "advance_only"):
+            body = _real_choice("director", "narration_and_advancement", other)
+            assert body
+            assert (body in prompt) is (other == value), f"{value} 这一轮混进了 {other}"
 
 
 def test_speaking_rule_is_a_choice_not_a_toggle_in_code() -> None:
@@ -477,7 +476,7 @@ def test_each_side_gets_its_own_sections_and_none_of_the_others() -> None:
     w = writer_text(meta, ControlDimensions())
     d = prompt_for(meta=meta)
 
-    writer_only = ["voice", "creation_guidance", "dialogue"]
+    writer_only = ["input_contract", "creation_guidance", "dialogue"]
     director_only = ["output_contract", "creation_guidance", "boundaries"]
 
     for key in writer_only:
@@ -499,10 +498,12 @@ def test_style_and_prose_never_reach_the_director() -> None:
     meta = make_meta()
     d = prompt_for(meta=meta)
 
-    assert meta.prose_style not in d
+    assert _real_choice("writer", "prose_style", meta.prose_style) not in d
     assert "说话总是绕圈子" not in d
-    # 否定项是唯一两边都给的（D35）
-    assert "不要提前揭示照片的来源" in d
+    # **否定项现在两侧都不注入**：`forbidden` 这个 context 代码照旧供着，
+    # 但两份 YAML 里都没有引用它的 section 了，所以 D35 暂时不成立。
+    assert "不要提前揭示照片的来源" not in d
+    assert "不要提前揭示照片的来源" not in writer_text(meta, ControlDimensions())
 
 
 # -- 提示词组装器（D135 / D136 / D137） -----------------------------------------

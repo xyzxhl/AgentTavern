@@ -162,6 +162,14 @@ def assemble(
 
     ``title`` 可选：给了就用 ``<标题>…</标题>`` 把正文包起来（见 `titled`）。
 
+    ``intro`` / ``outro`` 可选：**写在 YAML 里的话，垫在正文前后**，同样做
+    ``{{var}}`` 替换。它们是给 ``context`` 和 ``choice`` 用的——那两种的正文
+    由代码渲染或按选项切换，YAML 那侧本来只能决定标题和位置，一个字也写不进去。
+    结果就是「世界设定」「上文」「本轮细纲」这类节**光秃秃一个值**，
+    没有任何一句话说明该拿它干什么；而 `render_state` 那样的说明文字只好写回
+    Python 里——正是搬进 YAML 要治的病。有了这两个字段，
+    **三种来源的节都能配上可编辑的提示词**。
+
     **正文为空的条目整条跳过**，连标题、连这条消息都不出现——空消息白占体量，
     还会让模型以为这里本该有内容。
 
@@ -200,8 +208,9 @@ def assemble(
             raise KeyError(f"{where} 需要 text / key / context / choice 之一")
 
         if not isinstance(body, str):
-            if "role" in item:
-                raise KeyError(f"{where} 的 context 是一串消息，role 由消息自己带，不要写")
+            for extra in ("role", "intro", "outro"):
+                if extra in item:
+                    raise KeyError(f"{where} 的 context 是一串消息，不要给它写 `{extra}`")
             prompt.messages.extend(body)
             continue
 
@@ -210,6 +219,11 @@ def assemble(
             continue
         if "role" not in item:
             raise KeyError(f"{where} 没写 role")
+
+        intro = fill(str(item.get("intro") or ""), values)
+        outro = fill(str(item.get("outro") or ""), values)
+        body = "\n\n".join(part for part in (intro, body, outro) if part)
+
         title = item.get("title")
         prompt.messages.append(
             Message(
