@@ -220,7 +220,7 @@ def test_writer_never_sees_state_or_history(tmp_path: Path) -> None:
     # 而那句话已经被删了：它把「不要用情绪词概括」和「一律外化成身体动作」
     # 混成了一条，后半句会压过 session 自己的 `prose_style`（`pulp` 明写
     # 「心理活动直接写出来」，产出里却一个念头都没有）。**钉措辞会让提示词改不动。**
-    assert "## 落笔" in prompt
+    assert "<创作指导>" in prompt
 
 
 def test_authority_maps_to_ask_question_eagerness() -> None:
@@ -433,7 +433,7 @@ def test_nsfw_defaults_to_empty_and_injects_nothing() -> None:
 
     meta = make_meta()
     for prompt in (writer_text(meta, ControlDimensions()), prompt_for(meta=meta)):
-        assert "## 情色与身体" not in prompt
+        assert "情色" not in prompt
 
 
 def test_nsfw_and_jailbreak_reach_both_agents(monkeypatch) -> None:
@@ -477,7 +477,7 @@ def test_each_side_gets_its_own_sections_and_none_of_the_others() -> None:
     w = writer_text(meta, ControlDimensions())
     d = prompt_for(meta=meta)
 
-    writer_only = ["voice", "craft", "dialogue", "anti_formula"]
+    writer_only = ["voice", "creation_guidance", "dialogue"]
     director_only = ["output_contract", "creation_guidance", "boundaries"]
 
     for key in writer_only:
@@ -531,7 +531,7 @@ def test_a_new_section_needs_only_yaml(monkeypatch) -> None:
     """新增一节**只写 YAML**，不动代码——这正是这个组装器存在的理由。"""
     fake_yaml(monkeypatch, {"sections": [{"role": "user", "title": "新加的", "text": "随便写点"}]})
     assert assembler.assemble("writer").messages == [
-        Message(role=Role.USER, content="## 新加的\n随便写点")
+        Message(role=Role.USER, content="<新加的>\n随便写点\n</新加的>")
     ]
 
 
@@ -580,7 +580,7 @@ def test_empty_section_is_skipped_message_and_all(monkeypatch) -> None:
         },
     )
     assert assembler.assemble("writer", contexts={"nothing": "  "}).messages == [
-        Message(role=Role.SYSTEM, content="## 有内容\n在")
+        Message(role=Role.SYSTEM, content="<有内容>\n在\n</有内容>")
     ]
 
 
@@ -651,7 +651,7 @@ def test_an_empty_variable_takes_its_line_with_it(monkeypatch) -> None:
         },
     )
     prompt = assembler.assemble("writer", values={"genre": "悬疑", "pov": "", "goal": ""})
-    assert joined(prompt.messages) == "## 设定\n题材：悬疑"
+    assert joined(prompt.messages) == "<设定>\n题材：悬疑\n</设定>"
 
 
 def test_injected_context_is_not_parsed_as_a_template(monkeypatch) -> None:

@@ -160,7 +160,7 @@ def assemble(
       **不做模板替换**（那是数据）。
     - ``choice``  —— 顶层的一个选项组，选哪一项由 ``options[组名]`` 给。
 
-    ``title`` 可选：给了就在正文前加一行 ``## 标题``。
+    ``title`` 可选：给了就用 ``<标题>…</标题>`` 把正文包起来（见 `titled`）。
 
     **正文为空的条目整条跳过**，连标题、连这条消息都不出现——空消息白占体量，
     还会让模型以为这里本该有内容。
@@ -213,8 +213,17 @@ def assemble(
         title = item.get("title")
         prompt.messages.append(
             Message(
-                role=Role(str(item["role"])),
-                content=f"## {title}\n{body}" if title else body,
+                role=Role(str(item["role"])), content=titled(str(title), body) if title else body
             )
         )
     return prompt
+
+
+def titled(title: str, body: str) -> str:
+    """给一节加标题：**标签包裹，不是 Markdown 标题。**
+
+    以前是 ``## 标题``。问题是提示词正文里本来就有 ``# 核心原则``、``# 对白设计``
+    这样的小标题，两者混在同一套记号里——一节的边界和它内部的分节长得一样，
+    模型只能靠井号数量去猜哪一级是哪一级。标签有闭合，边界是明确的。
+    """
+    return f"<{title}>\n{body}\n</{title}>"

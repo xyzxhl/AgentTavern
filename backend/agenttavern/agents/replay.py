@@ -36,8 +36,9 @@ from __future__ import annotations
 
 from ..llm import Message, Role
 from ..models import Node
+from ..prompting import titled
 
-CONTEXT_BUDGET_CHARS = 24_000
+CONTEXT_BUDGET_CHARS = 96_000
 """越过这个体量才压缩。
 
 取值上的取舍：**调小则压得勤、缓存失效频繁；调大则单次上下文更贵**。
@@ -122,7 +123,9 @@ def flatten_turn(node: Node) -> list[Message]:
                 text = node.user_input.text if node.user_input else ""
                 if text:
                     flush()
-                    out.append(Message(role=Role.USER, content=f"## 用户输入\n{text}"))
+                    # 与 director.yaml 里那条同名 section 用同一套记号（`titled`）——
+                    # 前情和这一轮的输入并排出现在同一串消息里，标签形状必须一致。
+                    out.append(Message(role=Role.USER, content=titled("用户输入", text)))
             elif message.content and INTERJECTION_MARK in message.content:
                 flush()
                 out.append(message)

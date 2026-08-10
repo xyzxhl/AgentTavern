@@ -30,7 +30,7 @@ from ..agents.writer import DEVIATION_MARKER, RECENT_PROSE
 from ..config import Settings, load_settings
 from ..llm import LLMGateway, Message
 from ..models import ControlDimensions, SessionMeta
-from ..prompting import writer_prompt
+from ..prompting import titled, writer_prompt
 from ..storage import Store
 
 
@@ -110,9 +110,9 @@ def _terse(messages: list[Message]) -> list[Message]:
     out: list[Message] = []
     for message in messages:
         body = message.content or ""
-        if body.startswith("## 落笔"):
-            out.append(message.model_copy(update={"content": f"## 落笔\n{TERSE_CRAFT}"}))
-        elif not body.startswith(("## 台词", "## 避开定式")):
+        if body.startswith("<创作指导>"):
+            out.append(message.model_copy(update={"content": titled("创作指导", TERSE_CRAFT)}))
+        elif not body.startswith("<台词>"):
             out.append(message)
     return out
 

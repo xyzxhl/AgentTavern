@@ -21,7 +21,7 @@
 而两侧的分工正是整个拓扑的地基。
 """
 
-from .assembler import Prompt, assemble, choice, fill, load, text
+from .assembler import Prompt, assemble, choice, fill, load, text, titled
 from .prompts import (
     STATE_INLINE_LIMIT,
     director_prompt,
@@ -41,5 +41,6 @@ __all__ = [
     "render_state",
     "render_worldinfo",
     "text",
+    "titled",
     "writer_prompt",
 ]
