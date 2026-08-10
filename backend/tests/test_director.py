@@ -239,32 +239,33 @@ def test_input_handling_three_ways() -> None:
     assert "不要推进后续剧情" in only
     assert "不要转述" in advance
 
-    # **不转述时整节不注入**——省下的是每 run 都要付的 token。
-    # 断言的是这一节在不在，不是它里面写了什么（D136）。
-    narration = _real_choice("director", "narration", "narrate_only")
-    assert narration and narration in only
-    assert "## 怎么处理用户输入" not in advance
+    # 静态前缀里那一节（转述与推进）也跟着切档，且**三档互不串味**。
+    # 断言的是哪一档进去了，不是它里面写了什么（D136）。
+    narration = _real_choice("director", "narration_and_advancement", "narrate_only")
+    other = _real_choice("director", "narration_and_advancement", "advance_only")
+    assert narration and narration in only and narration not in advance
+    assert other and other in advance and other not in only
 
 
 def test_speaking_rule_is_a_choice_not_a_toggle_in_code() -> None:
-    """抢话在两侧都是**选项组**，选项名就是 allowed / forbidden（D136）。
+    """抢话是个**选项组**，选项名就是 allowed / forbidden（D136）。
 
     以前这是代码里的 if：allowed 返回一段、forbidden 返回另一段，YAML 那边
     看不出还有第二种可能。现在两档都写在 YAML 里，改一档不用碰 Python。
+
+    **只有 director 侧有这一节。** writer 侧那条曾经也在（D35：否定项两边都要），
+    后来输入契约收紧成「除非细纲已经给出，否则不要自行增加新行为、新决定、
+    新心理」，用户的角色被一并盖住，再单给一条就是重复。
     """
-    for side, prompt_of in (
-        ("director", lambda c: prompt_for(control=c)),
-        ("writer", lambda c: writer_text(make_meta(), c)),
-    ):
-        forbidden = _real_choice(side, "speaking_rule", "forbidden")
-        allowed = _real_choice(side, "speaking_rule", "allowed")
+    forbidden = _real_choice("director", "speaking_rule", "forbidden")
+    allowed = _real_choice("director", "speaking_rule", "allowed")
 
-        strict = prompt_of(ControlDimensions(allow_speaking_for_user=False))
-        assert forbidden and forbidden in strict
-        assert not allowed or allowed not in strict
+    strict = prompt_for(control=ControlDimensions(allow_speaking_for_user=False))
+    assert forbidden and forbidden in strict
+    assert not allowed or allowed not in strict
 
-        loose = prompt_of(ControlDimensions(allow_speaking_for_user=True))
-        assert forbidden not in loose
+    loose = prompt_for(control=ControlDimensions(allow_speaking_for_user=True))
+    assert forbidden not in loose
 
 
 def test_state_pack_inlines_small_values_and_defers_large_ones() -> None:
@@ -370,14 +371,17 @@ def test_density_reaches_both_sides_in_opposite_directions() -> None:
         assert w not in prompt_for(control=control)
 
 
-def test_the_writer_side_speaking_rule_disappears_when_allowed() -> None:
-    """允许抢话时这一节**整体消失**，而不是留个空标题。
+def test_the_writer_never_gets_a_speaking_rule_of_its_own() -> None:
+    """writer 侧不再单给抢话规则——**由输入契约统一盖住**。
 
-    writer 侧这条规则本身是 D35 的实例（否定项两边都要）：writer 只做照抄时
-    够不着这条线，一旦它真的在展开，就会顺手把用户角色往前推一步。
+    那条曾经在（D35：否定项两边都要），理由是 writer 一旦真的在展开，就会顺手
+    把用户角色往前推一步。后来输入契约收紧成「除非细纲已经给出，否则不要自行
+    增加新行为、新决定、新心理」，这条更宽、更严，再单给一条抢话规则就是重复。
     """
-    loose = ControlDimensions(allow_speaking_for_user=True)
-    assert "## 边界" not in writer_text(make_meta(), loose)
+    for allowed in (True, False):
+        w = writer_text(make_meta(), ControlDimensions(allow_speaking_for_user=allowed))
+        assert "抢话" not in w
+        assert "不要自行增加" in w
 
 
 async def test_the_nudge_stops_asking_for_a_write_already_done(tmp_path: Path) -> None:
@@ -474,7 +478,7 @@ def test_each_side_gets_its_own_sections_and_none_of_the_others() -> None:
     d = prompt_for(meta=meta)
 
     writer_only = ["voice", "craft", "dialogue", "anti_formula"]
-    director_only = ["facts_not_prose", "advancement", "boundaries"]
+    director_only = ["output_contract", "creation_guidance", "boundaries"]
 
     for key in writer_only:
         body = _real_text("writer", key)
@@ -486,7 +490,7 @@ def test_each_side_gets_its_own_sections_and_none_of_the_others() -> None:
         assert body and body in d, f"director.yaml 的 {key} 没进 director"
         assert body not in w, f"director.yaml 的 {key} 漏进了 writer"
 
-    narration = _real_choice("director", "narration", "narrate_and_advance")
+    narration = _real_choice("director", "narration_and_advancement", "narrate_and_advance")
     assert narration and narration in d and narration not in w
 
 

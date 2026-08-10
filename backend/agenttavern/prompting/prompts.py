@@ -29,7 +29,12 @@ from .assembler import Prompt, assemble, text
 
 
 def _speaking(allowed: bool) -> str:
-    """抢话是个二选一的控制维度，所以在 YAML 里是选项组，选项名就是这两个。"""
+    """抢话是个二选一的控制维度，所以在 YAML 里是选项组，选项名就是这两个。
+
+    **只有 director 侧有这个选项组。** writer 侧那条曾经也在（D35：否定项两边都要），
+    后来 writer 的输入契约收紧成「除非细纲已经给出，否则不要自行增加新行为、
+    新决定、新心理」——用户的角色被这条一并盖住了，再单给一条就是重复。
+    """
     return "allowed" if allowed else "forbidden"
 
 
@@ -186,7 +191,7 @@ def director_prompt(
             "goal": meta.goal.description if meta.goal else "",
         },
         options={
-            "narration": control.input_handling.value,
+            "narration_and_advancement": control.input_handling.value,
             "input_handling": control.input_handling.value,
             # **事件密度是「铺陈密度」的反向投影**：director 不该知道篇幅（D93），
             # 所以同一个控制维度在两侧读的是两组不同的措辞。
@@ -228,8 +233,5 @@ def writer_prompt(
             "outline": outline,
         },
         values={"prose_style": meta.prose_style, "pov": meta.pov},
-        options={
-            "speaking_rule": _speaking(control.allow_speaking_for_user),
-            "density": control.expansion_density.value,
-        },
+        options={"density": control.expansion_density.value},
     )
