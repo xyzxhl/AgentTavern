@@ -37,7 +37,6 @@ sections:
   - role: assistant
     text: "好的，我已充分理解了本次任务。请您继续提供各类要求、资料和指示，我将全力配合。"
   - {role: user, title: 输入契约, key: input_contract}
-  - {role: user, title: 语感, key: voice}
   - {role: user, title: 创作指导, key: creation_guidance}
   - {role: user, title: 台词, key: dialogue}
   - {role: user, title: 文风, text: "{{prose_style}}"}
@@ -47,8 +46,7 @@ sections:
   - {role: user, title: 情色描写, key: nsfw}
 
   - {role: user, title: 角色语言习惯, context: character_voices}
-  - {role: user, title: 视角, text: "{{pov}}"}
-  - {role: user, title: 禁止事项, context: forbidden}
+  - {role: user, title: 视角, text: "无论主视角如何，剧情全程必须采用第三人称创作。"}
   - {role: user, title: 铺陈程度, choice: density}
 
   # writer 没有历史——它每次都是一次干净的渲染（D52）。
@@ -97,12 +95,6 @@ input_contract: |
   - 新的剧情性决定
   - 新的因果关系
   - 会持续存在的环境变化
-
-  你可以增加局部实现细节，前提是它们只服务于当前表达，不要求后续剧情继续承认它们。
-
-# 抽象层级最高的一节，排在所有细则之前。
-voice: |
-  学习中文本土作家的文字风格。
 
 creation_guidance: |
   # 内心独白
