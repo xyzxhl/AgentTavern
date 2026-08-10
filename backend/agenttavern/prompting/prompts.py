@@ -9,8 +9,9 @@ director 只读细纲历史、不读正文；writer 读正文上文以保证衔�
 - **文风与角色语言习惯只进 writer。** 它们不参与检索，参与每一个 token。
 - **正文只进 writer。** director 能覆盖五倍历史跨度正是因为它从不读正文（D54）。
 
-D35（否定项两边都要）**已改设计**：两份 YAML 里都不再引用 `forbidden`。
-渲染仍然照供，想要哪一侧加一条 `context: forbidden` 即可，不用动这里。
+D35（否定项两边都要）**已删除**（D139）：否定项这个字段整个不存在了。
+不能提前揭示的东西属于世界设定，写进 worldinfo 或 state 即可；
+「不许写什么」这类写作纪律属于提示词，写进 YAML 即可。
 """
 
 from __future__ import annotations
@@ -178,7 +179,6 @@ def director_prompt(
             # 题材与基调是这个故事自己写的话——**数据，不是模板**，所以走 context。
             "genre_tone": meta.genre_tone,
             "worldinfo": render_worldinfo(worldinfo or [], expandable=caps.worldinfo_read),
-            "forbidden": "\n".join(f"- {item}" for item in meta.forbidden),
             "flow": _flow(caps, worldinfo),
             "history": history,
             "state": render_state(state, expandable=caps.state_query) if caps.state else "",
@@ -228,7 +228,6 @@ def writer_prompt(
             "character_voices": "\n".join(
                 f"- {name}：{how}" for name, how in meta.character_voices.items()
             ),
-            "forbidden": "\n".join(f"- {item}" for item in meta.forbidden),
             "upstream": upstream,
             "outline": outline,
         },

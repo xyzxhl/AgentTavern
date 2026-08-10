@@ -1,7 +1,7 @@
 # writer 的提示词。**只有文风相关的东西**（D33）。
 #
-# 否定项曾经也在这里（D35），现已改设计——两侧都不注入（D139）。
-# `forbidden` 这个 context 代码照旧供着，想要就加一条 `context: forbidden`。
+# 否定项曾经也在这里（D35），现已**整个删掉**（D139）：不能提前揭示的东西属于
+# 世界设定，写进 worldinfo 或 state；「不许写什么」属于提示词，就写在这份文件里。
 #
 # 一条纪律：**这里的所有例子都必须来自人写的文本**——docs/novel_example/ 的参考小说，
 # 或 docs/sillytavern_preset_example/ 里经过实战打磨的 preset。

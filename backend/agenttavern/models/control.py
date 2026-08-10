@@ -152,9 +152,13 @@ class Goal(BaseModel):
 class SessionMeta(BaseModel):
     """Session 元指令：**这个世界是什么**。定义目标，不定义过程。
 
-    分界线是「换个人来读还成不成立」：题材与基调、尺度、角色语言习惯、否定项
-    都是世界自己的属性，跟着世界设定走，换谁来读都一样；文风和视角不是——
-    它们是读者这一侧的偏好，所以和铺陈程度一起归 `ControlDimensions`。
+    分界线是「换个人来读还成不成立」：题材与基调、尺度、角色语言习惯都是世界
+    自己的属性，跟着世界设定走，换谁来读都一样；文风和视角不是——它们是读者
+    这一侧的偏好，所以和铺陈程度一起归 `ControlDimensions`。
+
+    **没有「否定项」字段**（D139）。不能提前揭示的东西属于世界设定，写进
+    worldinfo 或 state；「不许写什么」这类写作纪律属于提示词，写进 YAML。
+    单立一个字段等于给同一件事开第三个入口，而它两侧都没人注入。
     """
 
     title: str = "未命名"
@@ -166,14 +170,6 @@ class SessionMeta(BaseModel):
 
     character_voices: dict[str, str] = Field(default_factory=dict)
     """角色语言习惯：角色名 -> 说话方式。仅注入 writer。"""
-
-    forbidden: list[str] = Field(default_factory=list)
-    """否定项：不能提前揭示的、不允许发明的。
-
-    **当前两侧都不注入**：D35 曾要求它同时进 director 和 writer，现已改设计——
-    两份 YAML 里都没有引用 `forbidden` 的 section 了。字段和渲染都留着，
-    想要哪一侧就在那份 YAML 里加一条 `context: forbidden`，不用动 Python。
-    """
 
     goal: Goal | None = None
 

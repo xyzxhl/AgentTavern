@@ -192,7 +192,6 @@ def make_meta() -> SessionMeta:
     return SessionMeta(
         genre_tone="悬疑",
         character_voices={"陈": "说话总是绕圈子"},
-        forbidden=["不要提前揭示照片的来源"],
     )
 
 
@@ -503,10 +502,8 @@ def test_style_and_prose_never_reach_the_director() -> None:
 
     assert _real_choice("writer", "prose_style", STYLE) not in d
     assert "说话总是绕圈子" not in d
-    # **否定项现在两侧都不注入**：`forbidden` 这个 context 代码照旧供着，
-    # 但两份 YAML 里都没有引用它的 section 了，所以 D35 暂时不成立。
-    assert "不要提前揭示照片的来源" not in d
-    assert "不要提前揭示照片的来源" not in writer_text(meta, ControlDimensions())
+    # 否定项那个字段已经整个删掉了（D139），所以这里没有它的断言——
+    # 「不许写什么」现在只有两个入口：世界设定（数据）和 YAML（提示词）。
 
 
 # -- 提示词组装器（D135 / D136 / D137） -----------------------------------------
