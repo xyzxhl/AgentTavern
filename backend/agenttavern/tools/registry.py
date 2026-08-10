@@ -10,7 +10,13 @@ from __future__ import annotations
 from typing import Any
 
 from ..llm import ToolCall, ToolSpec
-from ..models import Capabilities, SummarizeMode, WorldbookEntry, WorldbookMode
+from ..models import (
+    Capabilities,
+    ControlDimensions,
+    SummarizeMode,
+    WorldbookEntry,
+    WorldbookMode,
+)
 from .base import Tool, ToolResult, error
 from .builtin import (
     ask_question_tool,
@@ -26,6 +32,7 @@ from .context import RunContext
 def build_tools(
     capabilities: Capabilities,
     worldinfo: list[WorldbookEntry] | None = None,
+    control: ControlDimensions | None = None,
 ) -> list[Tool[Any]]:
     """按能力开关组装工具面。
 
@@ -52,7 +59,9 @@ def build_tools(
         tools.append(summarize_tool())
 
     if capabilities.ask_question:
-        tools.append(ask_question_tool())
+        # 控制权那一档直接写进它的描述——「越高越少问」讲的是这个工具的调用
+        # 积极性，不是创作要求（D140）。
+        tools.append(ask_question_tool((control or ControlDimensions()).model_authority))
 
     return tools
 
@@ -68,8 +77,21 @@ class ToolRegistry:
         cls,
         capabilities: Capabilities,
         worldinfo: list[WorldbookEntry] | None = None,
+        control: ControlDimensions | None = None,
     ) -> ToolRegistry:
-        return cls(build_tools(capabilities, worldinfo))
+        return cls(build_tools(capabilities, worldinfo, control))
+
+    def render(self) -> str:
+        """工具面的**索引**：谁在场，各管什么事。
+
+        全文描述随 `tools` 参数一起发出去，这里只列名字和头一句——**它是占位**，
+        为的是让「有哪些工具」在提示词的顺序里看得见、位置可编排（D140）。
+        内容仍然归工具模块所有：一个工具怎么描述自己，跟它的参数、错误信息、
+        注册条件是同一件事，拆开写两处必然对不上。
+        """
+        return "\n".join(
+            f"- `{t.name}`：{(t.description or '').splitlines()[0]}" for t in self._tools.values()
+        )
 
     @property
     def names(self) -> list[str]:

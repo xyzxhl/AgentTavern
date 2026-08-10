@@ -17,26 +17,10 @@
 
 from __future__ import annotations
 
-from ..llm import LLMGateway, Message, Role
+from ..llm import LLMGateway
+from ..prompting import assemble
 
 SUMMARY_MAX_CHARS = 200
-
-
-_COMPRESSION = """把下面这一段剧情压缩到 {max_chars} 字以内。只输出摘要本身。
-
-**取舍看的不是重要不重要，是丢了还能不能再找回来。**
-
-重要不重要是**事后**才知道的：一行不起眼的日期、一个随口提到的地名，
-当时谁也看不出它以后会成为关键。按"重要性"压缩，丢掉的正是这一类。
-
-- **优先留下具体的、独一份的东西**：数字、日期、金额、编号、地址、人名全称、
-  物件的特征、写在纸上的字。它们占的字数很少，而**一旦丢了就永远回不来**。
-- **说死了的话逐字留**：承诺、否认、拒绝、给出的条件、报出的价钱。
-  「他说没见过」和「他说不记得」不是一回事，不要归并成"他回避了"。
-- **该丢的是能再推出来的**：气氛、语气、评价、心理揣测、"关系变冷了"这类概括。
-  它们从事实里随时能重新读出来，留着反而挤掉了具体的东西。
-
-写成陈述句，按发生顺序。不要加你自己的判断。"""
 
 
 MAX_SEGMENT_RUNS = 6
@@ -59,18 +43,23 @@ async def summarize_text(
     content: str,
     max_chars: int = SUMMARY_MAX_CHARS,
     user_id: str | None = None,
+    *,
+    enabled: bool = True,
 ) -> str:
     """把一段内容压到 ``max_chars`` 以内。
 
     **压缩判据是"可不可再生"，不是"重不重要"。** 后者是事后才知道的——
     写摘要的那一刻，无从知道台账上那行日期以后会成为关键（D106 的交集盲区）。
     而具体项占的字数很少、丢了不可再生；概括项占字数多、随时能从事实里重新读出来。
+
+    判据本身写在 `summary.yaml` 里，这里只装配（D140）。``enabled=False`` 时
+    那一档是空串，指示整条不发——留这个开关是为了能从外部关掉，不是推荐这么做。
     """
-    response = await gateway.complete(
-        [
-            Message(role=Role.SYSTEM, content=_COMPRESSION.format(max_chars=max_chars)),
-            Message(role=Role.USER, content=content),
-        ],
-        user_id=user_id,
+    prompt = assemble(
+        "summary",
+        contexts={"content": content},
+        values={"max_chars": str(max_chars)},
+        options={"compression": "on" if enabled else "off"},
     )
+    response = await gateway.complete(prompt.messages, user_id=user_id)
     return response.content.strip()

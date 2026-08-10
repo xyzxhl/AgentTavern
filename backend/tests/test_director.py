@@ -26,7 +26,7 @@ from agenttavern.prompting import assembler, director_prompt, writer_prompt
 from agenttavern.prompting.assembler import choice as _real_choice
 from agenttavern.prompting.assembler import text as _real_text
 from agenttavern.storage import Store
-from agenttavern.tools import RunContext, ToolRegistry
+from agenttavern.tools import RunContext, ToolRegistry, build_tools
 from agenttavern.tracing import Tracer
 
 ALL_ON = Capabilities(state=True, history_search=True, ask_question=True, trace=True)
@@ -224,12 +224,25 @@ def test_writer_never_sees_state_or_history(tmp_path: Path) -> None:
 
 
 def test_authority_maps_to_ask_question_eagerness() -> None:
-    """D39：控制权直接反映为 ask_question 的调用积极性——越高越少问。"""
-    high = prompt_for(control=ControlDimensions(model_authority=ModelAuthority.HIGH))
-    low = prompt_for(control=ControlDimensions(model_authority=ModelAuthority.LOW))
+    """D39：控制权直接反映为 ask_question 的调用积极性——越高越少问。
 
-    assert "不要调用 ask_question" in high
-    assert "一轮内可以多次" in low
+    **这段话现在写在那个工具的描述里，不在提示词里**（D140）：读到「这一档不要
+    调用它」的地方就该是 `ask_question` 自己。控制维度没变，变的是它落在哪。
+    """
+
+    def ask_question_desc(authority: ModelAuthority) -> str:
+        caps = Capabilities(ask_question=True)
+        control = ControlDimensions(model_authority=authority)
+        tools = {t.name: t for t in build_tools(caps, control=control)}
+        return tools["ask_question"].description
+
+    assert "不要调用" in ask_question_desc(ModelAuthority.HIGH)
+    assert "一轮内可以多次" in ask_question_desc(ModelAuthority.LOW)
+
+    # 而 director 的提示词里**不再有这一节**。
+    assert "一轮内可以多次" not in prompt_for(
+        control=ControlDimensions(model_authority=ModelAuthority.LOW)
+    )
 
 
 def test_input_handling_three_ways() -> None:

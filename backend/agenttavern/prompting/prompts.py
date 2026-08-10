@@ -132,23 +132,9 @@ def render_worldinfo(entries: list[WorldbookEntry], *, expandable: bool = True) 
     return "\n\n".join(parts)
 
 
-def _flow(caps: Capabilities, worldinfo: list[WorldbookEntry] | None) -> str:
-    """流程步骤。跨轮不变，因此属于静态前缀。"""
-    steps = ["需要更多信息时用工具查。"] if _has_lookup_tools(caps, worldinfo) else []
-    steps.append("想清楚本轮发生什么，把事实写下来。")
-    if caps.state:
-        steps.append(
-            "调用 `state_write` 记录本轮的状态变化，**没有变化也必须调用一次**"
-            "（不带参数即可），否则无法区分“确实没变”和“忘了记”。\n"
-            "   写之前先对每一个键问一句：**下一轮开始时，还有人需要看它吗？**\n"
-            "   “他正扑过来”“她刚把照片推过去”答案是否，那是这一秒的画面，\n"
-            "   下一轮它已经不成立了，而画面在正文里。答不上来的键就不要写。\n"
-            "   **再问一句：这一轮有什么东西被特意摆出来，却还没有下文？**\n"
-            "   掏出来的枪、许下的承诺、没被回答的问题、没拆的信，它们什么也不禁止，\n"
-            "   所以最容易漏；漏了不会出错，只会烂尾。"
-        )
-    steps.append("调用 `submit_outline` 提交。**这一步会结束本轮，只能调用一次。**")
-    return "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
+def _on_off(enabled: bool) -> str:
+    """开关型选项组的两个档名。**关掉的那一档是空串，于是整节不出现。**"""
+    return "on" if enabled else "off"
 
 
 def director_prompt(
@@ -160,6 +146,7 @@ def director_prompt(
     history: Sequence[Message] = (),
     capabilities: Capabilities | None = None,
     worldinfo: list[WorldbookEntry] | None = None,
+    tools: str = "",
 ) -> Prompt:
     """装配 director 收到的整串消息。
 
@@ -179,7 +166,8 @@ def director_prompt(
             # 题材与基调是这个故事自己写的话——**数据，不是模板**，所以走 context。
             "genre_tone": meta.genre_tone,
             "worldinfo": render_worldinfo(worldinfo or [], expandable=caps.worldinfo_read),
-            "flow": _flow(caps, worldinfo),
+            # 工具面的索引由工具模块自己给——这里只是把它放到该在的位置（D140）。
+            "tools": tools,
             "history": history,
             "state": render_state(state, expandable=caps.state_query) if caps.state else "",
             "user_input": user_text or text("director", "no_user_input"),
@@ -196,8 +184,12 @@ def director_prompt(
             # **事件密度是「铺陈密度」的反向投影**：director 不该知道篇幅（D93），
             # 所以同一个控制维度在两侧读的是两组不同的措辞。
             "event_density": control.expansion_density.value,
-            "authority": control.model_authority.value,
+            # 剧情控制权不在这里了——它讲的是 `ask_question` 该多积极地调用，
+            # 所以写进了那个工具的描述（D140）。
             "speaking_rule": _speaking(control.allow_speaking_for_user),
+            # 流程拆成了独立的几步，可选的那两步各是一个开关。
+            "flow_lookup": _on_off(_has_lookup_tools(caps, worldinfo)),
+            "flow_state": _on_off(caps.state),
         },
     )
 

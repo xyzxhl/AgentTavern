@@ -14,7 +14,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from ..agents.summary import summarize_text
-from ..models import Node, StateDelta
+from ..models import ModelAuthority, Node, StateDelta
 from .base import Tool, ToolOutcome, ToolResult, error
 from .context import RunContext
 
@@ -535,10 +535,27 @@ def summarize_tool() -> Tool[Any]:
     )
 
 
-def ask_question_tool() -> Tool[Any]:
+_ASK_QUESTION_EAGERNESS = {
+    ModelAuthority.HIGH: "**这一档不要调用它，自己拿主意。**",
+    ModelAuthority.MEDIUM: "剧情走向以你为主。本轮若存在真正的分岔，可以调用一次让用户选。",
+    ModelAuthority.LOW: (
+        "用户主导剧情走向。遇到任何值得由用户决定的分岔都调用它征询，一轮内可以多次。"
+    ),
+}
+"""**剧情控制权直接反映为这个工具的调用积极性**（D39/D58）——越高越少问。
+
+这段措辞以前是 `director.yaml` 里一个叫 `authority` 的选项组，单独占一条消息。
+搬到这里的理由是它讲的**只是一个工具该多积极地调用**，而不是创作要求：
+读到「不要调用 ask_question」的地方就该是 `ask_question` 自己。
+控制维度本身没变，仍然是 `ControlDimensions.model_authority` 三档（D140）。
+"""
+
+
+def ask_question_tool(authority: ModelAuthority = ModelAuthority.MEDIUM) -> Tool[Any]:
     return _tool(
         "ask_question",
-        "向用户提问并等待选择。用于剧情方向不明、或用户指令与既有设定冲突时。",
+        "向用户提问并等待选择。用于剧情方向不明、或用户指令与既有设定冲突时。\n"
+        + _ASK_QUESTION_EAGERNESS[authority],
         AskQuestionParams,
         _ask_question,
     )

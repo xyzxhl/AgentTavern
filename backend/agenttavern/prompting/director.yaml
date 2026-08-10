@@ -59,7 +59,23 @@ sections:
   - {role: user, title: 情色剧情, key: nsfw}
 
   - {role: user, title: 目标, text: "本次创作的目标：{{goal}}。达成之前会持续推进。"}
-  - {role: user, title: 流程, context: flow}
+
+  # 工具面的**索引**，内容由 `ToolRegistry.render()` 给。全文描述随 `tools` 参数
+  # 一起发出去，这里只占个位，为的是让「有哪些工具」在顺序里看得见（D140）。
+  # 一个工具怎么描述自己，跟它的参数、错误信息、注册条件是同一件事，
+  # 拆开写两处必然对不上——所以内容不搬进这份文件。
+  - role: user
+    title: 可用的工具
+    intro: 你这一轮可以调用下面这些工具。每个工具的详细说明随工具本身给出。
+    context: tools
+
+  # 流程**拆成了独立的几条**（D140）：以前是 `_flow` 在 Python 里按能力开关拼成
+  # 一整块，从这里看不出它有几步、哪几步是可选的。现在一步一条，
+  # 可选的那两步各是一个 on/off 的选项组，位置也能单独调。
+  - {role: user, title: 流程·查证, choice: flow_lookup}
+  - {role: user, title: 流程·想清楚, key: flow_think}
+  - {role: user, title: 流程·记录状态, choice: flow_state}
+  - {role: user, title: 流程·提交, key: flow_submit}
 
   # 前情：摘要 + 扁平化的历史轮次，各自带着自己的 role，所以这一条不写 role。
   # 被打断挂起的那半轮（D118）也跟在这里——它的位置不能选，必须紧接前情、
@@ -76,7 +92,8 @@ sections:
       这是一张**速查表**，不是完整记录，事情本身在前情里。**新增记录时优先复用上面已有的键名与形状**，避免同一概念出现多个写法。
       **上面任何一个键，只要本轮之后它的值不再成立，就要改掉或删掉**，留着的旧值会被当成事实，不会被当成过时信息。不再约束后续的键 `set` 成 `null`；删了不算丢东西，那件事仍然在前情里。
   - {role: user, title: 事件密度, choice: event_density}
-  - {role: user, title: 剧情控制权, choice: authority}
+  # 「剧情控制权」那一节搬进了 `ask_question` 的工具描述（D140）——
+  # 「越高越少问」讲的是那个工具该多积极地调用，读到它的地方就该是工具自己。
   - {role: user, title: 转述与推进, choice: narration_and_advancement}
   - {role: user, title: 抢话, choice: speaking_rule}
   - role: user
@@ -217,10 +234,48 @@ event_density:
 no_user_input: （没有新的用户输入，按当前设定继续推进。）
 
 # 控制权直接反映为 ask_question 的调用积极性——越高越少问（D39/D58）。
-authority:
-  high: 你主导剧情走向。不要调用 ask_question，自己拿主意。
-  medium: 剧情走向以你为主。若本轮存在真正的分岔，可调用一次 ask_question 让用户选。
-  low: 用户主导剧情走向。遇到任何值得由用户决定的分岔，都调用 ask_question 征询，一轮内可以多次。
+# -- 流程。**一步一条**，可选的那两步是 on/off 的选项组（D140）------------------
+#
+# 以前这四步由 `_flow` 在 Python 里按能力开关拼成一整块，从 YAML 这侧看不出
+# 它有几步、哪几步是可选的，也调不了顺序。
+
+flow_lookup:
+  "off": ""
+  "on": 需要更多信息时用工具查。
+
+flow_think: 想清楚本轮发生什么，把事实写下来。
+
+flow_state:
+  "off": ""
+  "on": |
+    调用 `state_write` 记录本轮的状态变化，**没有变化也必须调用一次**（不带参数即可），否则无法区分“确实没变”和“忘了记”。
+
+    写之前先对每一个键问一句：**下一轮开始时，还有人需要看它吗？**
+    “他正扑过来”“她刚把照片推过去”答案是否，那是这一秒的画面，下一轮它已经不成立了，而画面在正文里。答不上来的键就不要写。
+
+    **再问一句：这一轮有什么东西被特意摆出来，却还没有下文？**
+    掏出来的枪、许下的承诺、没被回答的问题、没拆的信，它们什么也不禁止，所以最容易漏；漏了不会出错，只会烂尾。
+
+flow_submit: 调用 `submit_outline` 提交。**这一步会结束本轮，只能调用一次。**
+
+# -- 催促词。模型只回了文本时推回去的那句话 --------------------------------------
+#
+# **`off` 档是给外部关的**（D140）：关掉就不催，模型空手回来这一轮直接算完。
+# 以前这几句拼在 `_nudge` 里，连带「最后一轮」和「state_write 做没做」两个分支，
+# 从提示词这侧完全看不见。
+#
+# 判据仍然是那条：**只提还差的那一步**。以前它无条件写着「先 state_write，
+# 再 submit_outline」，模型照做又写一次 state_write，然后再被推一次——实测 `pulp`
+# 第 4 轮这样空转了 12 个来回，69 万 input token，占整场的 84%。
+nudge:
+  "off": ""
+  state_then_submit: 请调用 state_write（没有变化就不带参数），然后 submit_outline。
+  submit: 请调用 submit_outline 提交本轮细纲。
+  final_state_then_submit: 这是最后一轮：请立即调用 state_write（没有变化就不带参数），然后 submit_outline。
+  final_submit: 这是最后一轮：请立即调用 submit_outline 提交本轮细纲。
+
+# 工具用完了但迟迟不收口时推的那句。
+converge: 调查得差不多了，请开始收敛并提交细纲。
 
 # -- 下面两条是**部署方按自己的模型与端点填的**，我们不预设内容 ------------------
 #

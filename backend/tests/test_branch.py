@@ -116,8 +116,11 @@ async def test_a_sibling_branch_leaks_no_tool_traffic(tmp_path: Path) -> None:
     )
 
     context = str(b_llm.messages_of(0))
-    assert "state_query" not in context
+    # **查的是那次调用留下的痕迹，不是工具名**——工具面的索引每轮都在，
+    # 它列出所有注册了的工具（D140），名字出现在上下文里是正常的。
     assert "A物" not in context
+    assert "铁皮盒" not in context
+    assert "state_query(" not in context
 
 
 async def test_state_of_a_sibling_never_folds_in(tmp_path: Path) -> None:

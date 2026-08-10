@@ -43,6 +43,11 @@ class ToolResult(BaseModel):
 
 
 def error(message: str, *, label: str = "") -> ToolResult:
+    """一条模型可恢复的错误。**文案留在代码里，不进 YAML**（D140）。
+
+    轮次内只有 tool 往返和推理段，它们的位置由协议决定、编排不了；工具怎么
+    描述自己、怎么报错、什么条件下注册，是同一件事，拆开写两处必然对不上。
+    """
     return ToolResult(content=message, is_error=True, label=label or message)
 
 

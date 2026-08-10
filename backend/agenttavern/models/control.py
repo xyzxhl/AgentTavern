@@ -205,6 +205,13 @@ class Capabilities(BaseModel):
     失败还要消耗一轮往返。工具面越小，模型的决策空间越小（分配原则 P9）。
     """
 
+    nudge: bool = True
+    """模型只回文本时推它一句（D140）。
+
+    关闭时那句话根本不发——模型空手回来这一轮就算完。措辞在 `director.yaml`
+    的 `nudge` 选项组里，这个开关只决定用不用 `off` 那一档。
+    """
+
     state: bool = True
     """结构化状态。关闭时 ``state_query`` / ``state_write`` 都不注册，
     且 ``submit_outline`` 不再要求先提交增量（E0 契约随之失效）。

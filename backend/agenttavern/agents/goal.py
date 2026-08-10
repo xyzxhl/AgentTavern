@@ -20,17 +20,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..llm import LLMGateway, Message, Role, Usage
+from ..llm import LLMGateway, Usage
 from ..models import Actor, Goal, Node, TraceEventType
+from ..prompting import assemble
 from ..tracing import Tracer
 
-_SYSTEM = (
-    "你在判断一个创作目标是否已经达成。只看给出的目标与剧情梗概，"
-    "不要考虑写得好不好、也不要揣测后续打算。\n\n"
-    "先逐条核对目标里的每一项要求是否都已出现在剧情中，**必须全部核对完**，"
-    "不要看到部分符合就下结论。\n\n"
-    "最后单独一行输出结论：`达成` 或 `未达成`。"
-)
+CONCLUSION = "达成"
+"""结论那一行的字样。**它和 `goal.yaml` 里那句「输出 `达成` 或 `未达成`」是一对**，
+改一处必须改另一处——这是提示词和解析之间少数几处真的耦合。
+"""
 
 
 @dataclass
@@ -48,22 +46,21 @@ async def judge_goal(
     *,
     model: str | None = None,
     user_id: str | None = None,
+    enabled: bool = True,
 ) -> GoalVerdict:
     digest = "\n".join(f"{i + 1}. {n.summary_or_head(200)}" for i, n in enumerate(path))
 
-    response = await gateway.complete(
-        [
-            Message(role=Role.SYSTEM, content=_SYSTEM),
-            Message(
-                role=Role.USER, content=f"## 目标\n{goal.description}\n\n## 剧情梗概\n{digest}"
-            ),
-        ],
-        model=model,
-        user_id=user_id,
+    # 提示词在 `goal.yaml` 里，这里只装配（D140）。`enabled=False` 时那一档是空串，
+    # 判定没有任何指示——留这个开关是为了能从外部关掉。
+    prompt = assemble(
+        "goal",
+        contexts={"goal": goal.description, "digest": digest},
+        options={"judging": "on" if enabled else "off"},
     )
+    response = await gateway.complete(prompt.messages, model=model, user_id=user_id)
 
     text = response.content.strip()
-    reached = text.splitlines()[-1].strip().startswith("达成") if text else False
+    reached = text.splitlines()[-1].strip().startswith(CONCLUSION) if text else False
 
     tracer.emit(
         TraceEventType.GOAL_EVALUATED,

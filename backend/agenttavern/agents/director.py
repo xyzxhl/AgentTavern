@@ -23,7 +23,7 @@ from ..models import (
     UserInput,
     trim_dangling_tool_call,
 )
-from ..prompting import director_prompt
+from ..prompting import choice, director_prompt, text
 from ..tools import RunContext, ToolOutcome, ToolRegistry
 from ..tracing import Tracer
 from .replay import INTERJECTION_MARK, replay_messages, turn_messages
@@ -104,6 +104,8 @@ async def run_director(
         history=[*prior, *carried],
         capabilities=session.capabilities,
         worldinfo=ctx.repo.worldbook(),
+        # 工具面的索引由注册表自己渲染——YAML 只决定它出现在哪（D140）。
+        tools=registry.render(),
     )
     messages = prompt.messages
 
@@ -134,11 +136,9 @@ async def run_director(
         for round_index in range(start_round, max_rounds):
             forced = round_index == max_rounds - 1
             if forced:
-                messages.append(Message(role=Role.USER, content=_nudge(ctx, final=True)))
+                _push(messages, _nudge(ctx, final=True))
             elif round_index == soft_rounds:
-                messages.append(
-                    Message(role=Role.USER, content="调查得差不多了，请开始收敛并提交细纲。")
-                )
+                _push(messages, text("director", "converge"))
 
             response = await _operation(
                 ctx, ctx.gateway.complete(messages, tools=specs, user_id=session.id)
@@ -164,7 +164,7 @@ async def run_director(
                 # 模型只回了文本。这在弱模型上很常见，推回去而不是当成产出——
                 # 细纲必须经由 submit_outline 提交，否则契约（E0）就绕过去了。
                 messages.append(response.as_assistant_message())
-                messages.append(Message(role=Role.USER, content=_nudge(ctx)))
+                _push(messages, _nudge(ctx))
                 _boundary(ctx, messages, tracer)
                 continue
 
@@ -280,9 +280,9 @@ def _boundary(
         return
     stopped = aborted or ctx.inbox.interrupted.is_set()
     texts = ctx.inbox.drain()
-    for text in texts:
-        messages.append(Message(role=Role.USER, content=f"{INTERJECTION_MARK}\n{text}"))
-        tracer.emit(TraceEventType.USER_INTERJECTED, Actor.USER, text)
+    for said in texts:
+        messages.append(Message(role=Role.USER, content=f"{INTERJECTION_MARK}\n{said}"))
+        tracer.emit(TraceEventType.USER_INTERJECTED, Actor.USER, said)
     if stopped and not texts:
         raise asyncio.CancelledError
 
@@ -302,20 +302,26 @@ def _save_draft(
     )
 
 
+def _push(messages: list[Message], body: str) -> None:
+    """推一句话给模型。**空串就什么也不推**——那是外部把这一档关掉了（D140）。"""
+    if body.strip():
+        messages.append(Message(role=Role.USER, content=body))
+
+
 def _nudge(ctx: RunContext, *, final: bool = False) -> str:
     """模型只回了文本时推回去的那句话。**只提还差的那一步。**
 
-    以前它无条件写着「先 state_write，再 submit_outline」。模型照做，又写了一次
-    `state_write`，然后又回到纯文本，于是再被推一次——实测 `pulp` 第 4 轮这样
-    空转了 12 个来回，24 次模型调用、**69 万 input token，占整场的 84%**，
-    最后靠硬上限才收住。
+    措辞在 `director.yaml` 的 `nudge` 选项组里，这里只负责挑档（D140）。
+    `nudge` 关掉时那一档是空串，于是根本不推——模型空手回来，这一轮就算完。
 
-    **催促词把已经做完的那一步也算进去，它就成了一条把模型引回原地的指令。**
-
-    这个判据 `_final_nudge` 一直是对的，只是当时没同步给循环里这一处——
-    同一段逻辑抄了两份，只修好了一份。所以现在合成一个函数。
+    **只提还差的那一步**这条判据是实测来的：催促词以前无条件写着「先
+    state_write，再 submit_outline」，模型照做又写一次 `state_write`，然后回到
+    纯文本，于是再被推一次——`pulp` 第 4 轮这样空转了 12 个来回，24 次模型调用、
+    **69 万 input token，占整场的 84%**，最后靠硬上限才收住。
+    **把已经做完的那一步也算进去，催促词就成了一条把模型引回原地的指令。**
     """
-    head = "这是最后一轮：请立即" if final else "请"
-    if ctx.capabilities.state and ctx.state_write_count == 0:
-        return f"{head}调用 state_write（没有变化就不带参数），然后 submit_outline。"
-    return f"{head}调用 submit_outline 提交本轮细纲。"
+    if not ctx.capabilities.nudge:
+        return ""
+    pending_write = ctx.capabilities.state and ctx.state_write_count == 0
+    option = "state_then_submit" if pending_write else "submit"
+    return choice("director", "nudge", f"final_{option}" if final else option)
