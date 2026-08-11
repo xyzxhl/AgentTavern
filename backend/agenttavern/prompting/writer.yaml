@@ -38,34 +38,25 @@ sections:
   - {role: user, key: intro}
   # 伪对话的那一句应答。**别往下移**：它要紧跟身份声明。
   - role: assistant
-    text: "好的，我已充分理解了本次任务。请您继续提供各类要求、资料和指示，我将全力配合。"
+    text: 好的，我已充分理解了本次任务。请您继续提供各类要求、资料和指示，我将全力配合。
   - {role: user, title: 输入契约, key: input_contract}
   - {role: user, title: 创作指导, key: creation_guidance}
   - {role: user, title: 台词, key: dialogue}
   # 文风是**选项组**，档位全文写在下面。session 只存档位名。
-  - role: user
-    title: 文风
-    intro: 以下是本作的文风。它高于你自己的写作习惯；与上面的通用指导冲突时，以它为准。
-    choice: prose_style
+  - {role: user, title: 文风要求, choice: prose_style}
 
   # 情色指导紧跟文风：它是文风的一部分（手法），
   # 而 content_scale 是判据（能到什么程度），归 director 那侧的「设定」。
   - {role: user, title: 情色描写, key: nsfw}
-
+  - {role: user, title: 角色语言习惯, context: character_voices}
   - role: user
-    title: 角色语言习惯
-    intro: 以下角色各有自己的说话方式。写他们的对白时按这里的习惯来，不要写成同一个人。
-    context: character_voices
-
-  - {role: user, title: 视角, text: "无论主视角如何，剧情全程必须采用第三人称创作。"}
+  - text: 用户扮演的角色是{{user_character}}，基于这点处理人称使用。
+  - {role: user, title: 视角, choice: pov}
   - {role: user, title: 铺陈程度, choice: density}
 
   # writer 没有历史——它每次都是一次干净的渲染（D52）。
   # 上文只为接住语气，两轮就够（RECENT_PROSE）；长程记忆是 director 的事。
-  - role: user
-    title: 上文
-    intro: 以下是紧接着本段之前的正文。**它只用来接住语气和现场**，不要复述、不要续写它已经写完的事。
-    context: upstream
+  - {role: user, title: 上文, context: upstream}
 
   - role: user
     title: 本轮细纲
@@ -222,6 +213,11 @@ density:
   sparse: 克制铺陈，事件密度高，少描写。
   normal: 铺陈与推进均衡。
   rich: 充分铺陈细节与心理，事件密度低。
+
+pov: 
+  first: 使用第一人称，增加用户的代入感。
+  second: 使用第二人称，仿佛在与用户对话。
+  third: 使用第三人称。
 
 # -- 下面两条是**部署方按自己的模型与端点填的**，我们不预设内容 ------------------
 #

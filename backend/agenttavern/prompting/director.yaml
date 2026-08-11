@@ -75,27 +75,13 @@ sections:
   # **措辞从"怎么写"改成了"怎么读"**（D143）：维护状态的是 state_manager，
   # director 这一侧只读。原先那两句（复用键名、旧值要改掉或删掉）搬去了
   # `state_manager.yaml`——它们是写入方的纪律。
-  - role: user
-    title: 当前状态
-    context: state
-    outro: |
-      这是一张**速查表**，不是完整记录，事情本身在前情里。上面的值就是此刻世界的样子，按它推演，不要与它矛盾。
-      **它不由你维护**，本轮结束后会有人根据你写下的细纲和成文去更新它。所以你不必也无法记录状态变化——**该被记住的东西，写进细纲里就行了**。
-  # 上一次没写完的那一轮（D142）。**只在「正文或状态阶段被打断、用户又说了新话」
-  # 时出现**：那种情况下这一轮从头重跑，而旧细纲不该白写。平时是空的，整节不出现。
-  - role: user
-    title: 上一次的推演
-    intro: 这一轮你已经写过一份细纲了，但它还没写成正文就被用户打断了。下面是当时的输入和你写下的细纲。
-    outro: 用户接着说了新的话，见下面的「用户输入」。**先判断这份细纲还成不成立**：还成立就在它的基础上接着改，不成立就重写一份。不要假装没写过。
-    context: previous_attempt
+  - {role: user, title: 当前世界状态, context: state}
   - {role: user, title: 事件密度, choice: event_density}
-  # 「剧情控制权」那一节搬进了 `ask_question` 的工具描述（D140）——
-  # 「越高越少问」讲的是那个工具该多积极地调用，读到它的地方就该是工具自己。
   - {role: user, title: 转述与推进, choice: narration_and_advancement}
   - {role: user, title: 抢话, choice: speaking_rule}
   - role: user
     title: 用户输入
-    intro: 以下是用户这一轮的输入。按上面「转述与推进」那一档处理它。
+    intro: 以下是最新用户输入：
     context: user_input
 
 intro: |
