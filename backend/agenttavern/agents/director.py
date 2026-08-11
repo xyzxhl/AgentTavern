@@ -59,6 +59,14 @@ class DirectorResult:
     另起一个只看得见几段细纲的冷调用，判据全靠猜。
     """
 
+    loop_messages: list[Message] = field(default_factory=list)
+    """loop 里产出的那几条：模型的回复、工具调用与结果，**不含提示词各节**。
+
+    writer / state 阶段被打断时草稿存的就是它（D142）——那两段之后回 director
+    重来，接回去的应该只有推演本身；提示词各节每次重新装配，接回去只会让旧的
+    state 快照和新的并排出现。
+    """
+
     turn_messages: list[Message] = field(default_factory=list)
     """**这一轮新增的那几条**，落在节点上供以后重放（D114）。
 
@@ -83,11 +91,24 @@ async def run_director(
 
     prior = replay_messages(history, readable=session.capabilities.history_search)
 
-    # **打断是挂起**（D118）：上次被截断处之前的对话原样接回来，新输入接在它后面。
-    # 草稿存的是"本轮新增的那几条"，历史仍然每次从路径重建——两者不重复。
-    # 它跟着前情一起进 `history` 那个位置：**它的位置不可选**，必须紧接前情、
-    # 排在这一轮的输入之前，所以不单独占一个可编排的条目。
+    # **打断是挂起**（D118 / D142）：上次被截断处之前的推演原样接回来。
+    #
+    # **接在整份提示词之后，而不是塞进前情那一格。** 草稿里存的是 loop 里产出的
+    # 那几条（模型的回复、工具调用与结果），**不含这一轮的提示词各节**——那几节
+    # 每次都重新装配，塞进草稿只会让旧的 state 快照和新的并排出现，还顶着
+    # "写在前面"的权威姿态跟新值打架（D121 已经在跨轮重放那侧记过这条）。
+    #
+    # 顺序因此是对的：前情 → 这一轮的要求与输入 → 上次想到一半的推演 → 追加的话。
     carried = list(resume.messages) if resume else []
+
+    # **续跑时「用户输入」那一节仍是被打断那一轮的原输入。** 新说的话不进那一节，
+    # 它作为「用户追加输入」接在推演之后——**位置就是它的含义**：排在
+    # `submit_outline` 之后，模型才读得出"你交的这份细纲，用户看了之后又说了话"，
+    # 而不是"这一轮的输入换了一条"（D145）。
+    said = user_input.text if user_input else None
+    appended = ""
+    if resume is not None and user_input is not None:
+        appended, said = user_input.text, (resume.user_input.text if resume.user_input else None)
 
     # **对话跨轮持续**（D114）：前情之前的部分跨轮不变，之前几轮接在后面，
     # 这一轮只追加变化的部分。前缀因此稳定，缓存打得中。
@@ -104,8 +125,8 @@ async def run_director(
         # 为的是续跑时模型别看见一份不含自己刚写下那笔的状态。director 不再写
         # 状态之后暂存区在这一阶段恒为空，两者等价，写 `base_state` 更诚实（D143）。
         state=ctx.base_state(),
-        user_text=user_input.text if user_input else None,
-        history=[*prior, *carried],
+        user_text=said,
+        history=prior,
         capabilities=session.capabilities,
         worldinfo=ctx.repo.worldbook(),
         # 工具面的索引由注册表自己渲染——YAML 只决定它出现在哪（D140）。
@@ -117,6 +138,12 @@ async def run_director(
     # 存进 `director_messages`，所以起点要划在草稿之前，不是新输入之前。
     turn_start = prompt.starts["history"] + len(prior)
 
+    # 草稿里的推演接上，用户新说的话再接在它之后。
+    loop_start = len(messages)
+    messages.extend(carried)
+    if appended:
+        messages.append(append_message(appended))
+
     tracer.emit(
         TraceEventType.CONTEXT_ASSEMBLED,
         Actor.ORCHESTRATOR,
@@ -127,6 +154,7 @@ async def run_director(
             "history_runs": len(history),
             "prior_messages": len(prior),
             "resumed_messages": len(carried),
+            "appended": bool(appended),
         },
     )
 
@@ -219,6 +247,7 @@ async def run_director(
                         usage=tracer.usage,
                         rounds=round_index + 1,
                         messages=messages,
+                        loop_messages=messages[loop_start:],
                         turn_messages=turn_messages(messages, turn_start),
                     )
                 # 同一次响应里 submit_outline 之后的调用被忽略——它是终止点，
@@ -228,7 +257,7 @@ async def run_director(
     except asyncio.CancelledError:
         # **挂起，不作废**（D118）。已经查过的资料、已经暂存的增量、已经想到
         # 一半的推演都留着，等下一条输入把它接下去。
-        _save_draft(ctx, messages, turn_start, round_index, user_input)
+        _save_draft(ctx, messages[loop_start:], round_index, said, user_input)
         raise
 
     raise DirectorFailed(f"director 在 {max_rounds} 轮内没有提交细纲")
@@ -296,21 +325,24 @@ def _boundary(
 
 def _save_draft(
     ctx: RunContext,
-    messages: list[Message],
-    turn_start: int,
+    loop: list[Message],
     round_index: int,
+    said: str | None,
     user_input: UserInput | None,
 ) -> None:
     """挂起这一段推演。**草稿由这里写，不由编排层写**——只有这里知道该从哪儿截：
     尾部那个没收到结果的工具调用必须一起丢掉，否则续跑时端点会拒绝整份请求。
+
+    存的是 loop 那一段，不含提示词各节（理由见上面装配处）。`user_input` 记的是
+    **被打断那一轮的原输入**：续跑时它顶回「用户输入」那一节，而下一条新说的话
+    另接在推演之后。
     """
-    kept = trim_dangling_tool_call(turn_messages(messages, turn_start))
     ctx.repo.save_draft(
         RunDraft(
             parent_id=ctx.parent_id,
             stage=RunStage.DIRECTOR,
-            user_input=user_input,
-            messages=kept,
+            user_input=UserInput(text=said) if said else user_input,
+            messages=trim_dangling_tool_call(loop),
             rounds=round_index,
         )
     )

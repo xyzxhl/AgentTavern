@@ -109,7 +109,10 @@ async def execute_run(
     prose = draft.prose if draft is not None else ""
     deviation = draft.deviation if draft is not None else None
     turn_messages: list[Message] = []
-    # 被打断那一轮的输入是**唯一不可再生的东西**，续跑时它顶在前面。
+    loop_messages: list[Message] = draft.messages if draft is not None else []
+    rounds = draft.rounds if draft is not None else 0
+    # 被打断那一轮的输入是**唯一不可再生的东西**，续跑时它仍然是这一轮的输入；
+    # 新说的话是「追加」，由 director 接在推演之后（D145），不顶替它。
     turn_input = (draft.user_input if draft is not None else None) or user_input
     # 从 writer / state 阶段续跑时**这一轮根本没有 director**，所以它是可空的。
     director: DirectorResult | None = None
@@ -150,7 +153,7 @@ async def execute_run(
 
         outline, prose, deviation = director.outline, "", None
         turn_messages = director.turn_messages
-        turn_input = user_input
+        loop_messages, rounds = director.loop_messages, director.rounds
 
     if stage is not RunStage.STATE:
         try:
@@ -161,7 +164,13 @@ async def execute_run(
             # 把一个失败的阶段当成了产出：下一轮会接着那半句往下写，而用户按停止
             # 恰恰是因为不想要那半句。细纲留着，它是上游、已经完成了。
             _suspend(
-                ctx, tracer, RunStage.WRITER, turn_input, messages=turn_messages, outline=outline
+                ctx,
+                tracer,
+                RunStage.WRITER,
+                turn_input,
+                messages=loop_messages,
+                rounds=rounds,
+                outline=outline,
             )
             raise
 
@@ -181,7 +190,8 @@ async def execute_run(
                 tracer,
                 RunStage.STATE,
                 turn_input,
-                messages=turn_messages,
+                messages=loop_messages,
+                rounds=rounds,
                 outline=outline,
                 prose=prose,
                 deviation=deviation,
@@ -299,6 +309,7 @@ def _suspend(
     user_input: UserInput | None,
     *,
     messages: list[Message],
+    rounds: int,
     outline: str,
     prose: str = "",
     deviation: str | None = None,
@@ -314,8 +325,11 @@ def _suspend(
             stage=stage,
             user_input=user_input,
             # **这一轮的推演一并存着**：回 director 重来时它接得下去，
-            # 那次 `submit_outline` 和它交出的细纲就在里面，不必另开一节复述。
+            # 那次 `submit_outline` 连同它交出的细纲就在里面。用户新说的话会被
+            # 接在它之后——**位置就是它的含义**：模型读到的是"你交的这份细纲，
+            # 用户看了之后又说了话"，而不是"这一轮的输入换了一条"（D145）。
             messages=messages,
+            rounds=rounds,
             outline=outline,
             prose=prose,
             deviation=deviation,

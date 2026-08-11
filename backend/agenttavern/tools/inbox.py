@@ -41,9 +41,10 @@ class Inbox:
         self.accepting = False
         """现在有没有人在看这个信箱。**只在 director 的 tool loop 期间为真。**
 
-        writer 是一次不可分的生成，没有操作边界可插——所以进了 writer 之后
-        打断只能取消整个 task（D60 的语义：保留已产出的正文片段）。
-        少了这个旗标，写正文时按停止就会石沉大海：信号进了没人读的信箱。
+        writer 和 state_manager 都是一次不可分的生成，没有操作边界可插——进了
+        那两段之后打断只能取消整个 task，于是**那一段判为失败、产出作废**，
+        已完成的上游存进草稿等续跑（D142）。少了这个旗标，写正文时按停止就会
+        石沉大海：信号进了没人读的信箱。
         """
 
     def push(self, text: str = "", *, interrupt: bool = False) -> None:

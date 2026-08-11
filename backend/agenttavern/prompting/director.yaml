@@ -53,15 +53,19 @@ sections:
   - {role: user, title: 题材与基调, context: genre_tone}
   - {role: user, title: 世界设定, context: worldinfo}
 
-  # **流程那四条已经删掉**（D143）。它们讲的是"什么时候查、什么时候提交"，
-  # 而每一条都有一个工具与之对应，工具描述里写得更细：
+  # 只改到能加载：`role: user,` 的逗号进了值里（`Role("user,")` 非法），
+  # `test:` 应为 `text:`。文字一个没动。
+  - role: user
+    title: 流程指导
+    text: 理解用户指令，梳理相关信息，推演剧情发展，最后调用 submit_outline 提交细纲，**不要直接输出**。
+
+  # D143 曾把流程四条全删掉，理由是每一条都有工具描述覆盖它、且写得更细。
+  # 上面这一条是**把「提交」那半句加回来**——实测 `data` 场景 5 轮里有 4 轮
+  # director 第一次只回文本、被催了才提交（`nudges: 4`），怀疑就是少了这句提示。
+  # 剩下三条（查证 / 想清楚 / 记状态）没有回来：
   # `flow_lookup` 之于 `_HISTORY_WHEN`（十五行「什么时候去翻原文」）、
-  # `flow_submit` 之于 `submit_outline`（「每轮有且仅有一次」逐字重复）。
-  # 唯一没有工具对应的是 `flow_think`（「先想清楚再动手」），但「细纲是什么」
-  # 已经由输出契约整节讲透，那一句不新增任何约束。
-  #
-  # `flow_state` 连同 state_write 一起走了：**director 不再维护状态**，
-  # 那是 writer 之后 state_manager 的活（D143）。
+  # `flow_think` 之于输出契约整节，都是重复；`flow_state` 连同 state_write
+  # 一起走了——**director 不再维护状态**，那是 state_manager 的活。
 
   # 前情：摘要 + 扁平化的历史轮次，各自带着自己的 role，所以这一条不写 role。
   # 被打断挂起的那半轮（D118）也跟在这里——它的位置不能选，必须紧接前情、

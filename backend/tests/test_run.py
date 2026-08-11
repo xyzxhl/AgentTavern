@@ -188,12 +188,15 @@ async def test_interrupt_during_director_lands_no_node(tmp_path: Path) -> None:
         await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
 
     assert repo.all_nodes() == {}
-    # 第一次 complete 就被掐掉，模型什么都没产出。草稿仍然要存——里面那条
-    # 用户输入是**唯一不可再生的东西**，丢了之后用户的下一句话就没有指代了。
+    # 第一次 complete 就被掐掉，模型什么都没产出，所以 `messages` 是空的——
+    # **它只装 loop 里产出的东西，不装提示词各节**（D145）。但草稿仍然要存：
+    # 那条用户输入是**唯一不可再生的东西**，丢了用户的下一句话就没有指代了，
+    # 所以它有自己的字段。
     draft = repo.load_draft()
     assert draft is not None
     assert draft.stage is RunStage.DIRECTOR
-    assert "我推开门" in str(draft.messages)
+    assert draft.messages == []
+    assert draft.user_input is not None and draft.user_input.text == "我推开门"
 
 
 async def test_interrupt_during_writer_drops_the_half_written_prose(tmp_path: Path) -> None:
