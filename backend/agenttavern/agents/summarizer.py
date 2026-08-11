@@ -1,4 +1,4 @@
-"""摘要生成（D69）。
+"""summarizer：摘要生成（D69）。
 
 **摘要由系统维护，不由 director 顺手做。**
 
@@ -52,11 +52,11 @@ async def summarize_text(
     写摘要的那一刻，无从知道台账上那行日期以后会成为关键（D106 的交集盲区）。
     而具体项占的字数很少、丢了不可再生；概括项占字数多、随时能从事实里重新读出来。
 
-    判据本身写在 `summary.yaml` 里，这里只装配（D140）。``enabled=False`` 时
+    判据本身写在 `summarizer.yaml` 里，这里只装配（D140）。``enabled=False`` 时
     那一档是空串，指示整条不发——留这个开关是为了能从外部关掉，不是推荐这么做。
     """
     prompt = assemble(
-        "summary",
+        "summarizer",
         contexts={"content": content},
         values={"max_chars": str(max_chars)},
         options={"compression": "on" if enabled else "off"},

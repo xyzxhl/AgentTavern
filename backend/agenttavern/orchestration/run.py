@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from ..agents.director import DirectorFailed, run_director
 from ..agents.postrun import ask_segment_cut
 from ..agents.replay import without_reasoning
-from ..agents.summary import MAX_SEGMENT_RUNS, SUMMARY_MAX_CHARS, summarize_text
+from ..agents.summarizer import MAX_SEGMENT_RUNS, SUMMARY_MAX_CHARS, summarize_text
 from ..agents.writer import run_writer
 from ..llm import LLMGateway, Usage
 from ..models import (

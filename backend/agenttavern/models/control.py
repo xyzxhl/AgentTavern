@@ -134,7 +134,7 @@ class Goal(BaseModel):
 
     机制：正常一轮生成结束后检查是否达标，未达标则开启下一 run。
 
-    **goal 不是模式**——有无 goal 系统跑法一样，只是 run 末多一次 goal agent 的
+    **goal 不是模式**——有无 goal 系统跑法一样，只是 run 末多一次 goal_manager 的
     调用。达标判定一律交给模型，不降级为代码：那些结构化字段的值本就是模型写的，
     代码读取比对不是独立验证（D30）。
     """
@@ -157,7 +157,7 @@ class Goal(BaseModel):
 
 
 class SubGoal(BaseModel):
-    """一个阶段性目标。**goal agent 拆出来的，不是用户写的。**"""
+    """一个阶段性目标。**goal_manager 拆出来的，不是用户写的。**"""
 
     description: str
     done: bool = False

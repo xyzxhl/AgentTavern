@@ -86,7 +86,7 @@ class SessionRunner:
         self._goal_tokens = 0
 
         self._goal_input: str | None = None
-        """goal agent 替用户写的下一条输入（D141）。
+        """goal_manager 替用户写的下一条输入（D141）。
 
         自动续跑时拿它当 `user_input`——**这就是「模拟用户输入」落地的地方**。
         它不是持久状态：进程内的一次传递，用完即清。
@@ -233,7 +233,7 @@ class SessionRunner:
         # 无论成败都记一次——否则持续失败的 run 会让 goal 驱动的自动续跑无限空转。
         self._goal_runs += 1
 
-        # 自动续跑时用 goal agent 写的那条输入（D141）。**用完即清**：它只对紧接着
+        # 自动续跑时用 goal_manager 写的那条输入（D141）。**用完即清**：它只对紧接着
         # 的这一轮有效，留着会在用户插话之后被错误地重放。真的用户输入优先（D27），
         # 所以只在 `item is None` 这条路上取。
         simulated = self._goal_input if item is None else None
@@ -292,7 +292,7 @@ class SessionRunner:
         await self._check_goal(outcome.node.id)
 
     async def _check_goal(self, leaf_id: str) -> None:
-        """goal agent 在 **run 末**跑（D28/D40/D141）——与控制权（轮内）作用点不同。
+        """goal_manager 在 **run 末**跑（D28/D40/D141）——与控制权（轮内）作用点不同。
 
         一轮之后它做三件事里的一到两件：核对阶段进度并写出下一条输入；若阶段全部
         走完，再判目标的去向（完成 / 完全偏离 / 重新规划）。**它写的那条输入存在
@@ -303,7 +303,7 @@ class SessionRunner:
         if goal is None:
             return
 
-        # goal agent 是真实的模型调用，因此它**必须和 run 一样可见、一样计入预算**：
+        # goal_manager 是真实的模型调用，因此它**必须和 run 一样可见、一样计入预算**：
         # 不推事件的话，goal 为什么迟迟不达标就完全无从查起；不计 token 的话，
         # D28 那个用来兜住自主运行成本的预算就漏掉了每轮都发生的调用。
         tracer = Tracer(
@@ -313,7 +313,7 @@ class SessionRunner:
             persist=session.capabilities.trace,
         )
         path = self._repo.path_to(leaf_id)
-        # 事件密度是 goal agent 唯一读的控制维度：它决定阶段拆多细、
+        # 事件密度是 goal_manager 唯一读的控制维度：它决定阶段拆多细、
         # 一条输入推多远（D93 那条投影的第三面）。
         density = session.control.expansion_density
         sid = session.id

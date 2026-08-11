@@ -1,5 +1,5 @@
 from .director import DirectorFailed, DirectorResult, run_director
-from .goal import (
+from .goal_manager import (
     GoalStep,
     budget_exhausted,
     digest_of,

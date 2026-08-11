@@ -131,7 +131,7 @@ class Node(BaseModel):
     """由 director 通过 ``state_write`` 提交（D55，唯一写者）。"""
 
     goal_plan: GoalPlan | None = None
-    """goal agent 在这一轮之后留下的阶段计划（D141）。
+    """goal_manager 在这一轮之后留下的阶段计划（D141）。
 
     **只在它变化的那一轮上存**——和 `state_delta` 一样是增量思路：沿路径往回找，
     最后一个带计划的节点就是当前计划。换一条分支自然拿到那条分支自己的进度，

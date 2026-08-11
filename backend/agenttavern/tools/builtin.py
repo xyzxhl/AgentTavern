@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ..agents.summary import summarize_text
+from ..agents.summarizer import summarize_text
 from ..models import ModelAuthority, Node, StateDelta
 from .base import Tool, ToolOutcome, ToolResult, error
 from .context import RunContext

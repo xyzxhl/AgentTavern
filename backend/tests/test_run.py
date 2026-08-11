@@ -350,7 +350,7 @@ async def test_segment_closes_when_the_director_says_it_closed(tmp_path: Path) -
     它对本轮产出毫无帮助，所以不能放进 tool loop；但"这场戏完了没有"是语义判断，
     需要 state、前情和故事走向——冷调用给不出来，只能接在刚写完的那段对话后面追问。
     """
-    from agenttavern.agents.summary import SUMMARY_MAX_CHARS
+    from agenttavern.agents.summarizer import SUMMARY_MAX_CHARS
 
     runs = 4
     long_outline = "她推开门，屋里坐着陈。" * 30
@@ -406,7 +406,7 @@ async def test_open_segment_waits_another_run(tmp_path: Path) -> None:
 
 async def test_a_short_segment_is_kept_verbatim(tmp_path: Path) -> None:
     """整段拼起来还比摘要短，就原样留下——压它只会白白引入损失，还要多花一次调用。"""
-    from agenttavern.agents.summary import SUMMARY_MAX_CHARS
+    from agenttavern.agents.summarizer import SUMMARY_MAX_CHARS
 
     runs = 4
     short = "她推开门。"

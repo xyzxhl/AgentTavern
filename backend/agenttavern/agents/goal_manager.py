@@ -1,8 +1,11 @@
-"""goal agent（D28 / D141）。
+"""goal_manager：目标管理者（D28 / D141）。
 
-**它是第三个 agent，不是 director 顺手做的一步。** 上下文只有四样：目标、
-阶段计划、剧情梗概（各轮细纲的摘要）、事件密度。**它不读正文**（同 D54 的
-理由），也不读世界设定和状态——它管的是"推到哪儿了"，不是"这一轮怎么写"。
+**它是第三个 agent，不是 director 顺手做的一步。** 叫「管理者」而不是「判定者」，
+因为判定只是它四件事里的一件——它还拆阶段、核对进度、替用户写下一条输入。
+
+上下文只有四样：目标、阶段计划、剧情梗概（各轮细纲的摘要）、事件密度。
+**它不读正文**（同 D54 的理由），也不读世界设定和状态——它管的是"推到哪儿了"，
+不是"这一轮怎么写"。
 
 ## 为什么值得独立出来
 
@@ -56,8 +59,8 @@ _OUTCOMES = {
     "完全偏离": GoalOutcome.DERAILED,
     "继续": GoalOutcome.REPLAN,
 }
-"""结论那一行的字样。**它和 `goal.yaml` 里那三个词是一对**，改一处必须改另一处——
-这是提示词和解析之间少数几处真的耦合。
+"""结论那一行的字样。**它和 `goal_manager.yaml` 里那三个词是一对**，
+改一处必须改另一处——这是提示词和解析之间少数几处真的耦合。
 """
 
 
@@ -97,7 +100,7 @@ async def _ask(
 ) -> tuple[str, Usage]:
     """三件事共用的一次调用。**任务由 `task` 那个选项组切**，上下文完全一样。"""
     prompt = assemble(
-        "goal",
+        "goal_manager",
         contexts={
             "goal": goal.description,
             "plan": plan.render() if plan else "",
@@ -145,7 +148,7 @@ async def plan_subgoals(
 
     tracer.emit(
         TraceEventType.GOAL_EVALUATED,
-        Actor.GOAL_AGENT,
+        Actor.GOAL_MANAGER,
         f"拆出 {len(subgoals)} 个阶段（第 {plan.revision} 版）",
         {"goal": goal.description, "subgoals": [s.description for s in subgoals]},
         usage=usage,
@@ -191,7 +194,7 @@ async def take_step(
     current = updated.current
     tracer.emit(
         TraceEventType.GOAL_EVALUATED,
-        Actor.GOAL_AGENT,
+        Actor.GOAL_MANAGER,
         f"本轮达成 {len(reached)} 个阶段" if reached else "本轮没有新达成的阶段",
         {
             "reached": sorted(reached),
@@ -250,7 +253,7 @@ async def final_verdict(
 
     tracer.emit(
         TraceEventType.GOAL_EVALUATED,
-        Actor.GOAL_AGENT,
+        Actor.GOAL_MANAGER,
         {
             GoalOutcome.DONE: "目标已完成",
             GoalOutcome.DERAILED: "剧情已完全偏离目标",
