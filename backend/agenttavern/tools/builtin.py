@@ -1,9 +1,14 @@
-"""director 的内置工具。清单与理由见 docs/Tools.md。
+"""内置工具。清单与理由见 docs/Tools.md。
 
-**明确不提供**（同样重要）：任何读正文的工具、调用 writer 的工具、生成子 agent、
-修改元指令 / 控制维度、写文件 / 执行代码。前两条是 D54 的基础——director 能覆盖
-五倍历史跨度，正是因为它从不读正文；工具返回值会回流到调用者上下文，正文一旦
-回流，整个隔离设计就没了。
+**这里装的是全部工具，不是某一个 agent 的工具面**——谁拿到哪几个由
+`registry.py` 决定。`state_write` 只给 state_manager，`submit_outline` 只给
+director（D143）。
+
+**明确不提供**（同样重要）：任何让 director 读正文的工具、调用 writer 的工具、
+生成子 agent、修改元指令 / 控制维度、写文件 / 执行代码。头两条是 D54 的基础——
+director 能覆盖五倍历史跨度，正是因为它自己从不读正文；工具返回值会回流到调用者
+上下文，正文一旦这样回流，隔离当场就没了。（正文经 state_manager 折成键值再进
+state 是另一回事：那是一次有损压缩，且跨了 run 边界。）
 """
 
 from __future__ import annotations
@@ -13,7 +18,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ..agents.summarizer import summarize_text
 from ..models import ModelAuthority, Node, StateDelta
 from .base import Tool, ToolOutcome, ToolResult, error
 from .context import RunContext
@@ -37,15 +41,8 @@ class SubmitOutlineParams(BaseModel):
 
 
 async def _submit_outline(ctx: RunContext, params: SubmitOutlineParams) -> ToolResult:
-    # state 能力关闭时 E0 契约随之失效——没有 state_write 可调，就不能要求它。
-    if ctx.capabilities.state and ctx.state_write_count == 0:
-        # E0 契约。空 delta 合法，但必须显式提交过——否则无法区分
-        # "确实没有变化"与"模型忘了提交"。
-        return error(
-            "还没有提交状态增量。请先调用 state_write（没有变化就传空的 delta），再提交细纲。",
-            label="缺少状态增量，退回",
-        )
-
+    # **E0 契约已作废**（D143）：它原先要求提交细纲前必须写过一次 state_write。
+    # director 不再维护状态，这里也就没有前置条件了。
     ctx.outline = params.outline
     return ToolResult(
         content="细纲已提交。",
@@ -106,14 +103,14 @@ class StateWriteParams(BaseModel):
     )
 
 
-_STATE_WRITE_DESC = """记录本轮的状态变化。可多次调用，累积生效。本轮没有任何变化时也**必须**\
-调用一次（不带任何参数即可）。
+_STATE_WRITE_DESC = """记录本轮的状态变化。**可多次调用，累积生效**；确实什么都没变，
+就一次也不用调。
 
-**事情本身已经记在前情里了。state 不是第二份记录，是一条捷径**——把你每一轮
+**事情本身已经记在细纲和正文里了。state 不是第二份记录，是一条捷径**——把后面每一轮
 都要用到、又不该每次回头去翻的那几条，拎出来摆在眼前。
 
-**先过一道门槛：你需要随时看见它，不该为它去翻前情。** 这一轮的气氛、谁站在
-柜台哪一侧、物件的朝向——前情里本来就有，抄进来只是占地方。
+**先过一道门槛：写故事的人需要随时看见它，不该为它去翻前情。** 这一轮的气氛、谁站在
+柜台哪一侧、物件的朝向——细纲和正文里本来就有，抄进来只是占地方。
 
 过了门槛之后，**该记的东西有两类，它们"忘了的后果"完全不同**：
 
@@ -415,6 +412,11 @@ async def _summarize(ctx: RunContext, params: SummarizeParams) -> ToolResult:
 
 
 async def _llm_summarize(ctx: RunContext, content: str, max_chars: int) -> str:
+    # **函数内 import 是有意的**：模块级会成环（tools → agents → director → tools）。
+    # 环一直在，只是恰好没人单独 import 过 `agenttavern.tools`——测试全跑时
+    # 别的模块先把 agents 装好了，环就看不见。
+    from ..agents.summarizer import summarize_text
+
     return await summarize_text(ctx.gateway, content, max_chars)
 
 
@@ -448,31 +450,39 @@ def _tool(name: str, description: str, params: type[BaseModel], handler: Any) ->
     return Tool(name=name, description=description, params_type=params, handler=handler)
 
 
-def submit_tool(require_state_write: bool) -> Tool[Any]:
-    contract = "调用前必须至少调用过一次 state_write。" if require_state_write else ""
+def submit_tool() -> Tool[Any]:
+    """**没有前置条件了**（D143）：E0 契约（提交前必须写过一次 state）随
+    director 卸下 `state_write` 一并作废。
+    """
     return _tool(
         "submit_outline",
-        "提交本轮细纲并结束。**每轮有且仅有一次**，调用后不能再做任何事。" + contract,
+        "提交本轮细纲并结束。**每轮有且仅有一次**，调用后不能再做任何事。",
         SubmitOutlineParams,
         _submit_outline,
     )
 
 
-def state_tools(*, query: bool = True) -> list[Tool[Any]]:
-    """``query=False`` 时只注册写入——state 改为每轮全量注入，没有可展开的东西。"""
-    tools = [_tool("state_write", _STATE_WRITE_DESC, StateWriteParams, _state_write)]
-    if query:
-        tools.insert(
-            0,
-            _tool(
-                "state_query",
-                "读取当前世界状态里指定的键。上下文中已给出全部键名与体量小的值，"
-                "这里用于展开体量大的那些。",
-                StateQueryParams,
-                _state_query,
-            ),
-        )
-    return tools
+def state_query_tool() -> Tool[Any]:
+    """读侧。**两个 agent 都可能拿到它**：director 读状态推演，state_manager
+    读状态决定该改哪个键。只在按需展开开着时才注册（D62）。
+    """
+    return _tool(
+        "state_query",
+        "读取当前世界状态里指定的键。上下文中已给出全部键名与体量小的值，"
+        "这里用于展开体量大的那些。",
+        StateQueryParams,
+        _state_query,
+    )
+
+
+def state_write_tool() -> Tool[Any]:
+    """写侧。**只给 state_manager**（D143）。
+
+    它以前在 director 手上，边推演边记；现在挪到 writer 之后，读着这一轮的细纲和
+    正文去记。换来两件事：记的人看得见**最终写出来的是什么**（正文常常落实了细纲
+    没写死的东西），以及 director 那一轮少了一件要惦记的事。
+    """
+    return _tool("state_write", _STATE_WRITE_DESC, StateWriteParams, _state_write)
 
 
 _HISTORY_WHEN = """**当前状态和总结共同的盲区，是「当时不要紧、现在才要紧」的细节。**
@@ -564,7 +574,8 @@ def ask_question_tool(authority: ModelAuthority = ModelAuthority.MEDIUM) -> Tool
 __all__ = [
     "ask_question_tool",
     "history_tools",
-    "state_tools",
+    "state_query_tool",
+    "state_write_tool",
     "submit_tool",
     "summarize_tool",
     "worldinfo_tools",

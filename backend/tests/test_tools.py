@@ -19,7 +19,13 @@ from agenttavern.models import (
     WorldbookMode,
 )
 from agenttavern.storage import Store
-from agenttavern.tools import RunContext, ToolOutcome, ToolRegistry, build_tools
+from agenttavern.tools import (
+    RunContext,
+    ToolOutcome,
+    ToolRegistry,
+    build_state_tools,
+    build_tools,
+)
 
 
 def fake_gateway(reply: str = "摘要文本") -> LLMGateway:
@@ -61,28 +67,34 @@ ALL_ON = Capabilities(
 
 @pytest.fixture
 def reg() -> ToolRegistry:
-    """全部能力打开。默认配置的工具面要小得多，见文末的开关测试。"""
-    return ToolRegistry.for_session(
-        ALL_ON, [WorldbookEntry(name="占位", mode=WorldbookMode.ON_DEMAND)]
+    """全部能力打开，**两个 agent 的工具面并在一起**。
+
+    这个 fixture 测的是工具本身怎么工作，不是谁能看到它。`state_write` 从 D143
+    起只在 state_manager 那一面（见文末的开关测试），但它的行为该在这里测。
+    默认配置的工具面要小得多。
+    """
+    return ToolRegistry(
+        build_tools(ALL_ON, [WorldbookEntry(name="占位", mode=WorldbookMode.ON_DEMAND)])
+        + build_state_tools(ALL_ON)
     )
 
 
 # -- 契约 -------------------------------------------------------------------
 
 
-async def test_submit_outline_requires_a_prior_state_write(reg, ctx) -> None:
-    """E0 契约：强制这一次调用是为了区分"确实没变化"与"模型忘了提交"。"""
-    result = await call(reg, ctx, "submit_outline", outline="她推开门。")
-    assert result.is_error
-    assert ctx.outline is None
+async def test_submit_outline_has_no_precondition(reg, ctx) -> None:
+    """**E0 契约已作废**（D143）。
 
-    await call(reg, ctx, "state_write")  # 空 delta 合法
+    它原先要求提交细纲前必须写过一次 `state_write`，为的是区分"确实没变化"与
+    "模型忘了提交"。director 不再维护状态，这个前置条件也就没有对象了。
+    """
     ok = await call(reg, ctx, "submit_outline", outline="她推开门。")
     assert ok.outcome is ToolOutcome.TERMINATE
     assert ctx.outline == "她推开门。"
 
 
-async def test_empty_delta_still_counts(reg, ctx) -> None:
+async def test_an_empty_write_is_legal(reg, ctx) -> None:
+    """不带参数调用是合法的，只是不再有谁**要求**它非调不可。"""
     await call(reg, ctx, "state_write")
     assert ctx.state_write_count == 1
     assert ctx.staged_delta.is_empty()
@@ -331,7 +343,7 @@ def test_state_write_says_what_to_record() -> None:
     单说"这是状态不是事件"两类都拦不住：物件朝向确实是状态。
     （第三类误解「把设定抄进 state」不靠描述解决，靠 worldbook 种子移除诱因，D90。）
     """
-    desc = next(t.description for t in build_tools(ALL_ON) if t.name == "state_write")
+    desc = next(t.description for t in build_state_tools(ALL_ON) if t.name == "state_write")
 
     # 定位：捷径而非记录。删键不丢信息这条推论也要在，否则模型不敢删。
     assert "不是第二份记录" in desc
@@ -437,7 +449,7 @@ def test_submit_outline_always_exists() -> None:
 
 def test_each_switch_removes_its_tools() -> None:
     """**不注册**比「注册了但拒绝」强：模型看不到，不会浪费尝试，也不占 prompt 体量。"""
-    assert names_for(Capabilities(state=True)) >= {"state_query", "state_write"}
+    assert "state_query" in names_for(Capabilities(state=True))
     assert names_for(Capabilities(state=False)).isdisjoint({"state_query", "state_write"})
 
     assert names_for(Capabilities(history_search=True)) >= {"history_search", "history_read"}
@@ -462,26 +474,32 @@ def test_worldinfo_tools_only_when_something_is_expandable() -> None:
     assert names_for(Capabilities(), mixed) >= {"worldinfo_list", "worldinfo_read"}
 
 
-async def test_state_off_drops_the_e0_contract(tmp_path: Path) -> None:
-    """state 关闭时没有 state_write 可调，就不能再要求先提交增量。"""
-    repo = Store(tmp_path).create_session(Session(capabilities=Capabilities(state=False)))
-    ctx = RunContext("run_x", repo, repo.load_session(), fake_gateway())
-    registry = ToolRegistry.for_session(ctx.capabilities)
+def test_the_write_side_belongs_to_the_state_manager_alone(tmp_path: Path) -> None:
+    """**director 读状态，state_manager 写状态**（D143）。
 
-    result = await call(registry, ctx, "submit_outline", outline="她推开门。")
-    assert not result.is_error
-    assert ctx.outline == "她推开门。"
+    这条隔离和 D33 那把刀是同一个性质：谁能碰什么，从工具面上就该看得出来。
+    `state_query` 两边都有——写之前要知道现在是什么样。
+    """
+    assert "state_write" not in names_for(ALL_ON)
+    assert {t.name for t in build_state_tools(ALL_ON)} == {"state_write", "state_query"}
+
+    # 按需展开关掉时 state 全量注入，`state_query` 两边一起消失（D62）。
+    off = Capabilities(state=True, state_query=False)
+    assert "state_query" not in names_for(off)
+    assert {t.name for t in build_state_tools(off)} == {"state_write"}
 
 
-def test_submit_description_mentions_contract_only_when_relevant() -> None:
-    with_state = ToolRegistry.for_session(Capabilities(state=True))
-    without = ToolRegistry.for_session(Capabilities(state=False))
+async def test_submit_outline_never_has_a_precondition(tmp_path: Path) -> None:
+    """E0 作废之后，state 开着关着都一样能直接提交。"""
+    for caps in (Capabilities(state=True), Capabilities(state=False)):
+        repo = Store(tmp_path / caps.state.__str__()).create_session(Session(capabilities=caps))
+        ctx = RunContext("run_x", repo, repo.load_session(), fake_gateway())
 
-    def describe(reg: ToolRegistry) -> str:
-        return next(s.description for s in reg.specs() if s.name == "submit_outline")
-
-    assert "state_write" in describe(with_state)
-    assert "state_write" not in describe(without)
+        result = await call(
+            ToolRegistry.for_session(caps), ctx, "submit_outline", outline="她推门。"
+        )
+        assert not result.is_error
+        assert ctx.outline == "她推门。"
 
 
 def test_base_state_uses_parent_path(tmp_path: Path) -> None:

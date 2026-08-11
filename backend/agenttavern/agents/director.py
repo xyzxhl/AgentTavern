@@ -3,8 +3,12 @@
 产出一份**无文风约束的文章**（细纲）。它拿走全部推演与状态职责——writer 只是
 从它身上拆下来的一个负担，只承担文风（D52）。
 
-**唯一终止点是 `submit_outline`**（D53）。调用即结束 loop，编排层接手调 writer；
-正文不回流——一旦回流，director 覆盖五倍历史跨度的能力就没了（D54）。
+**唯一终止点是 `submit_outline`**（D53）。调用即结束 loop，编排层接手调 writer。
+
+**它读状态，但不写状态**（D143）：状态维护后置成了 writer 之后的 state_manager。
+于是正文经那一步转写进 state，state 下一轮回到这里——**D54 因此被削了一半**：
+回流的是被压缩筛选过的几十个键值，不是原文，五倍历史跨度还在，但不能再说
+「正文完全不回流」了。
 """
 
 from __future__ import annotations
@@ -95,11 +99,10 @@ async def run_director(
     prompt = director_prompt(
         meta=session.meta,
         control=session.control,
-        # 用 `current_state` 而不是 `base_state`：续跑时（D118）暂存区里已经有
-        # 上次打断前写下的增量，注入的状态必须**把它算进去**——否则模型刚看完
-        # 自己那条 `state_write` 的回执，紧接着就收到一份没有它的状态。
-        # 没有草稿时暂存区是空的，两者等价。
-        state=ctx.current_state(),
+        # **本 run 开始时的状态。** 这里原先写的是 `current_state`（叠加暂存增量），
+        # 为的是续跑时模型别看见一份不含自己刚写下那笔的状态。director 不再写
+        # 状态之后暂存区在这一阶段恒为空，两者等价，写 `base_state` 更诚实（D143）。
+        state=ctx.base_state(),
         user_text=user_input.text if user_input else None,
         history=[*prior, *carried],
         capabilities=session.capabilities,
@@ -291,15 +294,7 @@ def _save_draft(
     ctx: RunContext, messages: list[Message], turn_start: int, round_index: int
 ) -> None:
     kept = trim_dangling_tool_call(turn_messages(messages, turn_start))
-    ctx.repo.save_draft(
-        DirectorDraft(
-            parent_id=ctx.parent_id,
-            messages=kept,
-            staged_delta=ctx.staged_delta,
-            state_write_count=ctx.state_write_count,
-            rounds=round_index,
-        )
-    )
+    ctx.repo.save_draft(DirectorDraft(parent_id=ctx.parent_id, messages=kept, rounds=round_index))
 
 
 def _push(messages: list[Message], body: str) -> None:
@@ -309,19 +304,17 @@ def _push(messages: list[Message], body: str) -> None:
 
 
 def _nudge(ctx: RunContext, *, final: bool = False) -> str:
-    """模型只回了文本时推回去的那句话。**只提还差的那一步。**
+    """模型只回了文本时推回去的那句话。
 
     措辞在 `director.yaml` 的 `nudge` 选项组里，这里只负责挑档（D140）。
     `nudge` 关掉时那一档是空串，于是根本不推——模型空手回来，这一轮就算完。
 
-    **只提还差的那一步**这条判据是实测来的：催促词以前无条件写着「先
-    state_write，再 submit_outline」，模型照做又写一次 `state_write`，然后回到
-    纯文本，于是再被推一次——`pulp` 第 4 轮这样空转了 12 个来回，24 次模型调用、
-    **69 万 input token，占整场的 84%**，最后靠硬上限才收住。
-    **把已经做完的那一步也算进去，催促词就成了一条把模型引回原地的指令。**
+    **这里原本有个分支**：state_write 还没做就催「先 state_write 再 submit」。
+    判据是实测来的——催促词以前无条件写着两步，模型照做又写一次 `state_write`，
+    然后回到纯文本，于是再被推一次；`pulp` 第 4 轮这样空转了 12 个来回、
+    **69 万 input token，占整场的 84%**。D143 把状态维护整个搬走之后，director
+    这一轮只剩一件事要做，分支自己没有了。
     """
     if not ctx.capabilities.nudge:
         return ""
-    pending_write = ctx.capabilities.state and ctx.state_write_count == 0
-    option = "state_then_submit" if pending_write else "submit"
-    return choice("director", "nudge", f"final_{option}" if final else option)
+    return choice("director", "nudge", "final_submit" if final else "submit")

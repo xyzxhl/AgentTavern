@@ -135,11 +135,11 @@ async def test_run_scenario_chains_turns_and_keeps_going_after_a_failure(tmp_pat
     而我们要的正是失败样本。"""
     llm = ScriptedLLM(
         # 第 1 轮：正常
-        tool("state_write", set={"地点": "客厅"}),
         tool("submit_outline", outline="她推开门。"),
         text("门开了。"),
         # 第 2 轮：director 只回文本、永不提交，耗尽轮数 → 失败
         text("我在想"),
+        state=dict(set={"地点": "客厅"}),
     )
     settings = Settings(data_dir=tmp_path, llm_model="test")
     scenario = SCENARIOS["noir"]
@@ -158,12 +158,11 @@ async def test_run_scenario_chains_turns_and_keeps_going_after_a_failure(tmp_pat
 
 async def test_turns_are_chained_so_state_accumulates(tmp_path: Path) -> None:
     llm = ScriptedLLM(
-        tool("state_write", set={"地点": "客厅"}),
         tool("submit_outline", outline="她推开门。"),
         text("门开了。"),
-        tool("state_write", append={"林昭.知情": ["陈撒谎了"]}),
         tool("submit_outline", outline="她看着他。"),
         text("她看着他。灯很暗。"),
+        state=[dict(set={"地点": "客厅"}), dict(append={"林昭.知情": ["陈撒谎了"]})],
     )
     settings = Settings(data_dir=tmp_path, llm_model="test")
 
@@ -446,12 +445,11 @@ async def test_regrade_rebuilds_the_same_material_from_disk(tmp_path: Path) -> N
     from agenttavern.bench import load_result
 
     llm = ScriptedLLM(
-        tool("state_write", set={"地点": "客厅"}),
         tool("submit_outline", outline="她推开门。"),
         text("门开了。"),
-        tool("state_write", append={"林昭.知情": ["陈撒谎了"]}),
         tool("submit_outline", outline="她看着他。"),
         text("她看着他。灯很暗。"),
+        state=[dict(set={"地点": "客厅"}), dict(append={"林昭.知情": ["陈撒谎了"]})],
     )
     settings = Settings(data_dir=tmp_path, llm_model="test")
     original = await run_scenario(SCENARIOS["noir"], llm.gateway(), settings, limit=2)
@@ -467,9 +465,9 @@ async def test_regrade_rebuilds_the_same_material_from_disk(tmp_path: Path) -> N
 
 async def test_report_renders_without_grading(tmp_path: Path) -> None:
     llm = ScriptedLLM(
-        tool("state_write", set={"地点": "客厅"}),
         tool("submit_outline", outline="她推开门。"),
         text("门开了。"),
+        state=dict(set={"地点": "客厅"}),
     )
     settings = Settings(data_dir=tmp_path, llm_model="test")
     result = await run_scenario(SCENARIOS["noir"], llm.gateway(), settings, limit=1)

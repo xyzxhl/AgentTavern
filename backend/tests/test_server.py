@@ -15,16 +15,23 @@ from agenttavern.server import create_app
 def one_run(
     place: str = "客厅", outline: str = "她推开门，屋里坐着陈。", prose: str = "门轴响了。"
 ):
-    """一个完整 run 需要的三次模型调用：state_write → submit_outline → 正文。"""
+    """一个完整 run 需要的两次模型调用：submit_outline → 正文。
+
+    状态那一次不在这里——它跑在 writer 之后，由 `ScriptedLLM(state=...)` 应答
+    （D143）。``place`` 因此返回的是那份增量，交给调用方传进去。
+    """
     return [
-        tool("state_write", set={"地点": place}),
         tool("submit_outline", outline=outline),
         text(prose),
     ]
 
 
+def one_state(place: str = "客厅") -> dict:
+    return {"set": {"地点": place}}
+
+
 def happy_llm(prose: str = "门轴发出一声长长的呻吟。") -> ScriptedLLM:
-    return ScriptedLLM(*one_run(prose=prose))
+    return ScriptedLLM(*one_run(prose=prose), state=one_state())
 
 
 @pytest.fixture
@@ -142,7 +149,6 @@ def test_ask_question_suspends_until_answered(client_for) -> None:
     """不设超时（D66）——等待期间逻辑上什么都没发生，恢复即从中断点续。"""
     llm = ScriptedLLM(
         tool("ask_question", question="她怎么反应？", options=["否认", "沉默"]),
-        tool("state_write"),
         tool("submit_outline", outline="她沉默了。"),
         text("她没有说话。"),
     )
@@ -184,7 +190,11 @@ def test_answering_an_unknown_question_errors(client_for) -> None:
 
 def test_queued_inputs_run_one_at_a_time(client_for) -> None:
     """FIFO，每条独立成一个 run，**不打包**（D26）——打包会跳过中间的世界响应。"""
-    llm = ScriptedLLM(*one_run(place="客厅"), *one_run(place="阳台", outline="两人出去。"))
+    llm = ScriptedLLM(
+        *one_run(),
+        *one_run(outline="两人出去。"),
+        state=[one_state("客厅"), one_state("阳台")],
+    )
     client = client_for(llm)
     session_id = client.post("/sessions").json()["id"]
 

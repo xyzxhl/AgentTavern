@@ -7,7 +7,8 @@ director 只读细纲历史、不读正文；writer 读正文上文以保证衔�
 因此这里必须守住：
 
 - **文风与角色语言习惯只进 writer。** 它们不参与检索，参与每一个 token。
-- **正文只进 writer。** director 能覆盖五倍历史跨度正是因为它从不读正文（D54）。
+- **正文只进 writer 和 state_manager。** director 能覆盖五倍历史跨度正是因为它
+  自己从不读正文（D54）；state_manager 读，但它把正文折成几个键值，不往回带原文。
 
 D35（否定项两边都要）**已删除**（D139）：否定项这个字段整个不存在了。
 不能提前揭示的东西属于世界设定，写进 worldinfo 或 state 即可；
@@ -22,7 +23,9 @@ from ..llm import Message
 from ..models import (
     Capabilities,
     ControlDimensions,
+    Node,
     SessionMeta,
+    StateDelta,
     WorldbookEntry,
     WorldbookMode,
     WorldState,
@@ -132,11 +135,6 @@ def render_worldinfo(entries: list[WorldbookEntry], *, expandable: bool = True) 
     return "\n\n".join(parts)
 
 
-def _on_off(enabled: bool) -> str:
-    """开关型选项组的两个档名。**关掉的那一档是空串，于是整节不出现。**"""
-    return "on" if enabled else "off"
-
-
 def director_prompt(
     meta: SessionMeta,
     control: ControlDimensions,
@@ -187,18 +185,79 @@ def director_prompt(
             # 剧情控制权不在这里了——它讲的是 `ask_question` 该多积极地调用，
             # 所以写进了那个工具的描述（D140）。
             "speaking_rule": _speaking(control.allow_speaking_for_user),
-            # 流程拆成了独立的几步，可选的那两步各是一个开关。
-            "flow_lookup": _on_off(_has_lookup_tools(caps, worldinfo)),
-            "flow_state": _on_off(caps.state),
+            # 流程那四条已经删掉（D143）——每一条都有工具描述覆盖它，
+            # 于是 `_on_off` / `_has_lookup_tools` 两个 helper 也一并没了。
         },
     )
 
 
-def _has_lookup_tools(caps: Capabilities, worldinfo: list[WorldbookEntry] | None) -> bool:
-    return (
-        caps.state
-        or caps.history_search
-        or any(e.mode is WorldbookMode.ON_DEMAND for e in worldinfo or [])
+def render_delta(delta: StateDelta) -> str:
+    """一次状态更新的可读形式。给 state_manager 看它前几轮**自己写过什么**。
+
+    **这里不隐藏长值**（`expandable=False`）：这一节的全部用处就是做记法示范，
+    把示范里的值换成"（1234 字，用 state_query 展开）"，示范就废了。
+    """
+    if delta.is_empty():
+        return "（本轮无变化）"
+
+    lines = [
+        f"- {key} ← {'（删除）' if value is None else _render_value(value, expandable=False)}"
+        for key, value in delta.set.items()
+    ]
+    for verb, changes in (("追加", delta.append), ("移除", delta.remove)):
+        lines += [
+            f"- {key} {verb} {'、'.join(str(i) for i in items)}" for key, items in changes.items()
+        ]
+    return "\n".join(lines)
+
+
+def render_recent(nodes: Sequence[Node]) -> str:
+    """前几轮的「细纲 → 成文 → 当时记下的」三元组。
+
+    **三样缺一不可。** 少了细纲看不出"定下的事实"和"记下的键"之间的取舍，
+    少了正文看不出细纲留白处最后落成了什么，少了增量就根本没有示范。
+    """
+    if not nodes:
+        return "（这是第一轮，前面没有可参照的记录。）"
+
+    blocks: list[str] = []
+    for offset, node in enumerate(nodes):
+        ago = len(nodes) - offset
+        label = "上一轮" if ago == 1 else f"上 {ago} 轮"
+        blocks.append(
+            f"## {label}\n\n### 细纲\n{node.outline}\n\n### 成文\n{node.prose}"
+            f"\n\n### 当时记下的\n{render_delta(node.state_delta)}"
+        )
+    return "\n\n".join(blocks)
+
+
+def state_manager_prompt(
+    state: WorldState,
+    *,
+    recent: Sequence[Node] = (),
+    outline: str = "",
+    prose: str = "",
+    tools: str = "",
+    capabilities: Capabilities | None = None,
+) -> Prompt:
+    """装配 state_manager 收到的整串消息（D143）。
+
+    它拿不到世界设定、拿不到目标、拿不到控制维度——那些决定"该写什么"，
+    而它不写任何内容。它只回答"这一轮之后，速查表该改哪几个键"。
+
+    **注入的是 `base_state`，本 run 开始时的状态。** 它自己 loop 中途写下的增量
+    由 `state_query` 反映（那个走 `current_state`），不必也不该重新装配一次。
+    """
+    caps = capabilities or Capabilities()
+    return assemble(
+        "state_manager",
+        contexts={
+            "tools": tools,
+            "state": render_state(state, expandable=caps.state_query),
+            "recent": render_recent(recent),
+            "outline": outline,
+            "prose": prose,
+        },
     )
 
 

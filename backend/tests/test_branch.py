@@ -14,7 +14,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from conftest import ScriptedLLM, text, tool, tools
+from conftest import CancelWriter, ScriptedLLM, text, tool, tools
 
 from agenttavern.llm import Message, Role, ToolCall
 from agenttavern.models import RunStatus, Session, UserInput, trim_dangling_tool_call
@@ -23,12 +23,15 @@ from agenttavern.storage import Store
 from agenttavern.tools import Inbox, ToolRegistry
 
 
-def _turn(key: str, value: str, outline: str, prose: str) -> list[dict]:
-    return [
-        tool("state_write", set={key: value}),
-        tool("submit_outline", outline=outline),
-        text(prose),
-    ]
+def _turn(outline: str, prose: str) -> list[dict]:
+    """一轮的两次模型调用。状态那一次不在这里——它跑在 writer 之后（D143），
+    由 `ScriptedLLM(state=...)` 应答。
+    """
+    return [tool("submit_outline", outline=outline), text(prose)]
+
+
+def _state(key: str, value: str) -> dict:
+    return {"set": {key: value}}
 
 
 def _setup(tmp_path: Path, llm: ScriptedLLM):
@@ -45,11 +48,11 @@ async def test_a_sibling_branch_leaks_into_neither_input_nor_history(tmp_path: P
     两样分开断言，因为它们走的是不同的通道：用户输入进的是每轮的 user 消息，
     细纲进的是 `submit_outline` 的调用参数。**一个坏了另一个可能还是好的。**
     """
-    trunk_llm = ScriptedLLM(*_turn("地点", "钟表铺", "主干：她推开门。", "主干正文"))
+    trunk_llm = ScriptedLLM(*_turn("主干：她推开门。", "主干正文"), state=_state("地点", "钟表铺"))
     repo, session, gw, reg = _setup(tmp_path, trunk_llm)
     trunk = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
 
-    a_llm = ScriptedLLM(*_turn("A物", "铁皮盒", "A 支：铁皮盒放上柜台。", "A 支正文"))
+    a_llm = ScriptedLLM(*_turn("A 支：铁皮盒放上柜台。", "A 支正文"), state=_state("A物", "铁皮盒"))
     await execute_run(
         repo,
         repo.load_session(),
@@ -61,7 +64,7 @@ async def test_a_sibling_branch_leaks_into_neither_input_nor_history(tmp_path: P
 
     # B 支从**同一个**分岔点岔出——此刻 active_leaf_id 指着 A 的叶子，
     # 父节点若从活跃叶取，B 就直接长在 A 后面了（D103）。
-    b_llm = ScriptedLLM(*_turn("B物", "便签", "B 支：便签放上柜台。", "B 支正文"))
+    b_llm = ScriptedLLM(*_turn("B 支：便签放上柜台。", "B 支正文"), state=_state("B物", "便签"))
     branch_b = await execute_run(
         repo,
         repo.load_session(),
@@ -87,7 +90,7 @@ async def test_a_sibling_branch_leaks_no_tool_traffic(tmp_path: Path) -> None:
     D114 之后这条才成立得起来：持续对话把工具往返也留在上下文里，所以它多了一条
     以前不存在的泄漏通道。查细纲查不到它——工具结果不出现在细纲里。
     """
-    trunk_llm = ScriptedLLM(*_turn("地点", "钟表铺", "主干：她推开门。", "主干正文"))
+    trunk_llm = ScriptedLLM(*_turn("主干：她推开门。", "主干正文"), state=_state("地点", "钟表铺"))
     repo, session, gw, reg = _setup(tmp_path, trunk_llm)
     trunk = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
 
@@ -105,7 +108,7 @@ async def test_a_sibling_branch_leaks_no_tool_traffic(tmp_path: Path) -> None:
         parent_id=trunk.node.id,
     )
 
-    b_llm = ScriptedLLM(*_turn("B物", "便签", "B 支的细纲。", "B 支正文"))
+    b_llm = ScriptedLLM(*_turn("B 支的细纲。", "B 支正文"), state=_state("B物", "便签"))
     await execute_run(
         repo,
         repo.load_session(),
@@ -129,11 +132,11 @@ async def test_state_of_a_sibling_never_folds_in(tmp_path: Path) -> None:
     单独测一遍是因为它坏起来最隐蔽：文本可以完全正确，状态悄悄错，
     要等很多轮之后才以"角色行为不合理"的形式暴露。
     """
-    trunk_llm = ScriptedLLM(*_turn("灵石", "3", "主干。", "主干正文"))
+    trunk_llm = ScriptedLLM(*_turn("主干。", "主干正文"), state=_state("灵石", "3"))
     repo, session, gw, reg = _setup(tmp_path, trunk_llm)
     trunk = await execute_run(repo, session, gw, reg, user_input=UserInput(text="起"))
 
-    a_llm = ScriptedLLM(*_turn("灵石", "0", "A 支花光了。", "A 正文"))
+    a_llm = ScriptedLLM(*_turn("A 支花光了。", "A 正文"), state=_state("灵石", "0"))
     arm_a = await execute_run(
         repo,
         repo.load_session(),
@@ -143,7 +146,7 @@ async def test_state_of_a_sibling_never_folds_in(tmp_path: Path) -> None:
         parent_id=trunk.node.id,
     )
 
-    b_llm = ScriptedLLM(*_turn("灵石", "5", "B 支赚到了。", "B 正文"))
+    b_llm = ScriptedLLM(*_turn("B 支赚到了。", "B 正文"), state=_state("灵石", "5"))
     arm_b = await execute_run(
         repo,
         repo.load_session(),
@@ -183,8 +186,8 @@ async def test_an_interrupted_deduction_is_suspended_not_discarded(tmp_path: Pat
     **截断了时机**，已经查过的、已经暂存的都还算数。
     """
     llm = _CancelAfter(
+        tool("history_search", query="门"),
         tool("state_query", keys=["地点"]),
-        tool("state_write", set={"门": "开着"}),
         after=2,
     )
     repo, session, gw, reg = _setup(tmp_path, llm)
@@ -197,12 +200,15 @@ async def test_an_interrupted_deduction_is_suspended_not_discarded(tmp_path: Pat
     draft = repo.load_draft()
     assert draft is not None
     assert draft.parent_id is None
-    assert draft.staged_delta.set["门"] == "开着", "已暂存的增量是已完成的动作"
-    assert draft.state_write_count == 1, "E0 已经满足过，续跑不该再逼它写一次"
+    # **草稿里剩下的就是查过的东西**。它以前还存 `staged_delta` / `state_write_count`，
+    # 那时 director 边推演边写状态；D143 把状态维护整个搬到 writer 之后，
+    # 这一阶段的暂存区恒为空，两个字段一并删了。
+    assert any("state_query" in str(m.tool_calls) for m in draft.messages if m.tool_calls)
 
     resume_llm = ScriptedLLM(
         tool("submit_outline", outline="她站在门口。"),
         text("门口的光把她的影子拉长。"),
+        state=_state("门", "开着"),
     )
     outcome = await execute_run(
         repo,
@@ -277,7 +283,7 @@ def test_the_trimmer_drops_a_call_whose_result_never_arrived() -> None:
 
 async def test_a_draft_from_another_branch_is_dropped(tmp_path: Path) -> None:
     """草稿按父节点认领。用户切了分支，这份推演就接不上了（D48）。"""
-    first_llm = ScriptedLLM(*_turn("地点", "钟表铺", "第一轮。", "第一轮正文"))
+    first_llm = ScriptedLLM(*_turn("第一轮。", "第一轮正文"), state=_state("地点", "钟表铺"))
     repo, session, gw, reg = _setup(tmp_path, first_llm)
     first = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
 
@@ -294,7 +300,7 @@ async def test_a_draft_from_another_branch_is_dropped(tmp_path: Path) -> None:
     assert repo.load_draft() is not None
 
     # 换一个父节点（回到根重开一支）——草稿必须被丢掉。
-    other_llm = ScriptedLLM(*_turn("地点", "街上", "另一支。", "另一支正文"))
+    other_llm = ScriptedLLM(*_turn("另一支。", "另一支正文"), state=_state("地点", "街上"))
     other = await execute_run(
         repo,
         repo.load_session(),
@@ -316,10 +322,9 @@ async def test_a_half_written_turn_is_carried_forward(tmp_path: Path) -> None:
 
     这一侧不需要草稿——**已完成的内容已经是一个节点了**，下一轮自然接着它走。
     """
-    llm = _CancelAfter(
-        tool("state_write", set={"地点": "里屋门口"}),
+    llm = CancelWriter(
         tool("submit_outline", outline="她话说到一半，停住了。"),
-        after=2,
+        state=_state("地点", "里屋门口"),
     )
     repo, session, gw, reg = _setup(tmp_path, llm)
     partial = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我走过去"))
@@ -327,7 +332,7 @@ async def test_a_half_written_turn_is_carried_forward(tmp_path: Path) -> None:
     assert partial.node.status is RunStatus.PARTIAL
     assert repo.load_draft() is None, "细纲已提交，不该再留草稿"
 
-    next_llm = ScriptedLLM(*_turn("地点", "里屋", "她把话说完了。", "下一轮正文"))
+    next_llm = ScriptedLLM(*_turn("她把话说完了。", "下一轮正文"), state=_state("地点", "里屋"))
     following = await execute_run(
         repo,
         repo.load_session(),
@@ -409,9 +414,11 @@ async def test_an_interrupt_kills_only_the_operation_in_flight(tmp_path: Path) -
     inbox.push("等等，先别问他", interrupt=True)
 
     llm = ScriptedLLM(
-        tool("state_write", set={"地点": "店里"}),
+        # 第一次操作得是**不终止的**，否则 loop 走不到边界，也就没地方接话。
+        tool("state_query", keys=["地点"]),
         tool("submit_outline", outline="她把话咽了回去。"),
         text("她没有问出口。"),
+        state=dict(set={"地点": "店里"}),
     )
     repo, session, gw, reg = _setup(tmp_path, llm)
 
@@ -464,9 +471,9 @@ async def test_an_aborted_tool_call_still_gets_a_result(tmp_path: Path) -> None:
 
     llm = ScriptedLLM(
         tools(("state_query", {"keys": ["地点"]}), ("state_write", {"set": {"地点": "店里"}})),
-        tool("state_write", set={"地点": "店里"}),
         tool("submit_outline", outline="她换了个方向。"),
         text("她转身。"),
+        state=dict(set={"地点": "店里"}),
     )
     repo, session, gw, reg = _setup(tmp_path, llm)
 

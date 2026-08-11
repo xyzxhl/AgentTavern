@@ -21,7 +21,8 @@ from .base import Tool, ToolResult, error
 from .builtin import (
     ask_question_tool,
     history_tools,
-    state_tools,
+    state_query_tool,
+    state_write_tool,
     submit_tool,
     summarize_tool,
     worldinfo_tools,
@@ -34,16 +35,19 @@ def build_tools(
     worldinfo: list[WorldbookEntry] | None = None,
     control: ControlDimensions | None = None,
 ) -> list[Tool[Any]]:
-    """按能力开关组装工具面。
+    """director 的工具面，按能力开关组装。
 
     ``submit_outline`` 永远存在——它是 loop 的唯一终止点（D53）。
-    """
-    tools: list[Tool[Any]] = [submit_tool(require_state_write=capabilities.state)]
 
-    if capabilities.state:
+    **`state_write` 不在这里**（D143）：状态维护后置成了独立的 state_manager，
+    见 `build_state_tools`。director 只读状态。
+    """
+    tools: list[Tool[Any]] = [submit_tool()]
+
+    if capabilities.state and capabilities.state_query:
         # `state_query` 是**按需展开**，可以单独关。关掉时 state 每轮全量注入——
-        # 没有展开的路还截断长值，就成了有损筛选（D62）。
-        tools += state_tools(query=capabilities.state_query)
+        # 没有展开的路还隐藏长值，就成了有损筛选（D62）。
+        tools.append(state_query_tool())
 
     if capabilities.history_search:
         tools += history_tools()
@@ -66,6 +70,22 @@ def build_tools(
     return tools
 
 
+def build_state_tools(capabilities: Capabilities) -> list[Tool[Any]]:
+    """state_manager 的工具面：**只有 state 那两个**（D143）。
+
+    它不查历史、不展开设定、不问用户、也没有 `submit_outline`——它的活是把
+    这一轮的细纲和正文折成几个键值，需要的东西都已经在上下文里。
+
+    **没有终止工具是有意的**：loop 的出口是"这一次不再调用任何工具"。
+    director 需要 `submit_outline` 是因为它要交付一件**产物**，交付这个动作本身
+    得有个地方承接；state_manager 的产物是那几次写入本身，写完就没事了。
+    """
+    tools: list[Tool[Any]] = [state_write_tool()]
+    if capabilities.state_query:
+        tools.append(state_query_tool())
+    return tools
+
+
 class ToolRegistry:
     def __init__(self, tools: list[Tool[Any]] | None = None) -> None:
         if tools is None:
@@ -80,6 +100,10 @@ class ToolRegistry:
         control: ControlDimensions | None = None,
     ) -> ToolRegistry:
         return cls(build_tools(capabilities, worldinfo, control))
+
+    @classmethod
+    def for_state_manager(cls, capabilities: Capabilities) -> ToolRegistry:
+        return cls(build_state_tools(capabilities))
 
     def render(self) -> str:
         """工具面的**索引**：谁在场，各管什么事。

@@ -30,8 +30,11 @@ from .assembler import Prompt, assemble, choice, fill, load, text, titled
 from .prompts import (
     STATE_INLINE_LIMIT,
     director_prompt,
+    render_delta,
+    render_recent,
     render_state,
     render_worldinfo,
+    state_manager_prompt,
     writer_prompt,
 )
 
@@ -43,8 +46,11 @@ __all__ = [
     "director_prompt",
     "fill",
     "load",
+    "render_delta",
+    "render_recent",
     "render_state",
     "render_worldinfo",
+    "state_manager_prompt",
     "text",
     "titled",
     "writer_prompt",

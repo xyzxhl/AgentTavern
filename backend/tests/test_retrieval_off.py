@@ -15,7 +15,7 @@ from agenttavern.models import (
     WorldState,
 )
 from agenttavern.prompting import STATE_INLINE_LIMIT, render_state, render_worldinfo
-from agenttavern.tools import ToolRegistry
+from agenttavern.tools import ToolRegistry, build_state_tools
 
 LONG = "很长的一段关系描述。" * 40
 
@@ -32,11 +32,16 @@ def test_state_is_injected_in_full_when_query_is_off() -> None:
     assert "state_query" not in off, "不能广告一个没注册的工具"
 
 
-def test_state_query_tool_disappears_but_write_stays() -> None:
-    """关的是**按需展开**，不是 state 本身——写入照常，E0 契约也照常。"""
-    names = ToolRegistry.for_session(Capabilities(state=True, state_query=False)).names
-    assert "state_write" in names
-    assert "state_query" not in names
+def test_state_query_disappears_from_both_sides_but_write_stays() -> None:
+    """关的是**按需展开**，不是 state 本身——写入照常。
+
+    `state_query` 两侧都有（director 读状态推演，state_manager 写之前先看），
+    所以这个开关一关就两边一起消失（D143）。
+    """
+    caps = Capabilities(state=True, state_query=False)
+
+    assert "state_query" not in ToolRegistry.for_session(caps).names
+    assert {t.name for t in build_state_tools(caps)} == {"state_write"}
 
 
 def test_on_demand_worldinfo_is_inlined_when_read_is_off() -> None:

@@ -13,6 +13,7 @@ from agenttavern.models import (
     ExpansionDensity,
     InputHandling,
     ModelAuthority,
+    Node,
     Session,
     SessionMeta,
     StateDelta,
@@ -80,39 +81,41 @@ def writer_text(meta: SessionMeta, control: ControlDimensions) -> str:
 
 
 async def test_happy_path(tmp_path: Path) -> None:
-    llm = ScriptedLLM(
-        tool("state_write", set={"地点": "客厅"}, append={"林.知情": ["有人来了"]}),
-        tool("submit_outline", outline="她推开门，屋里坐着陈。"),
-    )
+    """**一轮就完**：查证之外，director 这一轮只剩提交细纲一件事（D143）。"""
+    llm = ScriptedLLM(tool("submit_outline", outline="她推开门，屋里坐着陈。"))
     ctx, tracer, reg = make_ctx(tmp_path, llm)
 
     result = await run_director(ctx, reg, tracer, UserInput(text="我推开门"))
 
     assert result.outline == "她推开门，屋里坐着陈。"
-    assert result.rounds == 2
-    assert ctx.staged_delta.set["地点"] == "客厅"
-    assert result.usage.tokens_in == 20
+    assert result.rounds == 1
+    assert result.usage.tokens_in == 10
 
 
-async def test_contract_pushback_is_recoverable(tmp_path: Path) -> None:
-    """先提交细纲会被 E0 退回，模型补上 state_write 后应能继续（而非整轮失败）。"""
+async def test_the_director_cannot_touch_state(tmp_path: Path) -> None:
+    """**读得到，写不了**（D143）。
+
+    工具面上根本没有 `state_write`——不注册比"注册了但拒绝"强（P9）。调用它
+    得到的是可恢复错误，这一轮不该因此失败。
+    """
     llm = ScriptedLLM(
-        tool("submit_outline", outline="太早了"),
-        tool("state_write"),
+        tool("state_write", set={"地点": "不该生效"}),
         tool("submit_outline", outline="她推开门。"),
     )
     ctx, tracer, reg = make_ctx(tmp_path, llm)
 
     result = await run_director(ctx, reg, tracer, UserInput(text="我推开门"))
+
+    assert "state_write" not in reg.names
+    assert "state_query" in reg.names
+    assert ctx.staged_delta.is_empty()
     assert result.outline == "她推开门。"
-    assert result.rounds == 3
 
 
 async def test_text_only_reply_is_pushed_back(tmp_path: Path) -> None:
     """模型只回文本时不能当成产出——细纲必须经 submit_outline，否则 E0 就绕过去了。"""
     llm = ScriptedLLM(
         text("我觉得应该这样写……"),
-        tool("state_write"),
         tool("submit_outline", outline="她推开门。"),
     )
     ctx, tracer, reg = make_ctx(tmp_path, llm)
@@ -128,7 +131,6 @@ async def test_text_only_reply_is_pushed_back(tmp_path: Path) -> None:
 async def test_calls_after_terminate_are_ignored(tmp_path: Path) -> None:
     """submit_outline 是终止点，同一次响应里它之后的调用不该再执行。"""
     llm = ScriptedLLM(
-        tool("state_write"),
         tools(
             ("submit_outline", {"outline": "她推开门。"}),
             ("state_write", {"set": {"地点": "不该生效"}}),
@@ -155,7 +157,6 @@ async def test_hard_limit_forces_close(tmp_path: Path) -> None:
 async def test_recoverable_tool_error_does_not_kill_run(tmp_path: Path) -> None:
     llm = ScriptedLLM(
         tool("state_query", key="不存在的键"),
-        tool("state_write"),
         tool("submit_outline", outline="她推开门。"),
     )
     ctx, tracer, reg = make_ctx(tmp_path, llm)
@@ -167,16 +168,18 @@ async def test_recoverable_tool_error_does_not_kill_run(tmp_path: Path) -> None:
 async def test_trace_carries_readable_labels(tmp_path: Path) -> None:
     """D25：trace 必须带人类可读语义标签，UI 才渲染得出"确认了她现在在哪"。"""
     llm = ScriptedLLM(
-        tool("state_write", set={"地点": "客厅"}),
         tool("state_query", keys=["地点"]),
         tool("submit_outline", outline="她推开门。"),
     )
     ctx, tracer, reg = make_ctx(tmp_path, llm)
+    # 状态得由**前一轮**带过来——director 自己写不了了（D143）。
+    ctx.repo.save_node(Node(id="run_0", state_delta=StateDelta(set={"地点": "客厅"})))
+    ctx.parent_id = "run_0"
+
     await run_director(ctx, reg, tracer, UserInput(text="我推开门"))
 
     labels = [e.label for e in ctx.repo.read_trace("run_1")]
     assert "查了 地点" in labels
-    assert "更新了 地点" in labels
     assert "细纲完成" in labels
     assert all(e.label for e in ctx.repo.read_trace("run_1"))
 
@@ -353,12 +356,20 @@ def test_always_worldinfo_is_injected_on_demand_is_indexed() -> None:
     assert "worldinfo_read" in prompt
 
 
-def test_no_lookup_tools_means_no_lookup_step() -> None:
-    prompt = prompt_for(
-        capabilities=Capabilities(state=False, history_search=False, ask_question=False)
-    )
-    assert "用工具查" not in prompt
-    assert "submit_outline" in prompt
+def test_the_flow_steps_are_gone_and_the_tools_carry_them() -> None:
+    """**流程那四条已经删掉**（D143）：每一条都有工具描述覆盖它，且写得更细。
+
+    这里钉的是"提示词里不再有第二份流程说明"——两份必然对不上，而工具描述
+    才是模型照着填参数的那一份。工具面本身由 `ToolRegistry.render()` 注入，
+    不由这份 YAML 拥有（D140）。
+    """
+    prompt = prompt_for(capabilities=ALL_ON)
+
+    for gone in ("用工具查", "想清楚本轮发生什么", "调用 `submit_outline` 提交"):
+        assert gone not in prompt
+
+    submit = next(t for t in build_tools(ALL_ON) if t.name == "submit_outline")
+    assert "每轮有且仅有一次" in (submit.description or "")
 
 
 def test_empty_state_renders_cleanly() -> None:
@@ -398,39 +409,24 @@ def test_the_writer_never_gets_a_speaking_rule_of_its_own() -> None:
         assert "不要自行增加" in w
 
 
-async def test_the_nudge_stops_asking_for_a_write_already_done(tmp_path: Path) -> None:
-    """催促词只提**还差的那一步**。
+async def test_the_nudge_only_asks_for_the_one_remaining_step(tmp_path: Path) -> None:
+    """催促词只提**还差的那一步**——现在就只剩一步了。
 
-    以前它无条件写着「先 state_write，再 submit_outline」。模型照做，又写一次
+    它以前无条件写着「先 state_write，再 submit_outline」。模型照做，又写一次
     `state_write`，然后又回到纯文本，于是再被推一次——实测 `pulp` 第 4 轮这样
     空转了 12 个来回，**69 万 input token，占整场的 84%**，靠硬上限才收住。
-    催促词把做完的一步也算进去，它就成了一条把模型引回原地的指令。
+    D143 把状态维护整个搬走之后，那个分支自己没有了。
     """
     llm = ScriptedLLM(
-        tool("state_write", set={"地点": "站里"}),
         text("我先想想。"),  # 空手，触发催促
         tool("submit_outline", outline="他站住了。"),
     )
     ctx, tracer, registry = make_ctx(tmp_path, llm)
     await run_director(ctx, registry, tracer, UserInput(text="我推开门"))
 
-    nudge = llm.messages_of(2)[-1]["content"]
-    assert "submit_outline" in nudge
-    assert "state_write" not in nudge, "已经写过了，不该再把它列进来"
-
-
-async def test_the_nudge_still_asks_for_the_write_when_it_is_missing(tmp_path: Path) -> None:
-    """反面：一次都还没写过，那 E0 那一步就必须提。"""
-    llm = ScriptedLLM(
-        text("我先想想。"),
-        tool("state_write"),
-        tool("submit_outline", outline="他站住了。"),
-    )
-    ctx, tracer, registry = make_ctx(tmp_path, llm)
-    await run_director(ctx, registry, tracer, UserInput(text="我推开门"))
-
     nudge = llm.messages_of(1)[-1]["content"]
-    assert "state_write" in nudge
+    assert "submit_outline" in nudge
+    assert "state_write" not in nudge, "director 根本没有这个工具，提它只会把模型带沟里"
 
 
 # -- 情色指导与破限：YAML 槽位，默认空 -----------------------------------------

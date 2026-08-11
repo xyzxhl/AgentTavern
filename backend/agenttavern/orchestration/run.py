@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from ..agents.director import DirectorFailed, run_director
 from ..agents.postrun import ask_segment_cut
 from ..agents.replay import without_reasoning
+from ..agents.state_manager import run_state_manager
 from ..agents.summarizer import MAX_SEGMENT_RUNS, SUMMARY_MAX_CHARS, summarize_text
 from ..agents.writer import run_writer
 from ..llm import LLMGateway, Usage
@@ -25,7 +26,6 @@ from ..models import (
     Node,
     RunStatus,
     Session,
-    StateDelta,
     SummarizeMode,
     TraceEventType,
     UserInput,
@@ -84,9 +84,6 @@ async def execute_run(
         parent_id=parent_id,
         ask_user=ask_user,
         inbox=inbox,
-        # 已经写进暂存区的增量是**已经完成的动作**，和已经拿到的工具结果没有区别。
-        staged_delta=draft.staged_delta if draft else StateDelta(),
-        state_write_count=draft.state_write_count if draft else 0,
     )
 
     tracer.emit(
@@ -140,6 +137,14 @@ async def execute_run(
             Actor.ORCHESTRATOR,
             "成文阶段被打断，保留已产出的部分",
         )
+
+    # **状态维护后置**（D143）：读着刚写完的细纲和正文去记，而不是 director
+    # 边推演边记。位置卡在 `save_node` **之前**——节点是原子的，细纲、正文、
+    # 增量必须同时抵达（D48/D56）；放到落盘之后会出现一个"有正文没增量"的
+    # 瞬时节点，那一刻沿路径重放状态的人（分支、`state_at`）会算错。
+    # 代价是这一轮的结束晚一次模型调用，而用户此时已经看完正文了。
+    if session.capabilities.state:
+        await _maintain_state(ctx, tracer, director.outline, prose)
 
     notes = sampling_flags(
         delta=ctx.staged_delta,
@@ -209,6 +214,32 @@ async def execute_run(
     )
 
     return RunOutcome(node=node, usage=tracer.usage, notes=notes)
+
+
+async def _maintain_state(ctx: RunContext, tracer: Tracer, outline: str, prose: str) -> None:
+    """跑 state_manager，把增量写进 ``ctx.staged_delta``。
+
+    **失败不阻塞已产出的内容**（同归段）：这一轮就当没有状态变化，节点照落。
+    打断是另一回事——那是用户喊停，交给上层挂起（D142），所以 `CancelledError`
+    原样往上抛。
+    """
+    try:
+        await run_state_manager(
+            ctx,
+            ToolRegistry.for_state_manager(ctx.capabilities),
+            tracer,
+            outline=outline,
+            prose=prose,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        tracer.emit(
+            TraceEventType.CROSS_CHECK,
+            Actor.ORCHESTRATOR,
+            f"状态维护失败，本轮不记增量：{type(exc).__name__}",
+            {"error": str(exc)},
+        )
 
 
 def _open_segment(repo: SessionRepository, leaf_id: str) -> list[Node]:

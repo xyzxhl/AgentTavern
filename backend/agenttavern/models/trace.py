@@ -68,6 +68,10 @@ class Actor(StrEnum):
     以前叫 `goal_judge`，那时它只做最后一件事——**判定只是它四件事里的一件**，
     名字得跟上。
     """
+    STATE_MANAGER = "state_manager"
+    """状态维护者（D143）。**跑在 writer 之后**，读这一轮的细纲和成文更新 state。
+    以前这活在 director 手上（trace 里记的是 `DIRECTOR`），边推演边记。
+    """
     USER = "user"
 
 

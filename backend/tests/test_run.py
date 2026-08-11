@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from conftest import ScriptedLLM, text, tool
+from conftest import CancelWriter, ScriptedLLM, text, tool
 
 from agenttavern.agents import (
     budget_exhausted,
@@ -38,9 +38,9 @@ from agenttavern.tracing import Tracer
 
 def happy_llm(prose: str = "门轴发出一声长长的呻吟。") -> ScriptedLLM:
     return ScriptedLLM(
-        tool("state_write", set={"地点": "客厅", "林.在场": True, "陈.在场": True}),
         tool("submit_outline", outline="她推开门，屋里坐着陈。"),
         text(prose),
+        state=dict(set={"地点": "客厅", "林.在场": True, "陈.在场": True}),
     )
 
 
@@ -78,9 +78,9 @@ async def test_second_run_builds_on_the_first(tmp_path: Path) -> None:
     first = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
 
     llm2 = ScriptedLLM(
-        tool("state_write", set={"地点": "阳台"}),
         tool("submit_outline", outline="两人走到阳台。"),
         text("风把窗帘掀起来。"),
+        state=dict(set={"地点": "阳台"}),
     )
     second = await execute_run(
         repo,
@@ -109,7 +109,6 @@ async def test_writer_sees_prose_upstream_director_does_not(tmp_path: Path) -> N
     first = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
 
     llm2 = ScriptedLLM(
-        tool("state_write"),
         tool("submit_outline", outline="两人走到阳台。"),
         text("风把窗帘掀起来。"),
     )
@@ -129,7 +128,6 @@ async def test_writer_sees_prose_upstream_director_does_not(tmp_path: Path) -> N
 async def test_deviation_report_is_extracted(tmp_path: Path) -> None:
     """writer 不改写细纲，只报告实质增删（D57）。"""
     llm = ScriptedLLM(
-        tool("state_write"),
         tool("submit_outline", outline="她推开门。"),
         text("门开了。\n---偏离---\n补了一句她的犹豫。"),
     )
@@ -193,26 +191,15 @@ async def test_interrupt_during_director_lands_no_node(tmp_path: Path) -> None:
     draft = repo.load_draft()
     assert draft is not None
     assert "我推开门" in str(draft.messages)
-    assert draft.staged_delta.is_empty()
 
 
 async def test_interrupt_during_writer_keeps_the_run(tmp_path: Path) -> None:
     """writer 阶段被打断：保留已产出的部分，state 增量照常提交——那段剧情
     确实发生了。「话说了一半被打断」是真实感的来源，不是需要清理的垃圾。
     """
-    calls = 0
-
-    class CancelOnWriter(ScriptedLLM):
-        def _handle(self, request):  # type: ignore[no-untyped-def]
-            nonlocal calls
-            calls += 1
-            if calls > 2:
-                raise asyncio.CancelledError
-            return super()._handle(request)
-
-    llm = CancelOnWriter(
-        tool("state_write", set={"地点": "客厅"}),
+    llm = CancelWriter(
         tool("submit_outline", outline="她推开门。"),
+        state=dict(set={"地点": "客厅"}),
     )
     repo, session, gw, reg = setup(tmp_path, llm)
 
@@ -232,9 +219,9 @@ async def test_absent_character_gaining_knowledge_is_not_flagged(tmp_path: Path)
     通过转述、书信、监听获得。硬做只会得到假警报，而假警报比不检查更糟。
     """
     llm = ScriptedLLM(
-        tool("state_write", set={"林.在场": True}, append={"陈.知情": ["林起疑了"]}),
         tool("submit_outline", outline="她推开门。"),
         text("门开了。"),
+        state=dict(set={"林.在场": True}, append={"陈.知情": ["林起疑了"]}),
     )
     repo, session, gw, reg = setup(tmp_path, llm)
 
@@ -246,7 +233,6 @@ async def test_absent_character_gaining_knowledge_is_not_flagged(tmp_path: Path)
 
 async def test_long_prose_with_empty_delta_is_flagged(tmp_path: Path) -> None:
     llm = ScriptedLLM(
-        tool("state_write"),
         tool("submit_outline", outline="她推开门。"),
         text("很长的一段正文。" * 60),
     )
@@ -264,9 +250,9 @@ async def test_prose_barely_longer_than_outline_is_flagged(tmp_path: Path) -> No
     """
     outline = "她推开门，屋里坐着陈。" * 10
     llm = ScriptedLLM(
-        tool("state_write", set={"地点": "客厅"}),
         tool("submit_outline", outline=outline),
         text(outline + "又一句。"),
+        state=dict(set={"地点": "客厅"}),
     )
     repo, session, gw, reg = setup(tmp_path, llm)
 
@@ -281,12 +267,9 @@ async def test_state_value_stuffed_with_a_biography_is_flagged(tmp_path: Path) -
     代码判断不了"这条该不该记"，只能报告"这个值不像一条约束"。
     """
     llm = ScriptedLLM(
-        tool(
-            "state_write",
-            set={"许平": "已故男子，照片中的另一人；名字由陈屿说出；与陈屿相识；死因未明"},
-        ),
         tool("submit_outline", outline="她推开门，屋里坐着陈。"),
         text("蓝布帘子垂在门框里，颜色褪得发白。" * 8),
+        state=dict(set={"许平": "已故男子，照片中的另一人；名字由陈屿说出；与陈屿相识；死因未明"}),
     )
     repo, session, gw, reg = setup(tmp_path, llm)
 
@@ -306,9 +289,9 @@ async def test_collapsing_a_list_into_a_string_is_flagged(tmp_path: Path) -> Non
         seeds={"沈砚.随身": ["青锋剑", "止血符 ×2"], "沈砚.灵石": 3},
     )
     llm = ScriptedLLM(
-        tool("state_write", set={"沈砚.随身": "青锋剑、止血符 ×4", "沈砚.灵石": "1"}),
         tool("submit_outline", outline="他把灵石倒在柜台上。"),
         text("三块灵石滚落台面，叮叮响了几声。" * 6),
+        state=dict(set={"沈砚.随身": "青锋剑、止血符 ×4", "沈砚.灵石": "1"}),
     )
     repo, session, gw, reg = setup(tmp_path, llm)
     repo.save_worldbook_entry(entry)
@@ -483,9 +466,9 @@ async def test_a_bare_key_shadowing_a_namespaced_one_is_flagged(tmp_path: Path) 
     """
     entry = WorldbookEntry(name="沈砚", content="散修。", seeds={"沈砚.冷却": "御剑斩剩3回合"})
     llm = ScriptedLLM(
-        tool("state_write", set={"冷却": "御剑斩剩2回合"}),
         tool("submit_outline", outline="他又催了一次剑。"),
         text("剑没有起来。" * 10),
+        state=dict(set={"冷却": "御剑斩剩2回合"}),
     )
     repo, session, gw, reg = setup(tmp_path, llm)
     repo.save_worldbook_entry(entry)
@@ -500,9 +483,9 @@ async def test_sibling_keys_under_different_owners_are_not_flagged(tmp_path: Pat
     那正是 `.` 分组要表达的东西。误报这种会让标记立刻失去价值。"""
     entry = WorldbookEntry(name="林昭", content="记者。", seeds={"林昭.知情": ["照片"]})
     llm = ScriptedLLM(
-        tool("state_write", append={"陈屿.知情": ["她来过"]}),
         tool("submit_outline", outline="他记住了她。"),
         text("他看着她走出去。" * 8),
+        state=dict(append={"陈屿.知情": ["她来过"]}),
     )
     repo, session, gw, reg = setup(tmp_path, llm)
     repo.save_worldbook_entry(entry)
@@ -513,9 +496,9 @@ async def test_sibling_keys_under_different_owners_are_not_flagged(tmp_path: Pat
 
 async def test_ordinary_state_values_are_not_flagged(tmp_path: Path) -> None:
     llm = ScriptedLLM(
-        tool("state_write", set={"许平.生死": "已死", "陈屿.在场": True}),
         tool("submit_outline", outline="她推开门，屋里坐着陈。"),
         text("蓝布帘子垂在门框里，颜色褪得发白。" * 8),
+        state=dict(set={"许平.生死": "已死", "陈屿.在场": True}),
     )
     repo, session, gw, reg = setup(tmp_path, llm)
 
@@ -525,9 +508,9 @@ async def test_ordinary_state_values_are_not_flagged(tmp_path: Path) -> None:
 
 async def test_properly_expanded_prose_is_not_flagged(tmp_path: Path) -> None:
     llm = ScriptedLLM(
-        tool("state_write", set={"地点": "客厅"}),
         tool("submit_outline", outline="她推开门，屋里坐着陈。"),
         text("蓝布帘子垂在门框里，颜色褪得发白。" * 8),
+        state=dict(set={"地点": "客厅"}),
     )
     repo, session, gw, reg = setup(tmp_path, llm)
 

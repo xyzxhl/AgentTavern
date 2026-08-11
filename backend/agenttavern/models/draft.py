@@ -13,8 +13,9 @@
 或工具调用。除了时机，它和引导要的是同一个东西——**在目前已完成的内容上继续**。
 既然如此，已经查过的资料、已经暂存的增量、已经想到一半的推演就都该留着。
 
-因此草稿要连 `staged_delta` 一起存：那些 `state_write` 是**已经完成的动作**，
-和已经拿到的工具结果没有区别，重来一遍只是白花一次调用。
+草稿因此存的是**已经完成的动作**：查过的资料、想到一半的推演，重来一遍只是白花
+一次调用。它原先还存 `staged_delta` 和 `state_write_count`——那时 director 边推演
+边写状态。**D143 之后 director 不碰状态**，这一阶段暂存区恒为空，两个字段一并删掉。
 
 草稿按 `parent_id` 认领。**父节点不同就丢弃**——那说明用户已经切到别的分支上去了，
 这份推演接不上（D48）。
@@ -27,7 +28,6 @@ from datetime import UTC, datetime
 from pydantic import BaseModel, Field
 
 from ..llm.types import Message, Role
-from .state import StateDelta
 
 
 class DirectorDraft(BaseModel):
@@ -47,8 +47,6 @@ class DirectorDraft(BaseModel):
     存进来只会在续跑时重复一遍。
     """
 
-    staged_delta: StateDelta = Field(default_factory=StateDelta)
-    state_write_count: int = 0
     rounds: int = 0
     """已经用掉的 tool loop 轮数。续跑时接着数，硬上限才仍然是硬上限——
     否则反复打断可以无限续，上下文没有边界。
