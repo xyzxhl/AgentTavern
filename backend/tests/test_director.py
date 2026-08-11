@@ -492,7 +492,7 @@ def test_each_side_gets_its_own_sections_and_none_of_the_others() -> None:
     d = prompt_for(meta=meta)
 
     writer_only = ["input_contract", "creation_guidance", "dialogue"]
-    director_only = ["output_contract", "creation_guidance", "boundaries"]
+    director_only = ["output_contract", "creation_guidance"]
 
     for key in writer_only:
         body = _real_text("writer", key)
