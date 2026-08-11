@@ -139,8 +139,15 @@ class Node(BaseModel):
     """
 
     def summary_or_head(self, head_chars: int = 120) -> str:
-        """history 索引用的摘要。无缓存时回退到头部截断。"""
+        """history 索引用的摘要。无缓存时回退到头部截断。
+
+        **截断要出声**：一个省略号说不清丢了多少，而模型据此判断"这一轮我看全了
+        没有"。所以直接把还剩多少字写出来——那是它决定要不要 `history_read`
+        的唯一依据。隐藏（"用工具展开"）不算截断，那条路是无损的；这里是真的
+        砍掉了尾巴，砍掉了就得说。
+        """
         if self.outline_summary:
             return self.outline_summary
-        head = self.outline[:head_chars]
-        return head + "…" if len(self.outline) > head_chars else head
+        if len(self.outline) <= head_chars:
+            return self.outline
+        return f"{self.outline[:head_chars]}……（截断，全文共 {len(self.outline)} 字）"

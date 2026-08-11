@@ -26,6 +26,7 @@ from agenttavern.tools import (
     build_state_tools,
     build_tools,
 )
+from agenttavern.tools.builtin import MAX_READ_CHARS
 
 
 def fake_gateway(reply: str = "摘要文本") -> LLMGateway:
@@ -236,6 +237,56 @@ async def test_history_read_expands_the_whole_segment(reg, ctx) -> None:
 async def test_history_read_rejects_unknown_ids(reg, ctx) -> None:
     result = await call(reg, ctx, "history_read", run_ids=["run_ghost"])
     assert result.is_error
+
+
+# -- 截断必须出声 ------------------------------------------------------------
+#
+# **隐藏不是截断。** 长值换成"用 state_query 展开"是无损降维，展开的路还在；
+# 这里几处是真的砍掉了尾巴，砍掉了就必须说清丢了多少、怎么拿回来——否则模型
+# 拿到一份看起来完整的结果，而它不知道自己丢了什么（D62 同一条理由）。
+
+
+async def test_an_index_entry_says_how_much_it_left_out(reg, ctx) -> None:
+    """索引里的头部截断要报出全文字数——那是模型决定要不要 `history_read` 的依据。"""
+    node = Node(outline="很长的一轮细纲。" * 60)
+    assert "……（截断，全文共" in node.summary_or_head(120)
+    assert str(len(node.outline)) in node.summary_or_head(120)
+
+    short = Node(outline="很短。")
+    assert short.summary_or_head(120) == "很短。", "没截断就不要加噪声"
+
+
+async def test_history_read_says_which_refs_it_dropped(reg, ctx) -> None:
+    """预算耗尽时**一个字都没返回的那几条**必须点名。
+
+    以前这里直接 break，少返回的无声消失。这是三处真截断里最糟的一处——
+    别的至少还留了个头，这个是整条不见。
+    """
+    ids = []
+    parent = None
+    for i in range(3):
+        node = Node(parent_id=parent, outline=f"第{i}轮。" + "长" * (MAX_READ_CHARS // 2))
+        ctx.repo.save_node(node)
+        ids.append(node.id)
+        parent = node.id
+    ctx.parent_id = parent
+
+    body = await call(reg, ctx, "history_read", run_ids=ids)
+
+    assert "没给全" in body.content
+    assert ids[2] in body.content, "没返回的那条 ref 要点名"
+    assert body.payload["unserved"] == [ids[2]]
+
+
+async def test_worldinfo_read_says_where_to_resume(reg, ctx) -> None:
+    """分页是无损的，但**得说清下一个 start 是多少**——只给一个布尔量等于让模型猜。"""
+    entry = WorldbookEntry(name="教团", content="设定内容。" * 100)
+    ctx.repo.save_worldbook_entry(entry)
+
+    body = await call(reg, ctx, "worldinfo_read", refs=[entry.id], max_chars=50)
+
+    assert "还没读完" in body.content
+    assert "start=50" in body.content
 
 
 async def test_worldinfo_index_covers_everything(reg, ctx) -> None:

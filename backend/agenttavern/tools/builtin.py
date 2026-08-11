@@ -275,20 +275,37 @@ async def _history_read(ctx: RunContext, params: HistoryReadParams) -> ToolResul
 
     out: list[dict[str, Any]] = []
     budget = MAX_READ_CHARS
+    served: set[str] = set()
     for rid in params.run_ids:
-        for node in _segment_of(ctx, known[rid]):
-            outline = node.outline[:budget]
-            budget -= len(outline)
-            out.append({"run_id": node.id, "segment": rid, "outline": outline})
-            if budget <= 0:
-                break
         if budget <= 0:
             break
+        served.add(rid)
+        for node in _segment_of(ctx, known[rid]):
+            if budget <= 0:
+                break
+            outline = node.outline[:budget]
+            budget -= len(outline)
+            entry: dict[str, Any] = {"run_id": node.id, "segment": rid, "outline": outline}
+            if len(outline) < len(node.outline):
+                entry["截断"] = f"这一轮只给了前 {len(outline)} 字，全文共 {len(node.outline)} 字"
+            out.append(entry)
+
+    body: dict[str, Any] = {"轮次": out}
+    # **预算耗尽必须说出来。** 以前这里直接 break，少返回的那几条无声消失——
+    # 模型拿到一份看起来完整的结果，不知道自己丢了什么。那正是 D62 判
+    # lorebook 关键词触发不合格的同一条理由，只不过换成了体量而不是相关性。
+    unserved = [rid for rid in params.run_ids if rid not in served]
+    if unserved or budget <= 0:
+        body["没给全"] = (
+            f"单次上限 {MAX_READ_CHARS} 字已用尽。"
+            + (f"这几条一个字都没返回：{'、'.join(unserved)}。" if unserved else "")
+            + "**分几次读**，一次少给几个 ref。"
+        )
 
     return ToolResult(
-        content=json.dumps(out, ensure_ascii=False),
-        label=f"展开了 {len(out)} 轮细纲",
-        payload={"run_ids": [o["run_id"] for o in out]},
+        content=json.dumps(body, ensure_ascii=False),
+        label=f"展开了 {len(out)} 轮细纲" + (f"，{len(unserved)} 条没给" if unserved else ""),
+        payload={"run_ids": [o["run_id"] for o in out], "unserved": unserved},
     )
 
 
@@ -341,27 +358,39 @@ class WorldInfoReadParams(BaseModel):
 async def _worldinfo_read(ctx: RunContext, params: WorldInfoReadParams) -> ToolResult:
     out: list[dict[str, Any]] = []
     budget = params.max_chars
+    served: set[str] = set()
     for ref in params.refs:
+        if budget <= 0:
+            break
         entry = ctx.repo.load_worldbook_entry(ref)
         if entry is None:
             return error(f"没有这个设定条目：{ref}", label="展开设定失败")
+        served.add(ref)
         chunk = entry.content[params.start : params.start + budget]
         budget -= len(chunk)
-        out.append(
-            {
-                "ref": ref,
-                "name": entry.name,
-                "content": chunk,
-                "truncated": params.start + len(chunk) < len(entry.content),
-            }
+        read_to = params.start + len(chunk)
+        item: dict[str, Any] = {"ref": ref, "name": entry.name, "content": chunk}
+        if read_to < len(entry.content):
+            # 分页是无损的，但**得说清怎么接着读**——只给一个 `truncated: true`
+            # 等于让模型自己去猜下一个 start 是多少。
+            item["还没读完"] = (
+                f"已读到第 {read_to} 字，全文共 {len(entry.content)} 字。"
+                f"接着读就再调一次，start={read_to}。"
+            )
+        out.append(item)
+
+    body: dict[str, Any] = {"条目": out}
+    unserved = [ref for ref in params.refs if ref not in served]
+    if unserved:
+        body["没给全"] = (
+            f"单次上限 {params.max_chars} 字已用尽，这几条一个字都没返回："
+            f"{'、'.join(unserved)}。**分几次读**。"
         )
-        if budget <= 0:
-            break
 
     return ToolResult(
-        content=json.dumps(out, ensure_ascii=False),
-        label=f"展开了 {len(out)} 条设定",
-        payload={"refs": [o["ref"] for o in out]},
+        content=json.dumps(body, ensure_ascii=False),
+        label=f"展开了 {len(out)} 条设定" + (f"，{len(unserved)} 条没给" if unserved else ""),
+        payload={"refs": [o["ref"] for o in out], "unserved": unserved},
     )
 
 
