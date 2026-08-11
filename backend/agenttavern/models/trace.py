@@ -63,7 +63,10 @@ class Actor(StrEnum):
     ORCHESTRATOR = "orchestrator"
     DIRECTOR = "director"
     WRITER = "writer"
-    GOAL_JUDGE = "goal_judge"
+    GOAL_AGENT = "goal_agent"
+    """goal agent（D141）。它拆阶段、核对进度、替用户写下一条输入、判目标去向。
+    以前叫 `goal_judge`，那时它只做最后一件事。
+    """
     USER = "user"
 
 

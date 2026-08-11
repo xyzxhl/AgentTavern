@@ -284,13 +284,19 @@ def test_siblings_endpoint(client_for) -> None:
 # -- goal 驱动的自动续跑 -------------------------------------------------------
 
 
-def test_goal_drives_another_run_without_user_input(client_for) -> None:
-    """goal 在 run 末判定，未达标就开下一 run（D28）——**不需要用户输入**。"""
+def test_goal_drives_another_run_with_a_simulated_input(client_for) -> None:
+    """goal agent 在 run 末跑，未达标就开下一 run（D28）——**而且它替用户写输入**（D141）。
+
+    第一轮之后还没有阶段计划，所以那一次是**先拆阶段、紧接着推一步**——新计划的
+    第一条输入就在这一轮写好，下一轮直接能用。所以第二个 run 是有用户输入的，
+    只不过那条输入不是人打的。
+    """
     llm = ScriptedLLM(
         *one_run(outline="第一轮。", prose="正文一。"),
-        text("核对完毕。\n未达成"),  # goal 判定
+        text("- 他先松口\n- 两人摊开说"),  # 拆阶段
+        text("已达成：无\n输入：我把照片推过去。"),  # 核对 + 写输入
         *one_run(outline="第二轮。", prose="正文二。"),
-        text("核对完毕。\n未达成"),
+        text("已达成：无\n输入：再问一句。"),
     )
     client = client_for(llm)
     session = Session(meta=SessionMeta(goal=Goal(description="写到摊牌", max_runs=2)))
@@ -302,9 +308,41 @@ def test_goal_drives_another_run_without_user_input(client_for) -> None:
         first = collect(ws, "run_finished")[-1]["node"]
         second = collect(ws, "run_finished")[-1]["node"]
 
-    # 第二轮没有用户输入，是 goal 驱动的。
     assert first["user_input"]["text"] == "开始"
-    assert second["user_input"] is None
+    # 第二轮没有人打字，输入是 goal agent 写的那条。
+    assert second["user_input"]["text"] == "我把照片推过去。"
+
+    # 阶段计划跟着节点走（D48）——第一轮之后就挂在第一个节点上。
+    # 从 REST 取而不是从事件取：`run_finished` 在 goal agent 之前就推出去了，
+    # 那时计划还没写上去。
+    path = client.get(f"/sessions/{session.id}").json()["path"]
+    assert [s["description"] for s in path[0]["goal_plan"]["subgoals"]] == [
+        "他先松口",
+        "两人摊开说",
+    ]
+
+
+def test_a_finished_goal_says_which_way_it_ended(client_for) -> None:
+    """完成与完全偏离都交回控制权，**但用户必须知道是哪一种**（D141）。"""
+    llm = ScriptedLLM(
+        *one_run(outline="第一轮。", prose="正文一。"),
+        text("- 唯一的一步"),  # 拆阶段
+        text("已达成：1\n输入：随便说一句。"),  # 核对——这一步就全达成了
+        text("逐条核对……\n完成"),  # 判去向
+    )
+    client = client_for(llm)
+    session = Session(meta=SessionMeta(goal=Goal(description="写到摊牌", max_runs=5)))
+    client.post("/sessions", json=session.model_dump(mode="json"))
+
+    with client.websocket_connect(f"/sessions/{session.id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "开始"}))
+        collect(ws, "run_finished")
+        finished = collect(ws, "goal_finished")[-1]
+
+    assert finished["outcome"] == "done"
+    # 目标清掉之后不再自动续跑——脚本里也没有第三轮可跑了。
+    assert client.get(f"/sessions/{session.id}").json()["session"]["meta"]["goal"] is None
 
 
 def test_no_goal_means_no_autocontinue(client_for) -> None:

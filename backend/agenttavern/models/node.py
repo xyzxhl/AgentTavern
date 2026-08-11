@@ -16,7 +16,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 from ..llm.types import Message
-from .control import ControlDimensions
+from .control import ControlDimensions, GoalPlan
 from .state import StateDelta
 
 
@@ -129,6 +129,14 @@ class Node(BaseModel):
 
     state_delta: StateDelta = Field(default_factory=StateDelta)
     """由 director 通过 ``state_write`` 提交（D55，唯一写者）。"""
+
+    goal_plan: GoalPlan | None = None
+    """goal agent 在这一轮之后留下的阶段计划（D141）。
+
+    **只在它变化的那一轮上存**——和 `state_delta` 一样是增量思路：沿路径往回找，
+    最后一个带计划的节点就是当前计划。换一条分支自然拿到那条分支自己的进度，
+    不必额外做隔离（D48）。
+    """
 
     def summary_or_head(self, head_chars: int = 120) -> str:
         """history 索引用的摘要。无缓存时回退到头部截断。"""

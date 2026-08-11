@@ -134,8 +134,8 @@ class Goal(BaseModel):
 
     机制：正常一轮生成结束后检查是否达标，未达标则开启下一 run。
 
-    **goal 不是模式**——有无 goal 系统跑法一样，只是 run 末多一个判定。
-    达标判定一律交给模型，不降级为代码：那些结构化字段的值本就是模型写的，
+    **goal 不是模式**——有无 goal 系统跑法一样，只是 run 末多一次 goal agent 的
+    调用。达标判定一律交给模型，不降级为代码：那些结构化字段的值本就是模型写的，
     代码读取比对不是独立验证（D30）。
     """
 
@@ -147,6 +147,66 @@ class Goal(BaseModel):
 
     max_total_tokens: int = 1_000_000
     """硬上限保底（同上）。"""
+
+    max_revisions: int = 3
+    """最多重新规划几次（D141）。
+
+    「未完成或轻度偏离 → 重新规划」这条路本身没有出口：每次重规划都会给出
+    新的阶段，模型永远可以再拆一层。这里是止损，和上面两条一个性质。
+    """
+
+
+class SubGoal(BaseModel):
+    """一个阶段性目标。**goal agent 拆出来的，不是用户写的。**"""
+
+    description: str
+    done: bool = False
+
+
+class GoalOutcome(StrEnum):
+    """全部阶段走完之后，goal 的三种去向（D141）。"""
+
+    DONE = "done"
+    """完成。交回控制权。"""
+
+    DERAILED = "derailed"
+    """完全偏离——剧情已经走到别处，再规划也回不来。同样交回控制权，
+    **但理由完全不同**，所以不能和「完成」并成一种：用户需要知道是哪一种。
+    """
+
+    REPLAN = "replan"
+    """未完成或轻度偏离。基于当前状态重新规划阶段，继续跑。"""
+
+
+class GoalPlan(BaseModel):
+    """把 goal 拆成的一串阶段（D141）。
+
+    **它是路径的函数，跟着节点走**（同 D48 的理由）：换一条分支，走到哪一步、
+    哪些阶段算达成了，都不一样。所以它存在 `Node` 上，不存在 session 上。
+    """
+
+    subgoals: list[SubGoal] = Field(default_factory=list)
+    revision: int = 1
+    """第几版规划。每重新规划一次加一，用来对着 `Goal.max_revisions` 止损。"""
+
+    @property
+    def current(self) -> SubGoal | None:
+        """当前要推进的那个阶段：**第一个还没达成的**。
+
+        不要求每轮达成一个——一个阶段可以推好几轮，也可能一轮跨过两个。
+        """
+        return next((s for s in self.subgoals if not s.done), None)
+
+    @property
+    def all_done(self) -> bool:
+        return bool(self.subgoals) and all(s.done for s in self.subgoals)
+
+    def render(self) -> str:
+        lines = [
+            f"{i + 1}. [{'已达成' if s.done else '未达成'}] {s.description}"
+            for i, s in enumerate(self.subgoals)
+        ]
+        return "\n".join(lines)
 
 
 class SessionMeta(BaseModel):

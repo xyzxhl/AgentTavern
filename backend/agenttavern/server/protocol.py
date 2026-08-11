@@ -194,6 +194,20 @@ class Branches(BaseModel):
     active_index: int
 
 
+class GoalFinished(BaseModel):
+    """goal 走完了，控制权交回用户（D141）。
+
+    **`outcome` 必须传出去**：完成和完全偏离都停下来，但那是两件完全不同的事——
+    一个是达成了，一个是这个目标已经不可能达成了，用户的下一步动作完全不同。
+    """
+
+    type: Literal["goal_finished"] = "goal_finished"
+    outcome: str
+    """`done` / `derailed`（见 `GoalOutcome`）。"""
+
+    reason: str
+
+
 class ServerError(BaseModel):
     type: Literal["error"] = "error"
     message: str
@@ -210,5 +224,6 @@ ServerMessage = (
     | QueueStatus
     | UsageUpdate
     | Branches
+    | GoalFinished
     | ServerError
 )

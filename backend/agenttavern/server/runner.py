@@ -16,14 +16,15 @@ import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from ..agents import budget_exhausted, judge_goal
+from ..agents import budget_exhausted, final_verdict, plan_along, plan_subgoals, take_step
 from ..llm import LLMGateway
-from ..models import ControlOverride, UserInput, new_id
+from ..models import ControlOverride, GoalOutcome, GoalPlan, UserInput, new_id
 from ..orchestration import execute_run
 from ..storage import SessionRepository
 from ..tools import Inbox
 from ..tracing import Tracer
 from .protocol import (
+    GoalFinished,
     Question,
     QueueStatus,
     RunFailed,
@@ -83,6 +84,13 @@ class SessionRunner:
         # goal 预算保底（D28）。进程内计数——重启会重置，v1 接受这个简化。
         self._goal_runs = 0
         self._goal_tokens = 0
+
+        self._goal_input: str | None = None
+        """goal agent 替用户写的下一条输入（D141）。
+
+        自动续跑时拿它当 `user_input`——**这就是「模拟用户输入」落地的地方**。
+        它不是持久状态：进程内的一次传递，用完即清。
+        """
 
         self._autocontinue_armed = False
         """自动续跑是**一次 run 的后果**，不是冷启动就发生的事。
@@ -225,6 +233,12 @@ class SessionRunner:
         # 无论成败都记一次——否则持续失败的 run 会让 goal 驱动的自动续跑无限空转。
         self._goal_runs += 1
 
+        # 自动续跑时用 goal agent 写的那条输入（D141）。**用完即清**：它只对紧接着
+        # 的这一轮有效，留着会在用户插话之后被错误地重放。真的用户输入优先（D27），
+        # 所以只在 `item is None` 这条路上取。
+        simulated = self._goal_input if item is None else None
+        self._goal_input = None
+
         try:
             outcome = await execute_run(
                 self._repo,
@@ -232,7 +246,11 @@ class SessionRunner:
                 self._gateway,
                 # 不传 registry：工具面依赖能力开关与 worldinfo 模式，
                 # 两者都可能被用户改，必须每轮重新组装。
-                user_input=UserInput(text=item.text) if item else None,
+                user_input=(
+                    UserInput(text=item.text)
+                    if item
+                    else (UserInput(text=simulated) if simulated else None)
+                ),
                 # 重生成显式带来父节点；普通输入用出队时的活跃叶。
                 parent_id=(
                     item.parent_id
@@ -274,38 +292,92 @@ class SessionRunner:
         await self._check_goal(outcome.node.id)
 
     async def _check_goal(self, leaf_id: str) -> None:
-        """goal 在 **run 末**判定（D28/D40）——与控制权（轮内）作用点不同，互不冲突。"""
+        """goal agent 在 **run 末**跑（D28/D40/D141）——与控制权（轮内）作用点不同。
+
+        一轮之后它做三件事里的一到两件：核对阶段进度并写出下一条输入；若阶段全部
+        走完，再判目标的去向（完成 / 完全偏离 / 重新规划）。**它写的那条输入存在
+        `_goal_input` 里，下一次自动续跑拿去用**——这就是"模拟用户输入"落地的地方。
+        """
         session = self._repo.load_session()
         goal = session.meta.goal
         if goal is None:
             return
 
-        # 判定本身是一次真实的模型调用，因此它**必须和 run 一样可见、一样计入预算**：
+        # goal agent 是真实的模型调用，因此它**必须和 run 一样可见、一样计入预算**：
         # 不推事件的话，goal 为什么迟迟不达标就完全无从查起；不计 token 的话，
-        # D28 那个用来兜住自主运行成本的预算就漏掉了每轮都发生的一次调用。
+        # D28 那个用来兜住自主运行成本的预算就漏掉了每轮都发生的调用。
         tracer = Tracer(
             self._repo,
             leaf_id,
             lambda event: self._emit(Trace(event=event)),
             persist=session.capabilities.trace,
         )
+        path = self._repo.path_to(leaf_id)
+        # 事件密度是 goal agent 唯一读的控制维度：它决定阶段拆多细、
+        # 一条输入推多远（D93 那条投影的第三面）。
+        density = session.control.expansion_density
+        sid = session.id
 
-        verdict = await judge_goal(
-            self._gateway,
-            tracer,
-            goal,
-            self._repo.path_to(leaf_id),
-        )
+        async def replan(previous: GoalPlan | None) -> GoalPlan:
+            return await plan_subgoals(
+                self._gateway,
+                tracer,
+                goal,
+                path,
+                previous=previous,
+                density=density,
+                user_id=sid,
+            )
+
+        async def step_on(current: GoalPlan) -> GoalPlan:
+            """核对进度并写下一条输入。**每次换计划之后都要走一遍**——
+            否则那一轮的自动续跑会没有输入，等于白跑（D141）。
+            """
+            step = await take_step(
+                self._gateway, tracer, goal, path, current, density=density, user_id=sid
+            )
+            self._goal_input = step.user_text
+            return step.plan
+
+        # 还没有计划就先拆，紧接着照常推一步：新计划的第一条输入就在这一轮写好，
+        # 下一轮直接能用。
+        plan = await step_on(plan_along(path) or await replan(None))
+
+        if plan.all_done:
+            outcome, reason = await final_verdict(
+                self._gateway, tracer, goal, path, plan, density=density, user_id=sid
+            )
+            if outcome is GoalOutcome.REPLAN and plan.revision >= goal.max_revisions:
+                # 重新规划这条路本身没有出口——每次重规划都会给出新的阶段。
+                # 到顶就当作走不通，交回控制权（D141）。
+                outcome = GoalOutcome.DERAILED
+                reason = f"已达重规划上限（{goal.max_revisions}）"
+
+            if outcome is GoalOutcome.REPLAN:
+                # 刚才那条输入是冲着旧计划写的，旧计划已经走完了——换新的。
+                plan = await step_on(await replan(plan))
+            else:
+                self._finish_goal(outcome, reason)
+
         self._goal_tokens += tracer.usage.tokens_in + tracer.usage.tokens_out
 
-        if verdict.reached:
-            self._goal_runs = 0
-            self._goal_tokens = 0
-            self._autocontinue_armed = False
-            # 重新载入：判定期间可能有 REST 请求改过 session（元操作与生成并行，D24）。
-            session = self._repo.load_session()
-            session.meta.goal = None
-            self._repo.save_session(session)
+        # 计划存在**这一轮的节点**上，跟着路径走（D48）——换分支自然拿到那条
+        # 分支自己的进度，不必额外做隔离。
+        node = self._repo.load_node(leaf_id)
+        node.goal_plan = plan
+        self._repo.save_node(node)
+
+    def _finish_goal(self, outcome: GoalOutcome, reason: str) -> None:
+        """交回控制权。**完成与完全偏离都走这里，但用户必须知道是哪一种。**"""
+        self._goal_runs = 0
+        self._goal_tokens = 0
+        self._goal_input = None
+        self._autocontinue_armed = False
+        # 重新载入：判定期间可能有 REST 请求改过 session（元操作与生成并行，D24）。
+        session = self._repo.load_session()
+        session.meta.goal = None
+        self._repo.save_session(session)
+        self._emit(GoalFinished(outcome=outcome.value, reason=reason))
 
     # -- ask_question -------------------------------------------------------
 
