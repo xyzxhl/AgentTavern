@@ -16,7 +16,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 from ..llm.types import Message
-from .control import ControlDimensions, GoalPlan
+from .control import ControlDimensions
 from .state import StateDelta
 
 
@@ -39,6 +39,19 @@ class RunStatus(StrEnum):
     FAILED = "failed"
 
 
+class InputSource(StrEnum):
+    """这条输入是谁给的（D148）。
+
+    **只有 goal_manager 读它。** director 不知道有 goal 这回事，两种输入在它眼里
+    完全一样——那是有意的：模拟输入必须和真实输入长得一模一样，否则 director
+    会对它区别对待。
+    """
+
+    USER = "user"
+    SIMULATED = "simulated"
+    """goal_manager 替用户写的（D141）。"""
+
+
 class UserInput(BaseModel):
     """一条用户输入。
 
@@ -48,6 +61,12 @@ class UserInput(BaseModel):
     """
 
     text: str
+    source: InputSource = InputSource.USER
+    """**给 goal_manager 分辨用的**（D148）：剧情偏了，是它自己推错了，还是用户
+    主动把剧情带走了？后者强得多——用户的意图优先于目标，那往往意味着计划该重拆，
+    甚至该判 failed。不标注的话两种偏离在梗概里长得一模一样，而应对完全不同。
+    """
+
     submitted_at: datetime = Field(default_factory=_now)
 
 
@@ -132,13 +151,9 @@ class Node(BaseModel):
     记的人因此看得见这一轮最终写出来的正文。
     """
 
-    goal_plan: GoalPlan | None = None
-    """goal_manager 在这一轮之后留下的阶段计划（D141）。
-
-    **只在它变化的那一轮上存**——和 `state_delta` 一样是增量思路：沿路径往回找，
-    最后一个带计划的节点就是当前计划。换一条分支自然拿到那条分支自己的进度，
-    不必额外做隔离（D48）。
-    """
+    # `goal_plan` **已删除**（D148）。D141 把它挂在节点上是为了分支隔离；
+    # goal 跑着的时候不允许切分支之后，那个理由不成立了。计划现在挂在
+    # `Session.goal_run.plan` 上，跟着 goal 的生命周期走。
 
     def summary_or_head(self, head_chars: int = 120) -> str:
         """history 索引用的摘要。无缓存时回退到头部截断。

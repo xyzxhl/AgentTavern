@@ -108,7 +108,54 @@ class Regenerate(BaseModel):
     node_id: str
 
 
-ClientMessage = Submit | Interject | Answer | Stop | SwitchBranch | EditNode | Regenerate
+class SetGoal(BaseModel):
+    """设一个新目标（D148）。**已有 goal 时报错**——同一时间只有一个。
+
+    `description` 一旦定下就不能改：goal_manager 的对话是围着它建起来的，
+    改了等于换了个目标，而对话还是旧的。要换就先 `GoalControl(abandon)`。
+    """
+
+    type: Literal["set_goal"] = "set_goal"
+    description: str
+    max_runs: int | None = None
+    max_total_tokens: int | None = None
+
+
+class SetGoalBudget(BaseModel):
+    """改预算。**这是"加预算接着跑"的入口**（D148）。
+
+    和 `SetGoal` 分开，因为它俩的可改时机相反：目标定了就不能动，
+    预算恰恰要能在跑到一半时调大——预算耗尽是暂停不是失败。
+    """
+
+    type: Literal["set_goal_budget"] = "set_goal_budget"
+    max_runs: int | None = None
+    max_total_tokens: int | None = None
+
+
+class GoalControl(BaseModel):
+    """暂停 / 恢复 / 放弃当前 goal（D148）。
+
+    **恢复不是"从头再来"**：对话原样留着，只是按当前路径补齐暂停期间发生的轮次。
+    暂停期间用户可以自己跑几轮、也可以切分支——恢复时**以最终选择的分支为准**。
+    """
+
+    type: Literal["goal_control"] = "goal_control"
+    action: Literal["pause", "resume", "abandon"]
+
+
+ClientMessage = (
+    Submit
+    | Interject
+    | Answer
+    | Stop
+    | SwitchBranch
+    | EditNode
+    | Regenerate
+    | SetGoal
+    | SetGoalBudget
+    | GoalControl
+)
 
 
 class ClientEnvelope(BaseModel):
@@ -201,16 +248,28 @@ class Branches(BaseModel):
 
 
 class GoalFinished(BaseModel):
-    """goal 走完了，控制权交回用户（D141）。
+    """goal 走完了，控制权交回用户（D141/D148）。
 
-    **`outcome` 必须传出去**：完成和完全偏离都停下来，但那是两件完全不同的事——
+    **`outcome` 必须传出去**：两种终态都停下来，但那是两件完全不同的事——
     一个是达成了，一个是这个目标已经不可能达成了，用户的下一步动作完全不同。
     """
 
     type: Literal["goal_finished"] = "goal_finished"
     outcome: str
-    """`done` / `derailed`（见 `GoalOutcome`）。"""
+    """`done` / `failed`（见 `GoalOutcome`）。"""
 
+    reason: str = ""
+
+
+class GoalPaused(BaseModel):
+    """goal 停下了，**但没有结束**（D148）。
+
+    和 `GoalFinished` 分开是因为用户的下一步完全不同：结束了就是结束了，
+    暂停则是"要不要接着跑"——最常见的来源是预算到顶，把上限调大就能继续，
+    对话原样留着，不用重新判一遍。
+    """
+
+    type: Literal["goal_paused"] = "goal_paused"
     reason: str
 
 
@@ -231,5 +290,6 @@ ServerMessage = (
     | UsageUpdate
     | Branches
     | GoalFinished
+    | GoalPaused
     | ServerError
 )

@@ -13,6 +13,8 @@ from ..llm import LLMGateway
 from ..models import (
     Capabilities,
     ControlDimensions,
+    Goal,
+    GoalRun,
     Node,
     Session,
     SessionMeta,
@@ -27,10 +29,13 @@ from .protocol import (
     Branches,
     ClientEnvelope,
     EditNode,
+    GoalControl,
     Interject,
     Regenerate,
     ServerError,
     ServerMessage,
+    SetGoal,
+    SetGoalBudget,
     StateSnapshot,
     Stop,
     Submit,
@@ -249,6 +254,58 @@ async def _handle(
             ),
         )
         await broadcast(StateSnapshot(values=repo.state_at(node.id).values, leaf_id=node.id))
+
+    elif isinstance(message, SetGoal):
+        # **同一时间只有一个 goal**（D148）。已有的必须先放弃——goal_manager 的
+        # 对话是围着那个目标建起来的，换一个就得整份重来，而那正是 `abandon`。
+        session = repo.load_session()
+        if session.meta.goal is not None:
+            await broadcast(ServerError(message="已经有一个目标在跑。先放弃它再设新的。"))
+        else:
+            session.meta.goal = Goal(
+                description=message.description,
+                **{
+                    k: v
+                    for k, v in (
+                        ("max_runs", message.max_runs),
+                        ("max_total_tokens", message.max_total_tokens),
+                    )
+                    if v is not None
+                },
+            )
+            session.goal_run = GoalRun()
+            repo.save_session(session)
+
+    elif isinstance(message, SetGoalBudget):
+        # **这是"加预算接着跑"的入口。** 目标本身禁改，预算恰恰要能在跑到一半
+        # 时调大——预算耗尽是暂停不是失败（D148）。调大之后顺手解除那次暂停。
+        session = repo.load_session()
+        if session.meta.goal is None:
+            await broadcast(ServerError(message="当前没有目标。"))
+        else:
+            if message.max_runs is not None:
+                session.meta.goal.max_runs = message.max_runs
+            if message.max_total_tokens is not None:
+                session.meta.goal.max_total_tokens = message.max_total_tokens
+            run = session.goal_run
+            if run is not None and run.paused and run.exhausted(session.meta.goal) is None:
+                run.paused, run.paused_reason = False, ""
+            repo.save_session(session)
+
+    elif isinstance(message, GoalControl):
+        session = repo.load_session()
+        if session.meta.goal is None:
+            await broadcast(ServerError(message="当前没有目标。"))
+        elif message.action == "abandon":
+            session.meta.goal = None
+            session.goal_run = None
+            repo.save_session(session)
+        else:
+            run = session.goal_run or GoalRun()
+            run.paused = message.action == "pause"
+            run.paused_reason = "用户暂停" if run.paused else ""
+            session.goal_run = run
+            repo.save_session(session)
 
     elif isinstance(message, Regenerate):
         # 重生成 = 在当前叶的父节点下新建兄弟（D46）。**只能重 roll 当前节点**

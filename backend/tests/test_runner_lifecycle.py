@@ -153,17 +153,17 @@ async def test_ordinary_submit_still_chains_onto_the_active_leaf(tmp_path: Path)
         await asyncio.wait_for(runner.aclose(), timeout=2.0)
 
 
-async def test_goal_judging_is_visible_and_counted(tmp_path: Path) -> None:
-    """goal 判定是一次真实的模型调用，**必须和 run 一样可见、一样计入预算**。
+async def test_goal_spending_is_counted_and_lands_on_disk(tmp_path: Path) -> None:
+    """goal_manager 是一次真实的模型调用，**必须和 run 一样可见、一样计入预算**。
 
-    此前它用的是默认参数的 Tracer——既不推事件也不落盘，于是"goal 为什么迟迟
-    不达标"无从查起；而且它的 token 从未计入 `_goal_tokens`，**D28 那个用来兜住
-    自主运行成本的预算漏掉了每一轮都会发生的一次调用**。
+    它以前用默认参数的 Tracer——既不推事件也不落盘，于是"goal 为什么迟迟不达标"
+    无从查起；而且**计数在 `SessionRunner` 的实例字段上，进程重启就归零**，
+    D28 那个用来兜住自主运行成本的上限实际上从来没生效过（D148 修掉）。
     """
     from agenttavern.models import Goal, SessionMeta
 
     store = Store(tmp_path)
-    session = Session(meta=SessionMeta(goal=Goal(description="让她说出真相")))
+    session = Session(meta=SessionMeta(goal=Goal(description="让她说出真相", max_runs=1)))
     repo = store.create_session(session)
     sent: list[object] = []
 
@@ -172,24 +172,26 @@ async def test_goal_judging_is_visible_and_counted(tmp_path: Path) -> None:
 
     llm = ScriptedLLM(
         *one_run(),
-        text("未达成：她还没开口。"),
-        *one_run(prose="第二轮。"),
-        text("未达成：仍未开口。"),
+        tool("plan", subgoals=["她开口"]),
+        text("先推到这里。"),
     )
     runner = SessionRunner(repo, llm.gateway(), broadcast)
     runner.start()
 
     try:
         await runner.submit("我推开门")
-        await _until(lambda: runner._goal_tokens > 0)
+        await _until(lambda: (repo.load_session().goal_run or None) is not None)
 
-        # 判定用掉的 token 必须算进预算——否则自主运行会超出 D28 设的上限
+        run = repo.load_session().goal_run
+        assert run is not None
+        # **落在盘上**，不在内存里——这正是那个 bug 的形状。
+        assert run.spent_runs == 1
         run_only = sum(
             m.tokens_in + m.tokens_out  # type: ignore[attr-defined]
             for m in sent
             if type(m).__name__ == "UsageUpdate"
         )
-        assert runner._goal_tokens > run_only, "goal 判定的 token 没有计入预算"
+        assert run.spent_tokens > run_only, "goal_manager 的 token 没有计入预算"
     finally:
         await asyncio.wait_for(runner.aclose(), timeout=2.0)
 

@@ -7,27 +7,14 @@ from pathlib import Path
 import pytest
 from conftest import STATE_MARK, CancelWriter, ScriptedLLM, text, tool
 
-from agenttavern.agents import (
-    budget_exhausted,
-    final_verdict,
-    plan_along,
-    plan_subgoals,
-    take_step,
-)
 from agenttavern.models import (
     Capabilities,
     ControlOverride,
     ExpansionDensity,
-    Goal,
-    GoalOutcome,
-    GoalPlan,
     InputHandling,
-    Node,
     RunStage,
     RunStatus,
     Session,
-    SessionMeta,
-    SubGoal,
     UserInput,
     WorldbookEntry,
 )
@@ -508,7 +495,6 @@ async def test_manual_close_does_not_ask_the_model(tmp_path: Path) -> None:
     """
     from agenttavern.models import Capabilities, SummarizeMode
     from agenttavern.orchestration import close_segment
-    from agenttavern.tracing import Tracer
 
     runs = 4
     session = Session(capabilities=Capabilities(summarize=SummarizeMode.MANUAL))
@@ -612,115 +598,6 @@ async def test_properly_expanded_prose_is_not_flagged(tmp_path: Path) -> None:
 
     outcome = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
     assert not any("照抄" in n for n in outcome.notes)
-
-
-# -- goal 判定 ---------------------------------------------------------------
-
-
-async def test_goal_agent_uses_clean_context(tmp_path: Path) -> None:
-    """独立的干净上下文调用——只要 [目标 + 阶段 + 剧情梗概]，不要创作过程也不要正文。
-
-    D17 两个条件在这里罕见地都满足（有验证器：用户给的目标；有上下文差：
-    判定与规划不需要创作过程），所以它值得是独立的一次调用、独立的一个 agent。
-    """
-    repo, session, gw, reg = setup(
-        tmp_path,
-        happy_llm(),
-        Session(meta=SessionMeta(goal=Goal(description="写到他们摊牌为止"))),
-    )
-    outcome = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
-
-    agent = ScriptedLLM(text("- 他先松口\n- 两人把话摊开"))
-    plan = await plan_subgoals(
-        agent.gateway(),
-        Tracer(repo, outcome.node.id),
-        session.meta.goal,
-        repo.path_to(outcome.node.id),
-    )
-
-    assert [s.description for s in plan.subgoals] == ["他先松口", "两人把话摊开"]
-    assert plan.revision == 1
-    prompt = str(agent.messages_of(0))
-    assert "写到他们摊牌为止" in prompt
-    assert "门轴" not in prompt  # 不需要创作过程，也不需要正文
-
-
-async def test_the_goal_agent_writes_the_next_user_input(tmp_path: Path) -> None:
-    """**它替用户写下一条输入**（D141）——这就是「模拟用户输入」落地的地方。
-
-    同一次调用顺带核对进度：一轮可能跨过两个阶段，也可能一个都不达成，
-    所以「已达成」是一份序号清单，不是一个布尔。
-    """
-    repo, session, gw, reg = setup(tmp_path, happy_llm())
-    outcome = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
-
-    plan = GoalPlan(subgoals=[SubGoal(description="他先松口"), SubGoal(description="摊开")])
-    agent = ScriptedLLM(text("已达成：1\n输入：我把照片推过去。"))
-    step = await take_step(
-        agent.gateway(),
-        Tracer(repo, outcome.node.id),
-        Goal(description="随便"),
-        repo.path_to(outcome.node.id),
-        plan,
-    )
-
-    assert step.user_text == "我把照片推过去。"
-    assert [s.done for s in step.plan.subgoals] == [True, False]
-    assert step.plan.current is not None
-    assert step.plan.current.description == "摊开"
-    # 原来那份不能被改掉——它存在上一个节点上，是那条分支的历史。
-    assert [s.done for s in plan.subgoals] == [False, False]
-
-
-async def test_the_three_ways_a_goal_can_end(tmp_path: Path) -> None:
-    """完成 / 完全偏离 / 继续。**前两种都停下来，但用户必须知道是哪一种**（D141）。
-
-    「认不出来就当继续」：停下来是不可逆的（目标会被清掉），继续只是多跑一轮。
-    """
-    repo, session, gw, reg = setup(tmp_path, happy_llm())
-    outcome = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
-    plan = GoalPlan(subgoals=[SubGoal(description="x", done=True)])
-
-    async def verdict_for(said: str) -> GoalOutcome:
-        agent = ScriptedLLM(text(said))
-        result, _ = await final_verdict(
-            agent.gateway(),
-            Tracer(repo, outcome.node.id),
-            Goal(description="随便"),
-            repo.path_to(outcome.node.id),
-            plan,
-        )
-        return result
-
-    assert await verdict_for("逐条核对……\n完成") is GoalOutcome.DONE
-    assert await verdict_for("剧情早跑偏了。\n完全偏离") is GoalOutcome.DERAILED
-    assert await verdict_for("还差一点。\n继续") is GoalOutcome.REPLAN
-    assert await verdict_for("我也说不好") is GoalOutcome.REPLAN
-
-
-def test_a_plan_follows_the_path_not_the_session(tmp_path: Path) -> None:
-    """阶段进度是**路径**的函数（同 D48）：沿路径往回找最后一份。
-
-    换一条分支就该拿到那条分支自己的进度——和 `state_delta` 一样是增量思路，
-    不必额外做隔离。
-    """
-    first = Node(goal_plan=GoalPlan(subgoals=[SubGoal(description="旧")]))
-    middle = Node(parent_id=first.id)
-    last = Node(
-        parent_id=middle.id, goal_plan=GoalPlan(subgoals=[SubGoal(description="新")], revision=2)
-    )
-
-    assert plan_along([first, middle]) is first.goal_plan
-    assert plan_along([first, middle, last]) is last.goal_plan
-    assert plan_along([Node()]) is None
-
-
-def test_budget_is_the_backstop() -> None:
-    """硬上限保底：模型可能永远判不达标，或目标本身不可达（D28）。"""
-    goal = Goal(description="x", max_runs=3, max_total_tokens=1000)
-    assert budget_exhausted(goal, runs=1, total_tokens=10) is None
-    assert "run 数上限" in (budget_exhausted(goal, runs=3, total_tokens=10) or "")
-    assert "token 上限" in (budget_exhausted(goal, runs=1, total_tokens=9999) or "")
 
 
 # -- trace -------------------------------------------------------------------

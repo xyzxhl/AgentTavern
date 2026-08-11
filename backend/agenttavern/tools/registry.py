@@ -27,7 +27,7 @@ from .builtin import (
     summarize_tool,
     worldinfo_tools,
 )
-from .context import RunContext
+from .goal import goal_tools
 
 
 def build_tools(
@@ -105,6 +105,15 @@ class ToolRegistry:
     def for_state_manager(cls, capabilities: Capabilities) -> ToolRegistry:
         return cls(build_state_tools(capabilities))
 
+    @classmethod
+    def for_goal_manager(cls) -> ToolRegistry:
+        """goal_manager 的工具面：`plan` / `advance` / `finish`（D148）。
+
+        **不吃能力开关**——goal 要么在跑要么不在，没有中间档；这三个是它全部的
+        表达方式，缺一个就有话说不出来。
+        """
+        return cls(goal_tools())
+
     def render(self) -> str:
         """工具面的**索引**：谁在场，各管什么事。
 
@@ -124,8 +133,12 @@ class ToolRegistry:
     def specs(self) -> list[ToolSpec]:
         return [t.spec() for t in self._tools.values()]
 
-    async def dispatch(self, ctx: RunContext, call: ToolCall) -> ToolResult:
+    async def dispatch(self, ctx: Any, call: ToolCall) -> ToolResult:
         """执行一次工具调用。
+
+        ``ctx`` 放宽成 `Any`：run 级的工具吃 `RunContext`，goal 的三个吃
+        `GoalContext`（它跨 run 活着，D148）。**两套工具调度必然漂移**，
+        不如让一套认两种 context——`Tool.handler` 本来就是这么写的。
 
         参数解析失败、工具不存在、参数不合法——**全都是模型可恢复的错误**，
         返回结构化的 tool result 让它重试，而不是让整个 run 崩掉。

@@ -89,6 +89,20 @@ def _append_tag() -> str:
 
 INTERJECTION_MARK = _append_tag()
 
+
+def interjections_of(node: Node) -> list[str]:
+    """这一轮用户插了哪几句（D119）。
+
+    **从 `director_messages` 里认，不另存一份**——插话本来就在那儿，
+    再存一份必然漂移。认的是 `INTERJECTION_MARK` 那个结构标记。
+    """
+    return [
+        (m.content or "")
+        for m in node.director_messages
+        if m.role is Role.USER and m.content and INTERJECTION_MARK in m.content
+    ]
+
+
 SUBMIT_TOOL = "submit_outline"
 """扁平化时跳过它——它的产出就是 `node.outline`，直接取节点上的更准。"""
 

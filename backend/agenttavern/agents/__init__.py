@@ -1,13 +1,5 @@
 from .director import DirectorFailed, DirectorResult, run_director
-from .goal_manager import (
-    GoalStep,
-    budget_exhausted,
-    digest_of,
-    final_verdict,
-    plan_along,
-    plan_subgoals,
-    take_step,
-)
+from .goal_manager import GoalStep, advance_goal, sync_conversation
 from .state_manager import StateResult, run_state_manager
 from .writer import WriterResult, run_writer
 
@@ -17,14 +9,10 @@ __all__ = [
     "DirectorResult",
     "GoalStep",
     "StateResult",
+    "advance_goal",
     "WriterResult",
-    "budget_exhausted",
-    "digest_of",
-    "final_verdict",
-    "plan_along",
-    "plan_subgoals",
     "run_director",
     "run_state_manager",
     "run_writer",
-    "take_step",
+    "sync_conversation",
 ]

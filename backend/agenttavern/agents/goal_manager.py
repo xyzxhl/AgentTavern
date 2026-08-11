@@ -1,274 +1,221 @@
-"""goal_manager：目标管理者（D28 / D141）。
+"""goal_manager：目标管理者（D28 / D141 / D148）。
 
 **它是第三个 agent，不是 director 顺手做的一步。** 叫「管理者」而不是「判定者」，
-因为判定只是它四件事里的一件——它还拆阶段、核对进度、替用户写下一条输入。
+因为判定只是它几件事里的一件——它还拆阶段、核对进度、替用户写下一条输入。
 
-上下文只有四样：目标、阶段计划、剧情梗概（各轮细纲的摘要）、事件密度。
-**它不读正文**（同 D54 的理由），也不读世界设定和状态——它管的是"推到哪儿了"，
-不是"这一轮怎么写"。
+上下文只有目标、推进节奏、以及逐轮的剧情梗概。**它不读正文**（同 D54 的理由），
+也不读世界设定和状态——它管的是"推到哪儿了"，不是"这一轮怎么写"。
 
-## 为什么值得独立出来
+## 一份跨 run 的长对话，不是三次干净调用
 
-这是 D17 判别式（上下文差 × 验证器）**两个条件罕见地都满足**的场合：
+D141 那一版把三件事拆成三个 `task` 档、三次独立调用，每次重发全量剧情梗概。
+两个毛病：
 
-- **有验证器**：用户设定的目标就是明确给定的真值。
-- **有上下文差**：判定与规划只需要 [目标 + 已产出内容摘要]，完全不需要创作过程。
+- **梗概越来越长，前缀每轮失效**，缓存完全用不上。现在静态前缀跨整个 goal
+  生命周期不变，每轮只追加一条「第 N 轮发生了什么」。
+- **replan 只在「全部阶段走完」之后才有机会发生**，而剧情偏离随时发生。于是
+  偏了之后还要抱着一份垮掉的计划推好几轮，直到名义上走完才被发现。
 
-所以它值得用**独立的、干净上下文**的调用，而不是让生成模型顺手判断——生成模型
-知道自己想怎么写，会往"已经达标"的方向读。这不复活 critic：频率极低（一轮一次）、
-上下文极短、输出是几行文本。
+现在模型自己决定这一轮调哪几个工具：平常 `advance`，偏了就先 `plan` 重拆，
+该收了就 `finish`。**收口条件是「这一次不再调用任何工具」**（同 state_manager）。
 
-## 它做三件事
+## subgoal 是脚手架，不是执行契约
 
-1. **拆阶段**（`plan_subgoals`）——把目标拆成若干阶段性 subgoal。
-2. **推一步**（`take_step`）——核对哪些阶段已达成，并**替用户写出下一条输入**，
-   把剧情往当前那个未达成的阶段推。这两件事共用同一份上下文，所以合成一次调用。
-   **不要求每轮达成一个阶段**：一个阶段可以推好几轮，一轮也可能跨过两个。
-3. **判去向**（`final_verdict`）——全部阶段走完之后，目标是完成、完全偏离，
-   还是该重新规划。
+它们存在的目的是逼模型在动手前先想清楚路径；某一条最终有没有原样实现并不要紧。
+**但 `finish(done)` 要求全部标为达成**——两条合起来才是要点：重拆随时可以，
+而宣布完成之前必须用**当前的**计划重核一遍，不是照着三轮前那份打勾。
+维持对话之后模型读的是自己写的计划、自己判的进度，比干净上下文更容易往
+"已经达标"的方向读，这条硬前提挡的就是它。
 
-## 三种去向为什么不能并成两种
+## 终态只有两种
 
-「完成」和「完全偏离」都交回控制权，看起来可以合并。不行：**用户需要知道是哪一种**。
-一个是达成了，一个是这个目标已经不可能达成了，后续动作完全不同。
-
-「重新规划」这条路本身没有出口——每次重规划都会给出新的阶段，模型永远可以再拆
-一层。所以 `Goal.max_revisions` 是止损，和 `max_runs` / `max_total_tokens` 一个性质。
+`done` / `failed`。`replan` 不是去向是动作，`derailed` 并进了 `failed`。
+**预算耗尽不是终态**——用户可以加预算接着跑，所以它是暂停（`GoalRun.paused`）。
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from ..llm import LLMGateway, Usage
+from ..llm import LLMGateway, Message, Role
 from ..models import (
     Actor,
     ExpansionDensity,
     Goal,
-    GoalOutcome,
-    GoalPlan,
+    GoalRun,
+    InputSource,
     Node,
-    SubGoal,
     TraceEventType,
 )
-from ..prompting import assemble
+from ..prompting import assemble, titled
+from ..tools import GoalContext, ToolRegistry
 from ..tracing import Tracer
+from .replay import interjections_of
 
-_OUTCOMES = {
-    "完成": GoalOutcome.DONE,
-    "完全偏离": GoalOutcome.DERAILED,
-    "继续": GoalOutcome.REPLAN,
-}
-"""结论那一行的字样。**它和 `goal_manager.yaml` 里那三个词是一对**，
-改一处必须改另一处——这是提示词和解析之间少数几处真的耦合。
-"""
+MAX_ROUNDS = 4
+"""一轮里最多几次模型往返。正常一到两次（调工具、然后空手回来收口）。"""
 
 
 @dataclass
 class GoalStep:
-    """推一步的结果：更新过的计划 + 替用户写的那条输入。"""
+    """goal_manager 这一轮的产出。"""
 
-    plan: GoalPlan
-    user_text: str
-    usage: Usage = field(default_factory=Usage)
+    next_input: str | None = None
+    """替用户写的下一条输入，喂给下一轮自动续跑。"""
 
-
-def digest_of(path: list[Node]) -> str:
-    """剧情梗概：各轮细纲的摘要，按顺序。**不含正文**（D54）。"""
-    return "\n".join(f"{i + 1}. {n.summary_or_head(200)}" for i, n in enumerate(path))
+    finished: tuple[str, str] | None = None
+    """``(outcome, reason)``。非空即该交回控制权。"""
 
 
-def plan_along(path: list[Node]) -> GoalPlan | None:
-    """当前计划：沿路径往回找，**最后一个带计划的节点**上那份（D48）。
-
-    和 `state_delta` 一样是增量思路——换一条分支自然拿到那条分支自己的进度。
-    """
-    return next((n.goal_plan for n in reversed(path) if n.goal_plan is not None), None)
-
-
-async def _ask(
-    gateway: LLMGateway,
-    task: str,
-    *,
-    goal: Goal,
-    plan: GoalPlan | None,
-    digest: str,
-    density: ExpansionDensity,
-    model: str | None,
-    user_id: str | None,
-    enabled: bool,
-) -> tuple[str, Usage]:
-    """三件事共用的一次调用。**任务由 `task` 那个选项组切**，上下文完全一样。"""
-    prompt = assemble(
+def _prefix(goal: Goal, density: ExpansionDensity) -> list[Message]:
+    """静态前缀：任务说明 + 目标 + 节奏。**整个 goal 生命周期不变。**"""
+    return assemble(
         "goal_manager",
-        contexts={
-            "goal": goal.description,
-            "plan": plan.render() if plan else "",
-            "digest": digest,
-        },
-        options={"task": task if enabled else "off", "pace": density.value},
-    )
-    response = await gateway.complete(prompt.messages, model=model, user_id=user_id)
-    return response.content.strip(), response.usage
+        contexts={"goal": goal.description},
+        options={"pace": density.value},
+    ).messages
 
 
-async def plan_subgoals(
-    gateway: LLMGateway,
-    tracer: Tracer,
-    goal: Goal,
-    path: list[Node],
-    *,
-    density: ExpansionDensity = ExpansionDensity.NORMAL,
-    previous: GoalPlan | None = None,
-    model: str | None = None,
-    user_id: str | None = None,
-    enabled: bool = True,
-) -> GoalPlan:
-    """把目标拆成阶段。``previous`` 非空即为**重新规划**——版本号接着往上加。"""
-    content, usage = await _ask(
-        gateway,
-        "plan",
-        goal=goal,
-        # 重新规划时不给旧计划：那一版已经判定为走不通了，给了只会被照抄。
-        # 该依据的是剧情梗概——**从当前局面往下拆**，这是提示词里明写的。
-        plan=None,
-        digest=digest_of(path),
-        density=density,
-        model=model,
-        user_id=user_id,
-        enabled=enabled,
-    )
-
-    subgoals = [
-        SubGoal(description=body)
-        for line in content.splitlines()
-        if (body := line.strip().lstrip("-*0123456789.、 ").strip())
-    ]
-    plan = GoalPlan(subgoals=subgoals, revision=(previous.revision + 1) if previous else 1)
-
-    tracer.emit(
-        TraceEventType.GOAL_EVALUATED,
-        Actor.GOAL_MANAGER,
-        f"拆出 {len(subgoals)} 个阶段（第 {plan.revision} 版）",
-        {"goal": goal.description, "subgoals": [s.description for s in subgoals]},
-        usage=usage,
-    )
-    return plan
+_SOURCE_LABEL = {
+    InputSource.USER: "用户自己的输入",
+    InputSource.SIMULATED: "我写的输入",
+}
 
 
-async def take_step(
-    gateway: LLMGateway,
-    tracer: Tracer,
-    goal: Goal,
-    path: list[Node],
-    plan: GoalPlan,
-    *,
-    density: ExpansionDensity = ExpansionDensity.NORMAL,
-    model: str | None = None,
-    user_id: str | None = None,
-    enabled: bool = True,
-) -> GoalStep:
-    """核对进度，并替用户写出下一条输入。
+def turn_record(node: Node, index: int, interjections: list[str]) -> Message:
+    """一轮的记录：**输入是谁给的** + 那一轮的剧情梗概。
 
-    **两件事一次调用**：它们要看的东西完全一样（目标、计划、梗概），拆成两次
-    只是把同一份上下文付两遍钱。
+    来源标注是这条消息里最要紧的东西（D148）：剧情偏了，是 goal_manager 自己
+    推错了，还是用户主动把剧情带走了？后者强得多——用户的意图优先于目标。
+    不标注的话两种偏离在梗概里长得一模一样，而应对完全不同。
     """
-    content, usage = await _ask(
-        gateway,
-        "step",
-        goal=goal,
-        plan=plan,
-        digest=digest_of(path),
-        density=density,
-        model=model,
-        user_id=user_id,
-        enabled=enabled,
-    )
-
-    reached, user_text = _parse_step(content)
-    updated = plan.model_copy(deep=True)
-    for index in reached:
-        if 1 <= index <= len(updated.subgoals):
-            updated.subgoals[index - 1].done = True
-
-    current = updated.current
-    tracer.emit(
-        TraceEventType.GOAL_EVALUATED,
-        Actor.GOAL_MANAGER,
-        f"本轮达成 {len(reached)} 个阶段" if reached else "本轮没有新达成的阶段",
-        {
-            "reached": sorted(reached),
-            "current": current.description if current else "（全部达成）",
-            "user_text": user_text,
-        },
-        usage=usage,
-    )
-    return GoalStep(plan=updated, user_text=user_text, usage=usage)
+    said = node.user_input
+    parts = []
+    if said and said.text:
+        parts.append(f"〔{_SOURCE_LABEL[said.source]}：{said.text}〕")
+    else:
+        parts.append("〔没有输入，直接推进〕")
+    for word in interjections:
+        parts.append(f"〔用户插话：{word}〕")
+    parts.append(node.summary_or_head(400))
+    return Message(role=Role.USER, content=titled(f"第 {index} 轮", "\n".join(parts)))
 
 
-def _parse_step(content: str) -> tuple[set[int], str]:
-    """解析两行输出。**认不出来就当没达成、没输入**，不猜（同 grader 的做法）。"""
-    reached: set[int] = set()
-    user_text = ""
-    for line in content.splitlines():
-        line = line.strip().lstrip("-* ").strip()
-        body = line.split("：", 1)[-1].split(":", 1)[-1].strip()
-        if line.startswith("已达成"):
-            reached = {int(part) for part in body.replace("，", ",").split(",") if part.isdigit()}
-        elif line.startswith("输入"):
-            user_text = body
-    return reached, user_text
+def plan_snapshot(run: GoalRun) -> Message | None:
+    """恢复时注入的那条「当前计划与进度」。
+
+    重建对话会丢掉 goal_manager 自己那些工具调用的历史（它当时怎么想的），
+    但**计划和进度以投影的形式完整留着**——这正是"权威在投影不在对话"买到的。
+    """
+    if run.plan is None or not run.plan.subgoals:
+        return None
+    return Message(role=Role.USER, content=titled("当前的阶段计划与进度", run.plan.render()))
 
 
-async def final_verdict(
+def sync_conversation(
+    goal: Goal,
+    run: GoalRun,
+    path: list[Node],
+    *,
+    density: ExpansionDensity = ExpansionDensity.NORMAL,
+) -> None:
+    """把对话补到当前路径的末端。**能续就续，续不上就整份重建。**
+
+    续得上的条件是：已有对话，且上次看到的那个节点**还在当前路径上**。
+    不满足就重建——那正是暂停期间用户切了分支的情形，而「以最终选择的分支为准」
+    只有重建做得到：增量追加撤不回来（D148）。
+
+    重建丢掉的是 goal_manager 自己那些工具调用的历史，但计划与进度以投影的形式
+    完整留着（`plan_snapshot`），**代价只在恢复那一刻付一次**——之后又是增量，
+    静态前缀重新稳定下来。
+    """
+    ids = [n.id for n in path]
+    resumable = bool(run.conversation) and run.seen_leaf_id in ids
+    start = ids.index(run.seen_leaf_id) + 1 if resumable and run.seen_leaf_id else 0
+
+    if not resumable:
+        run.conversation = _prefix(goal, density)
+        snapshot = plan_snapshot(run)
+        if snapshot is not None:
+            run.conversation.append(snapshot)
+
+    for index in range(start, len(path)):
+        run.conversation.append(turn_record(path[index], index + 1, interjections_of(path[index])))
+    run.seen_leaf_id = path[-1].id if path else None
+
+
+async def advance_goal(
     gateway: LLMGateway,
     tracer: Tracer,
     goal: Goal,
-    path: list[Node],
-    plan: GoalPlan,
+    run: GoalRun,
     *,
     density: ExpansionDensity = ExpansionDensity.NORMAL,
     model: str | None = None,
     user_id: str | None = None,
-    enabled: bool = True,
-) -> tuple[GoalOutcome, str]:
-    """全部阶段走完之后，目标的三种去向之一。**认不出来就当「继续」**。"""
-    content, usage = await _ask(
-        gateway,
-        "verdict",
-        goal=goal,
-        plan=plan,
-        digest=digest_of(path),
-        density=density,
-        model=model,
-        user_id=user_id,
-        enabled=enabled,
-    )
+    max_rounds: int = MAX_ROUNDS,
+) -> GoalStep:
+    """跑一轮 goal_manager。**对话由调用方备好**（含这一轮新追加的那条记录）。
 
-    last = content.splitlines()[-1].strip().lstrip("-*` ").strip() if content else ""
-    outcome = next(
-        (value for word, value in _OUTCOMES.items() if last.startswith(word)),
-        GoalOutcome.REPLAN,
-    )
+    这里只负责：把对话发出去、执行工具、把新增的消息追加回 `run.conversation`。
+    进度与终态由工具写进 `GoalContext`。
+    """
+    ctx = GoalContext(goal=goal, run=run)
+    registry = ToolRegistry.for_goal_manager()
+    specs = registry.specs()
+    messages = list(run.conversation)
 
     tracer.emit(
-        TraceEventType.GOAL_EVALUATED,
-        Actor.GOAL_MANAGER,
+        TraceEventType.CONTEXT_ASSEMBLED,
+        Actor.ORCHESTRATOR,
+        "装配了 goal_manager 的上下文",
         {
-            GoalOutcome.DONE: "目标已完成",
-            GoalOutcome.DERAILED: "剧情已完全偏离目标",
-            GoalOutcome.REPLAN: "目标尚未完成，重新规划阶段",
-        }[outcome],
-        {"goal": goal.description, "verdict": content},
-        usage=usage,
+            "prompt_messages": len(messages),
+            "prompt_chars": sum(len(m.content or "") for m in messages),
+        },
     )
-    return outcome, content
+
+    for _ in range(max_rounds):
+        response = await gateway.complete(messages, tools=specs, model=model, user_id=user_id)
+        tracer.emit(
+            TraceEventType.MODEL_RESPONSE,
+            Actor.GOAL_MANAGER,
+            "goal_manager 思考",
+            {"tool_calls": [c.name for c in response.tool_calls]},
+            usage=response.usage,
+        )
+
+        # **出口：这一次不再调用任何工具。** 那条纯文本不入对话——它是收口的
+        # 信号，不是内容，留着只会在下一轮变成一句没头没尾的自言自语。
+        if not response.tool_calls:
+            break
+
+        messages.append(response.as_assistant_message())
+        for call in response.tool_calls:
+            result = await registry.dispatch(ctx, call)
+            kind = TraceEventType.TOOL_RESULT if result.is_error else TraceEventType.GOAL_EVALUATED
+            tracer.emit(
+                kind,
+                Actor.GOAL_MANAGER,
+                result.label or call.name,
+                {"tool": call.name, "arguments": call.arguments, "error": result.is_error}
+                | result.payload,
+            )
+            messages.append(Message(role=Role.TOOL, content=result.content, tool_call_id=call.id))
+
+        if ctx.finished is not None:
+            break
+
+    run.conversation = messages
+    outcome = (ctx.finished[0].value, ctx.finished[1]) if ctx.finished else None
+    return GoalStep(next_input=ctx.next_input, finished=outcome)
 
 
-def budget_exhausted(goal: Goal, runs: int, total_tokens: int) -> str | None:
-    """硬上限保底：模型可能永远判不达标，或目标本身不可达（D28）。"""
-    if runs >= goal.max_runs:
-        return f"已达 run 数上限（{goal.max_runs}）"
-    if total_tokens >= goal.max_total_tokens:
-        return f"已达 token 上限（{goal.max_total_tokens}）"
-    return None
+__all__ = [
+    "MAX_ROUNDS",
+    "GoalStep",
+    "advance_goal",
+    "plan_snapshot",
+    "sync_conversation",
+    "turn_record",
+]

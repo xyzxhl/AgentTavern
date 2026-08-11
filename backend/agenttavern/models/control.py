@@ -15,6 +15,7 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 from ..config import LIMITS
+from ..llm.types import Message
 
 # --------------------------------------------------------------------------
 # 控制维度（D42，四项）
@@ -154,14 +155,17 @@ class Goal(BaseModel):
     """硬上限保底——模型可能永远判不达标，或目标本身不可达。"""
 
     max_total_tokens: int = LIMITS.goal_manager.max_total_tokens
-    """硬上限保底（同上）。"""
+    """硬上限保底（同上）。
 
-    max_revisions: int = LIMITS.goal_manager.max_revisions
-    """最多重新规划几次（D141）。
-
-    「未完成或轻度偏离 → 重新规划」这条路本身没有出口：每次重规划都会给出
-    新的阶段，模型永远可以再拆一层。这里是止损，和上面两条一个性质。
+    **两条预算都可以在 goal 跑着的时候调大**——那就是"加预算继续"（D148）。
+    `description` 不行：对话是围着它建起来的，改了等于换了个目标。
     """
+
+    # `max_revisions` **已删除**（D148）。它当初的理由是「重新规划这条路没有出口，
+    # 模型永远可以再拆一层」。但重拆现在不是「又失败了一次」，是**脚手架跟着剧情
+    # 走**——subgoal 只是让模型先想清楚路径，不是要逐项打勾的执行契约。
+    # 留着它反而会在剧情正常波动几次之后误判 failed。止损交给上面两条预算：
+    # 重拆本身不花钱，跑 run 才花钱。
 
 
 class SubGoal(BaseModel):
@@ -172,30 +176,42 @@ class SubGoal(BaseModel):
 
 
 class GoalOutcome(StrEnum):
-    """全部阶段走完之后，goal 的三种去向（D141）。"""
+    """goal 的**终态，只有两种**（D148）。
+
+    `REPLAN` 不再是一种去向——**它是一个动作，不是结局**：任何一轮发现剩下的
+    阶段失效了，就地重拆即可。`DERAILED` 并进了 `FAILED`。
+
+    预算耗尽**不是终态**，是暂停（`GoalRun.paused`）：用户可以加预算接着跑。
+    """
 
     DONE = "done"
     """完成。交回控制权。"""
 
-    DERAILED = "derailed"
-    """完全偏离——剧情已经走到别处，再规划也回不来。同样交回控制权，
-    **但理由完全不同**，所以不能和「完成」并成一种：用户需要知道是哪一种。
-    """
+    FAILED = "failed"
+    """失败：**当前局面下拆不出任何能到达目标的路径**。
 
-    REPLAN = "replan"
-    """未完成或轻度偏离。基于当前状态重新规划阶段，继续跑。"""
+    判据要比「这一版计划没走通」重得多——那种情况该重拆。只有重拆也拆不出路时
+    才是 failed。同样交回控制权，但用户需要知道是哪一种：一个是达成了，
+    一个是这个目标已经不可能了，后续动作完全不同。
+    """
 
 
 class GoalPlan(BaseModel):
-    """把 goal 拆成的一串阶段（D141）。
+    """把 goal 拆成的一串阶段（D141/D148）。
 
-    **它是路径的函数，跟着节点走**（同 D48 的理由）：换一条分支，走到哪一步、
-    哪些阶段算达成了，都不一样。所以它存在 `Node` 上，不存在 session 上。
+    **subgoal 是脚手架，不是执行契约。** 它们存在的目的是逼模型在动手之前先想
+    清楚路径；某一条最终有没有原样实现并不要紧——剧情偏了就重拆。因此没有
+    「第几版」这种计数，也没有重拆次数上限。
+
+    但 `finish(done)` **要求全部标为达成**。这两条不矛盾，合起来才是要点：
+    **重拆随时可以，而宣布完成之前必须用「当前的」计划重核一遍**，不是照着
+    三轮前那份打勾。
+
+    **它挂在 session 上**（`GoalRun.plan`），不再挂节点。D141 让它跟着节点走是
+    为了分支隔离；goal 跑着的时候不允许切分支（D148），那个理由不成立了。
     """
 
     subgoals: list[SubGoal] = Field(default_factory=list)
-    revision: int = 1
-    """第几版规划。每重新规划一次加一，用来对着 `Goal.max_revisions` 止损。"""
 
     @property
     def current(self) -> SubGoal | None:
@@ -215,6 +231,62 @@ class GoalPlan(BaseModel):
             for i, s in enumerate(self.subgoals)
         ]
         return "\n".join(lines)
+
+
+class GoalRun(BaseModel):
+    """一次 goal 从创建到结束期间的**运行时状态**（D148）。
+
+    和 `SessionMeta.goal` 分开：那个是**用户配置**（目标是什么、给多少预算），
+    这个是**跑起来之后的东西**（对话、进度、花销）。混在一起的话，"用户改了什么"
+    和"系统跑出了什么"就分不开，而前者要禁改、后者每轮都在变。
+
+    **它挂在 session 上，不挂节点。** goal 跑着的时候不允许切分支，所以 D141 让
+    `GoalPlan` 跟着节点走的那个理由（分支隔离）不再成立。
+    """
+
+    conversation: list[Message] = Field(default_factory=list)
+    """goal_manager 的对话，**跨 run 持续到这个 goal 结束**。
+
+    静态前缀（任务说明 + 目标 + 节奏）在整个 goal 生命周期里不变，之后每轮只
+    追加一条「第 N 轮发生了什么」。**这才是维持对话真正买到的东西**——以前每次
+    都重发全量剧情梗概，梗概越来越长、前缀每轮失效。
+    """
+
+    plan: GoalPlan | None = None
+    """当前计划与进度。**权威在这里，不在对话里。**
+
+    对话是过程，这份是状态（同 `staged_delta` 的性质）。预算判断、UI 展示、
+    恢复时的重建都读它——从对话里反解析既慢又脆。
+    """
+
+    spent_runs: int = 0
+    spent_tokens: int = 0
+    """已经花掉的。**落盘**——它们以前是 `SessionRunner` 的实例字段，
+    进程重启就归零，于是 D28 那个用来兜住自主运行成本的上限实际上不生效。
+    """
+
+    paused: bool = False
+    paused_reason: str = ""
+    """停下了，但 goal 还在。两个来源：用户主动暂停，或预算耗尽。
+
+    **预算耗尽不是失败**（D148）：用户可以把上限调大接着跑，所以它是暂停而不是
+    终态。合成同一个状态是因为对用户而言它们是同一件事——停下了，要不要继续。
+    """
+
+    seen_leaf_id: str | None = None
+    """对话已经追加到哪个节点为止。运行期间靠它做增量追加。
+
+    恢复时**不靠它续，而是整份重建**：暂停期间用户可能自己跑了几轮、还可能切了
+    分支，而「以最终选择的分支为准」——增量追加撤不回来，重建才做得到。
+    """
+
+    def exhausted(self, goal: Goal) -> str | None:
+        """预算到顶了没有。到了返回一句人能读的理由，没到返回 ``None``。"""
+        if self.spent_runs >= goal.max_runs:
+            return f"已跑满 {goal.max_runs} 轮"
+        if self.spent_tokens >= goal.max_total_tokens:
+            return f"已用掉 {self.spent_tokens} token（上限 {goal.max_total_tokens}）"
+        return None
 
 
 class SessionMeta(BaseModel):

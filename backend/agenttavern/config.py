@@ -66,7 +66,6 @@ class _StateManager(BaseModel):
 class _GoalManager(BaseModel):
     max_runs: int = 50
     max_total_tokens: int = 1_000_000
-    max_revisions: int = 3
 
 
 class _Context(BaseModel):

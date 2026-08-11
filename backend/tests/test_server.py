@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from conftest import ScriptedLLM, text, tool
+from conftest import ScriptedLLM, text, tool, tools
 from fastapi.testclient import TestClient
 
 from agenttavern.config import Settings
@@ -352,18 +352,22 @@ def test_siblings_endpoint(client_for) -> None:
 
 
 def test_goal_drives_another_run_with_a_simulated_input(client_for) -> None:
-    """goal agent 在 run 末跑，未达标就开下一 run（D28）——**而且它替用户写输入**（D141）。
+    """goal_manager 在 run 末跑，未达标就开下一 run（D28）——**而且它替用户写输入**。
 
-    第一轮之后还没有阶段计划，所以那一次是**先拆阶段、紧接着推一步**——新计划的
-    第一条输入就在这一轮写好，下一轮直接能用。所以第二个 run 是有用户输入的，
-    只不过那条输入不是人打的。
+    第一轮之后还没有阶段计划，所以那一次是 `plan` + `advance` 一起调：新计划的
+    第一条输入就在这一轮写好，下一轮直接能用。所以第二个 run 是有输入的，
+    只不过那条不是人打的——它的 `source` 因此是 `simulated`（D148）。
     """
     llm = ScriptedLLM(
         *one_run(outline="第一轮。", prose="正文一。"),
-        text("- 他先松口\n- 两人摊开说"),  # 拆阶段
-        text("已达成：无\n输入：我把照片推过去。"),  # 核对 + 写输入
+        tools(
+            ("plan", {"subgoals": ["他先松口", "两人摊开说"]}),
+            ("advance", {"reached": [], "next_input": "我把照片推过去。"}),
+        ),
+        text("先推到这里。"),
         *one_run(outline="第二轮。", prose="正文二。"),
-        text("已达成：无\n输入：再问一句。"),
+        tool("advance", reached=[], next_input="再问一句。"),
+        text("接着推。"),
     )
     client = client_for(llm)
     session = Session(meta=SessionMeta(goal=Goal(description="写到摊牌", max_runs=2)))
@@ -376,26 +380,28 @@ def test_goal_drives_another_run_with_a_simulated_input(client_for) -> None:
         second = collect(ws, "run_finished")[-1]["node"]
 
     assert first["user_input"]["text"] == "开始"
-    # 第二轮没有人打字，输入是 goal agent 写的那条。
+    assert first["user_input"]["source"] == "user"
+    # 第二轮没有人打字，输入是 goal_manager 写的那条，**标注成模拟**。
     assert second["user_input"]["text"] == "我把照片推过去。"
+    assert second["user_input"]["source"] == "simulated"
 
-    # 阶段计划跟着节点走（D48）——第一轮之后就挂在第一个节点上。
-    # 从 REST 取而不是从事件取：`run_finished` 在 goal agent 之前就推出去了，
-    # 那时计划还没写上去。
-    path = client.get(f"/sessions/{session.id}").json()["path"]
-    assert [s["description"] for s in path[0]["goal_plan"]["subgoals"]] == [
-        "他先松口",
-        "两人摊开说",
-    ]
+    # 计划挂在 session 上（D148），不再挂节点——goal 跑着的时候不允许切分支，
+    # D141 让它跟着节点走的那个理由（分支隔离）不成立了。
+    run = client.get(f"/sessions/{session.id}").json()["session"]["goal_run"]
+    assert [s["description"] for s in run["plan"]["subgoals"]] == ["他先松口", "两人摊开说"]
+    assert run["spent_runs"] >= 1, "预算计数必须落盘——它以前在内存里，重启就归零"
 
 
 def test_a_finished_goal_says_which_way_it_ended(client_for) -> None:
-    """完成与完全偏离都交回控制权，**但用户必须知道是哪一种**（D141）。"""
+    """两种终态都交回控制权，**但用户必须知道是哪一种**（D141/D148）。"""
     llm = ScriptedLLM(
         *one_run(outline="第一轮。", prose="正文一。"),
-        text("- 唯一的一步"),  # 拆阶段
-        text("已达成：1\n输入：随便说一句。"),  # 核对——这一步就全达成了
-        text("逐条核对……\n完成"),  # 判去向
+        tools(
+            ("plan", {"subgoals": ["唯一的一步"]}),
+            ("advance", {"reached": [1], "next_input": ""}),
+            ("finish", {"outcome": "done", "reason": "逐条核对：那一步已兑现"}),
+        ),
+        text("完了。"),
     )
     client = client_for(llm)
     session = Session(meta=SessionMeta(goal=Goal(description="写到摊牌", max_runs=5)))
@@ -408,8 +414,77 @@ def test_a_finished_goal_says_which_way_it_ended(client_for) -> None:
         finished = collect(ws, "goal_finished")[-1]
 
     assert finished["outcome"] == "done"
-    # 目标清掉之后不再自动续跑——脚本里也没有第三轮可跑了。
-    assert client.get(f"/sessions/{session.id}").json()["session"]["meta"]["goal"] is None
+    assert "已兑现" in finished["reason"]
+    # goal 与它的运行时状态一并清掉——**不留历史 goal**（D148）。
+    body = client.get(f"/sessions/{session.id}").json()["session"]
+    assert body["meta"]["goal"] is None
+    assert body["goal_run"] is None
+
+
+def test_a_spent_budget_pauses_instead_of_finishing(client_for) -> None:
+    """**预算耗尽是暂停，不是失败**（D148）：用户可以把上限调大接着跑。
+
+    所以推出去的是 `goal_paused` 而不是 `goal_finished`，而且 goal 还在
+    session 上——对话原样留着，恢复时不用重新判一遍。
+    """
+    llm = ScriptedLLM(
+        *one_run(outline="第一轮。", prose="正文一。"),
+        tools(
+            ("plan", {"subgoals": ["甲", "乙"]}),
+            ("advance", {"reached": [], "next_input": "再走一步。"}),
+        ),
+        text("先推到这里。"),
+    )
+    client = client_for(llm)
+    session = Session(meta=SessionMeta(goal=Goal(description="写到摊牌", max_runs=1)))
+    client.post("/sessions", json=session.model_dump(mode="json"))
+
+    with client.websocket_connect(f"/sessions/{session.id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "开始"}))
+        collect(ws, "run_finished")
+        paused = collect(ws, "goal_paused")[-1]
+
+    assert "1 轮" in paused["reason"]
+    body = client.get(f"/sessions/{session.id}").json()["session"]
+    assert body["meta"]["goal"] is not None, "暂停不是结束，目标还在"
+    assert body["goal_run"]["paused"] is True
+    assert body["goal_run"]["conversation"], "对话原样留着，恢复时不用重新判"
+
+
+def test_raising_the_budget_resumes_a_paused_goal(client_for) -> None:
+    """**这就是"加预算接着跑"**（D148）。
+
+    目标本身禁改（对话是围着它建的），预算恰恰要能在跑到一半时调大——
+    两者可改的时机相反，所以是两条不同的消息。
+    """
+    llm = ScriptedLLM(
+        *one_run(outline="第一轮。", prose="正文一。"),
+        tools(
+            ("plan", {"subgoals": ["甲", "乙"]}),
+            ("advance", {"reached": [], "next_input": "再走一步。"}),
+        ),
+        text("先推到这里。"),
+    )
+    client = client_for(llm)
+    session = Session(meta=SessionMeta(goal=Goal(description="写到摊牌", max_runs=1)))
+    client.post("/sessions", json=session.model_dump(mode="json"))
+
+    with client.websocket_connect(f"/sessions/{session.id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "开始"}))
+        collect(ws, "run_finished")
+        collect(ws, "goal_paused")
+
+        ws.send_text(json.dumps({"type": "set_goal_budget", "max_runs": 9}))
+        # 目标定了就不能改——换目标要先放弃。
+        ws.send_text(json.dumps({"type": "set_goal", "description": "换一个"}))
+        assert "已经有一个目标在跑" in collect(ws, "error")[-1]["message"]
+
+    body = client.get(f"/sessions/{session.id}").json()["session"]
+    assert body["meta"]["goal"]["max_runs"] == 9
+    assert body["meta"]["goal"]["description"] == "写到摊牌"
+    assert body["goal_run"]["paused"] is False, "预算够了就该解除暂停"
 
 
 def test_no_goal_means_no_autocontinue(client_for) -> None:

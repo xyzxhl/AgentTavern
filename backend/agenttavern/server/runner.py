@@ -16,15 +16,16 @@ import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from ..agents import budget_exhausted, final_verdict, plan_along, plan_subgoals, take_step
+from ..agents import advance_goal, sync_conversation
 from ..llm import LLMGateway
-from ..models import ControlOverride, GoalOutcome, GoalPlan, UserInput, new_id
+from ..models import ControlOverride, GoalRun, InputSource, UserInput, new_id
 from ..orchestration import execute_run
 from ..storage import SessionRepository
 from ..tools import Inbox
 from ..tracing import Tracer
 from .protocol import (
     GoalFinished,
+    GoalPaused,
     Question,
     QueueStatus,
     RunFailed,
@@ -83,9 +84,9 @@ class SessionRunner:
         self._out: asyncio.Queue[ServerMessage] = asyncio.Queue()
         self._sender_task: asyncio.Task[None] | None = None
 
-        # goal 预算保底（D28）。进程内计数——重启会重置，v1 接受这个简化。
-        self._goal_runs = 0
-        self._goal_tokens = 0
+        # goal 的预算计数**已经落盘**了（`GoalRun.spent_*`，D148）。它以前是这里的
+        # 两个实例字段——进程重启就归零，于是 D28 那个用来兜住自主运行成本的上限
+        # 实际上从来没生效过。
 
         self._goal_input: str | None = None
         """goal_manager 替用户写的下一条输入（D141）。
@@ -220,16 +221,14 @@ class SessionRunner:
     def _should_autocontinue(self) -> bool:
         if not self._autocontinue_armed:
             return False
-        goal = self._repo.load_session().meta.goal
-        if goal is None:
+        session = self._repo.load_session()
+        goal, run = session.meta.goal, session.goal_run
+        if goal is None or run is None or run.paused:
             return False
-        return budget_exhausted(goal, self._goal_runs, self._goal_tokens) is None
+        return run.exhausted(goal) is None
 
     async def _execute(self, item: _Queued | None) -> None:
         session = self._repo.load_session()
-
-        # 无论成败都记一次——否则持续失败的 run 会让 goal 驱动的自动续跑无限空转。
-        self._goal_runs += 1
 
         # 自动续跑时用 goal_manager 写的那条输入（D141）。**用完即清**：它只对紧接着
         # 的这一轮有效，留着会在用户插话之后被错误地重放。真的用户输入优先（D27），
@@ -244,10 +243,17 @@ class SessionRunner:
                 self._gateway,
                 # 不传 registry：工具面依赖能力开关与 worldinfo 模式，
                 # 两者都可能被用户改，必须每轮重新组装。
+                # **来源要标注**（D148）：goal_manager 靠它分辨"剧情偏了是我推错了"
+                # 和"用户主动把剧情带走了"。director 不读这个字段——两种输入在它
+                # 眼里必须一模一样，否则它会对模拟输入区别对待。
                 user_input=(
                     UserInput(text=item.text)
                     if item
-                    else (UserInput(text=simulated) if simulated else None)
+                    else (
+                        UserInput(text=simulated, source=InputSource.SIMULATED)
+                        if simulated
+                        else None
+                    )
                 ),
                 # **父节点只有一个来源：出队那一刻的活跃叶**（D147）。
                 # 普通输入挂在它下面（延长），重生成挂在它的父下面（开兄弟）。
@@ -266,7 +272,6 @@ class SessionRunner:
             self._emit(RunFailed(reason=str(exc)))
             return
 
-        self._goal_tokens += outcome.usage.tokens_in + outcome.usage.tokens_out
         # 一轮正常结束——这才是「检查是否达标、未达标则开启下一轮」的触发点。
         self._autocontinue_armed = True
 
@@ -287,15 +292,20 @@ class SessionRunner:
         await self._check_goal(outcome.node.id)
 
     async def _check_goal(self, leaf_id: str) -> None:
-        """goal_manager 在 **run 末**跑（D28/D40/D141）——与控制权（轮内）作用点不同。
+        """goal_manager 在 **run 末**跑（D28/D40/D141/D148）——与控制权（轮内）
+        作用点不同。
 
-        一轮之后它做三件事里的一到两件：核对阶段进度并写出下一条输入；若阶段全部
-        走完，再判目标的去向（完成 / 完全偏离 / 重新规划）。**它写的那条输入存在
-        `_goal_input` 里，下一次自动续跑拿去用**——这就是"模拟用户输入"落地的地方。
+        它做的事都在那三个工具里（`plan` / `advance` / `finish`），这里只负责
+        搭台：把这一轮的记录追加进对话、跑一轮、把结果记回 session。
+        **它写的那条输入存在 `_goal_input` 里，下一次自动续跑拿去用**——
+        这就是"模拟用户输入"落地的地方。
         """
         session = self._repo.load_session()
         goal = session.meta.goal
         if goal is None:
+            return
+        run = session.goal_run or GoalRun()
+        if run.paused:
             return
 
         # goal_manager 是真实的模型调用，因此它**必须和 run 一样可见、一样计入预算**：
@@ -307,72 +317,64 @@ class SessionRunner:
             lambda event: self._emit(Trace(event=event)),
             persist=session.capabilities.trace,
         )
-        path = self._repo.path_to(leaf_id)
+
         # 事件密度是 goal_manager 唯一读的控制维度：它决定阶段拆多细、
         # 一条输入推多远（D93 那条投影的第三面）。
-        density = session.control.expansion_density
-        sid = session.id
+        sync_conversation(
+            goal,
+            run,
+            self._repo.path_to(leaf_id),
+            density=session.control.expansion_density,
+        )
+        step = await advance_goal(
+            self._gateway,
+            tracer,
+            goal,
+            run,
+            density=session.control.expansion_density,
+            user_id=session.id,
+        )
+        self._goal_input = step.next_input
 
-        async def replan(previous: GoalPlan | None) -> GoalPlan:
-            return await plan_subgoals(
-                self._gateway,
-                tracer,
-                goal,
-                path,
-                previous=previous,
-                density=density,
-                user_id=sid,
-            )
+        # **无论成败都记一次 run**——否则持续失败的 run 会让自动续跑无限空转。
+        run.spent_runs += 1
+        run.spent_tokens += tracer.usage.tokens_in + tracer.usage.tokens_out
 
-        async def step_on(current: GoalPlan) -> GoalPlan:
-            """核对进度并写下一条输入。**每次换计划之后都要走一遍**——
-            否则那一轮的自动续跑会没有输入，等于白跑（D141）。
-            """
-            step = await take_step(
-                self._gateway, tracer, goal, path, current, density=density, user_id=sid
-            )
-            self._goal_input = step.user_text
-            return step.plan
+        if step.finished is not None:
+            self._finish_goal(*step.finished)
+            return
 
-        # 还没有计划就先拆，紧接着照常推一步：新计划的第一条输入就在这一轮写好，
-        # 下一轮直接能用。
-        plan = await step_on(plan_along(path) or await replan(None))
+        # 预算到顶**不是失败**，是暂停：用户可以把上限调大接着跑（D148）。
+        # 对话原样留着，所以恢复时不用重新判一遍。
+        spent = run.exhausted(goal)
+        if spent is not None:
+            run.paused, run.paused_reason = True, spent
 
-        if plan.all_done:
-            outcome, reason = await final_verdict(
-                self._gateway, tracer, goal, path, plan, density=density, user_id=sid
-            )
-            if outcome is GoalOutcome.REPLAN and plan.revision >= goal.max_revisions:
-                # 重新规划这条路本身没有出口——每次重规划都会给出新的阶段。
-                # 到顶就当作走不通，交回控制权（D141）。
-                outcome = GoalOutcome.DERAILED
-                reason = f"已达重规划上限（{goal.max_revisions}）"
+        self._save_goal_run(run)
+        if spent is not None:
+            self._emit(GoalPaused(reason=spent))
 
-            if outcome is GoalOutcome.REPLAN:
-                # 刚才那条输入是冲着旧计划写的，旧计划已经走完了——换新的。
-                plan = await step_on(await replan(plan))
-            else:
-                self._finish_goal(outcome, reason)
+    def _save_goal_run(self, run: GoalRun) -> None:
+        """写回运行时状态。**每次都重新载入 session**——判定期间可能有 REST
+        请求改过它（元操作与生成并行，D24）。
+        """
+        session = self._repo.load_session()
+        session.goal_run = run
+        self._repo.save_session(session)
 
-        self._goal_tokens += tracer.usage.tokens_in + tracer.usage.tokens_out
+    def _finish_goal(self, outcome: str, reason: str) -> None:
+        """交回控制权。**两种终态都走这里，但用户必须知道是哪一种**：
+        一个是达成了，一个是这个目标已经不可能了，后续动作完全不同（D148）。
 
-        # 计划存在**这一轮的节点**上，跟着路径走（D48）——换分支自然拿到那条
-        # 分支自己的进度，不必额外做隔离。
-        node = self._repo.load_node(leaf_id)
-        node.goal_plan = plan
-        self._repo.save_node(node)
-
-    def _finish_goal(self, outcome: GoalOutcome, reason: str) -> None:
-        """交回控制权。**完成与完全偏离都走这里，但用户必须知道是哪一种。**"""
-        self._goal_runs = 0
-        self._goal_tokens = 0
+        goal 与它的运行时状态一并清掉——**不留历史 goal**。
+        """
         self._goal_input = None
         self._autocontinue_armed = False
-        # 重新载入：判定期间可能有 REST 请求改过 session（元操作与生成并行，D24）。
         session = self._repo.load_session()
         session.meta.goal = None
+        session.goal_run = None
         self._repo.save_session(session)
-        self._emit(GoalFinished(outcome=outcome.value, reason=reason))
+        self._emit(GoalFinished(outcome=outcome, reason=reason))
 
     # -- ask_question -------------------------------------------------------
 

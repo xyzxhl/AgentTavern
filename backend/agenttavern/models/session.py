@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
-from .control import Capabilities, ControlDimensions, SessionMeta, SessionModes
+from .control import Capabilities, ControlDimensions, GoalRun, SessionMeta, SessionModes
 from .node import new_id
 
 
@@ -27,3 +27,13 @@ class Session(BaseModel):
 
     active_leaf_id: str | None = None
     """活跃路径的叶节点。路径 = 根 → 此节点的一条链；state 沿该路径重放（D48）。"""
+
+    goal_run: GoalRun | None = None
+    """当前 goal 的运行时状态（D148）：对话、计划与进度、花销、暂停与否。
+
+    **和 `meta.goal` 分开**：那个是用户配置（目标是什么、给多少预算），这个是
+    跑起来之后的东西。混在一起的话"用户改了什么"和"系统跑出了什么"就分不开，
+    而前者要禁改、后者每轮都在变。
+
+    goal 结束（`done` / `failed`）时连同 `meta.goal` 一起清掉——**不留历史 goal**。
+    """
