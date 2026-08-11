@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..models import DirectorDraft, Node, Session, StateDelta, TraceEvent, WorldState
+from ..models import Node, RunDraft, Session, StateDelta, TraceEvent, WorldState
 from ..models.worldbook import WorldbookEntry
 from .jsonfile import append_jsonl, read_jsonl, read_model, read_model_or_none, write_model
 
@@ -55,13 +55,13 @@ class SessionRepository:
     def draft_path(self) -> Path:
         return self.dir / "draft.json"
 
-    def load_draft(self) -> DirectorDraft | None:
+    def load_draft(self) -> RunDraft | None:
         """**没有草稿 = 文件不存在。** 不能用某个字段的空值表示，因为
         `parent_id=None` 本身是合法的（根节点）——同 D103 那个坑。
         """
-        return read_model_or_none(self.draft_path, DirectorDraft)
+        return read_model_or_none(self.draft_path, RunDraft)
 
-    def save_draft(self, draft: DirectorDraft) -> None:
+    def save_draft(self, draft: RunDraft) -> None:
         write_model(self.draft_path, draft)
 
     def clear_draft(self) -> None:

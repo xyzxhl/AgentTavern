@@ -1,10 +1,11 @@
 """完整的一个 run：director → writer → 校验 → 落节点。"""
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
-from conftest import CancelWriter, ScriptedLLM, text, tool
+from conftest import STATE_MARK, CancelWriter, ScriptedLLM, text, tool
 
 from agenttavern.agents import (
     budget_exhausted,
@@ -22,6 +23,7 @@ from agenttavern.models import (
     GoalPlan,
     InputHandling,
     Node,
+    RunStage,
     RunStatus,
     Session,
     SessionMeta,
@@ -165,7 +167,7 @@ async def test_control_override_applies_for_this_run_only(tmp_path: Path) -> Non
     assert all(m["role"] != "system" for m in sent if directive in (m["content"] or ""))
 
 
-# -- 打断（D60） -------------------------------------------------------------
+# -- 打断：哪一段被掐掉，哪一段就作废（D142） ----------------------------------
 
 
 async def test_interrupt_during_director_lands_no_node(tmp_path: Path) -> None:
@@ -190,24 +192,113 @@ async def test_interrupt_during_director_lands_no_node(tmp_path: Path) -> None:
     # 用户输入是**唯一不可再生的东西**，丢了之后用户的下一句话就没有指代了。
     draft = repo.load_draft()
     assert draft is not None
+    assert draft.stage is RunStage.DIRECTOR
     assert "我推开门" in str(draft.messages)
 
 
-async def test_interrupt_during_writer_keeps_the_run(tmp_path: Path) -> None:
-    """writer 阶段被打断：保留已产出的部分，state 增量照常提交——那段剧情
-    确实发生了。「话说了一半被打断」是真实感的来源，不是需要清理的垃圾。
+async def test_interrupt_during_writer_drops_the_half_written_prose(tmp_path: Path) -> None:
+    """**半截正文不留**（D142，推翻 D60 的后半句）。
+
+    D60 原来说「保留已生成的正文片段——那段剧情确实发生了」。那是把一个失败的
+    阶段当成了产出：下一轮会接着那半句往下写，而用户按停止恰恰是因为不想要它。
+    细纲留着，它是上游、已经写完了。
     """
-    llm = CancelWriter(
-        tool("submit_outline", outline="她推开门。"),
-        state=dict(set={"地点": "客厅"}),
-    )
+    llm = CancelWriter(tool("submit_outline", outline="她推开门。"))
     repo, session, gw, reg = setup(tmp_path, llm)
 
-    outcome = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
+    with pytest.raises(asyncio.CancelledError):
+        await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
 
-    assert outcome.node.status is RunStatus.PARTIAL
-    assert outcome.node.outline == "她推开门。"
-    assert outcome.node.prose == ""
+    assert repo.all_nodes() == {}, "阶段失败就不落节点"
+
+    draft = repo.load_draft()
+    assert draft is not None
+    assert draft.stage is RunStage.WRITER
+    assert draft.outline == "她推开门。", "细纲是上游，已经完成了"
+    assert draft.prose == ""
+    assert draft.user_input is not None and draft.user_input.text == "我推开门"
+
+
+async def test_an_empty_input_reruns_only_the_writer(tmp_path: Path) -> None:
+    """空输入 = 「刚才那步没跑完，接着跑」——细纲不重写，director 根本不启动。"""
+    repo, session, gw, reg = setup(
+        tmp_path, CancelWriter(tool("submit_outline", outline="她推开门。"))
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
+
+    resume = ScriptedLLM(text("门轴响了一声。"), state=dict(set={"地点": "客厅"}))
+    outcome = await execute_run(repo, repo.load_session(), resume.gateway(), reg)
+
+    assert outcome.node.outline == "她推开门。", "细纲原样用，没有重写"
+    assert outcome.node.prose == "门轴响了一声。"
+    assert outcome.node.user_input is not None
+    assert outcome.node.user_input.text == "我推开门", "被打断那一轮的输入不可再生"
+    assert repo.state_at(outcome.node.id).values["地点"] == "客厅"
+    assert repo.load_draft() is None
+
+    # director 一次都没被叫起来——它的提示词特征不在任何一次请求里。
+    assert not any("输出契约" in str(r["messages"]) for r in resume.requests)
+
+
+async def test_a_new_input_goes_back_to_the_director(tmp_path: Path) -> None:
+    """**非空输入 → 回 director**，旧细纲作为一条 context 摆给它看。
+
+    判据是生成内容的依赖关系：用户又说了话，细纲就可能要改，那正文和 state
+    都不作数了。
+    """
+    repo, session, gw, reg = setup(
+        tmp_path, CancelWriter(tool("submit_outline", outline="她推开门。"))
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
+
+    resume = ScriptedLLM(
+        tool("submit_outline", outline="她停在门口，没有推。"),
+        text("她的手停在门板上。"),
+    )
+    outcome = await execute_run(
+        repo,
+        repo.load_session(),
+        resume.gateway(),
+        reg,
+        user_input=UserInput(text="等等，她其实没推开"),
+    )
+
+    assert outcome.node.outline == "她停在门口，没有推。"
+
+    context = str(resume.messages_of(0))
+    assert "上一次的推演" in context, "旧细纲要摆出来，不能让它假装没写过"
+    assert "她推开门。" in context
+    assert "我推开门" in context, "当时的输入也要给，否则旧细纲没有由来"
+    assert "等等，她其实没推开" in context
+
+
+async def test_interrupt_during_state_keeps_outline_and_prose(tmp_path: Path) -> None:
+    """state 阶段被打断：上游两样都完成了，草稿一并带上，空输入时正文不重写。"""
+
+    class Stopped(ScriptedLLM):
+        def _handle(self, request):  # type: ignore[no-untyped-def]
+            if STATE_MARK in json.loads(request.content)["messages"][0].get("content", ""):
+                raise asyncio.CancelledError
+            return super()._handle(request)
+
+    llm = Stopped(tool("submit_outline", outline="她推开门。"), text("门轴响了。"))
+    repo, session, gw, reg = setup(tmp_path, llm)
+
+    with pytest.raises(asyncio.CancelledError):
+        await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
+
+    draft = repo.load_draft()
+    assert draft is not None
+    assert draft.stage is RunStage.STATE
+    assert draft.outline == "她推开门。"
+    assert draft.prose == "门轴响了。"
+
+    resume = ScriptedLLM(state=dict(set={"地点": "客厅"}))
+    outcome = await execute_run(repo, repo.load_session(), resume.gateway(), reg)
+
+    assert outcome.node.prose == "门轴响了。", "正文是上游，不该重写"
     assert repo.state_at(outcome.node.id).values["地点"] == "客厅"
 
 

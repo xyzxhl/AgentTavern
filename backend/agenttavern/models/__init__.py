@@ -13,7 +13,7 @@ from .control import (
     SubGoal,
     SummarizeMode,
 )
-from .draft import DirectorDraft, trim_dangling_tool_call
+from .draft import RunDraft, RunStage, trim_dangling_tool_call
 from .node import Node, RunStatus, UserInput, new_id
 from .session import Session
 from .state import StateDelta, WorldState, replay
@@ -26,7 +26,6 @@ __all__ = [
     "Capabilities",
     "ControlDimensions",
     "ControlOverride",
-    "DirectorDraft",
     "ExpansionDensity",
     "Goal",
     "GoalOutcome",
@@ -34,6 +33,8 @@ __all__ = [
     "InputHandling",
     "ModelAuthority",
     "Node",
+    "RunDraft",
+    "RunStage",
     "RunStatus",
     "Session",
     "SessionMeta",

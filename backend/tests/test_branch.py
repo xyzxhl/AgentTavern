@@ -17,7 +17,7 @@ import pytest
 from conftest import CancelWriter, ScriptedLLM, text, tool, tools
 
 from agenttavern.llm import Message, Role, ToolCall
-from agenttavern.models import RunStatus, Session, UserInput, trim_dangling_tool_call
+from agenttavern.models import RunStage, Session, UserInput, trim_dangling_tool_call
 from agenttavern.orchestration import execute_run
 from agenttavern.storage import Store
 from agenttavern.tools import Inbox, ToolRegistry
@@ -317,34 +317,32 @@ async def test_a_draft_from_another_branch_is_dropped(tmp_path: Path) -> None:
     assert repo.load_draft() is None
 
 
-async def test_a_half_written_turn_is_carried_forward(tmp_path: Path) -> None:
-    """writer 阶段被打断：细纲已提交、增量已落盘，那段剧情确实发生了（D60）。
+async def test_a_half_written_turn_becomes_a_draft_not_a_node(tmp_path: Path) -> None:
+    """writer 阶段被打断：**细纲存进草稿，节点不落**（D142，推翻 D60 的后半句）。
 
-    这一侧不需要草稿——**已完成的内容已经是一个节点了**，下一轮自然接着它走。
+    这条以前测的是反面（保留正文片段、落一个 PARTIAL 节点）。改掉的理由是
+    半截正文不是产出而是一个失败的阶段：下一轮会接着那半句往下写，而用户按
+    停止恰恰是因为不想要它。
     """
-    llm = CancelWriter(
-        tool("submit_outline", outline="她话说到一半，停住了。"),
-        state=_state("地点", "里屋门口"),
-    )
+    llm = CancelWriter(tool("submit_outline", outline="她话说到一半，停住了。"))
     repo, session, gw, reg = _setup(tmp_path, llm)
-    partial = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我走过去"))
 
-    assert partial.node.status is RunStatus.PARTIAL
-    assert repo.load_draft() is None, "细纲已提交，不该再留草稿"
+    with pytest.raises(asyncio.CancelledError):
+        await execute_run(repo, session, gw, reg, user_input=UserInput(text="我走过去"))
 
-    next_llm = ScriptedLLM(*_turn("她把话说完了。", "下一轮正文"), state=_state("地点", "里屋"))
-    following = await execute_run(
-        repo,
-        repo.load_session(),
-        next_llm.gateway(),
-        reg,
-        user_input=UserInput(text="接着说"),
-        parent_id=partial.node.id,
-    )
+    assert repo.all_nodes() == {}
+    draft = repo.load_draft()
+    assert draft is not None and draft.stage is RunStage.WRITER
 
-    context = str(next_llm.messages_of(0))
-    assert "她话说到一半，停住了。" in context
+    # 空输入：只重跑 writer，细纲原样用，仍然是**同一个节点**。
+    next_llm = ScriptedLLM(text("她把话说完了。"), state=_state("地点", "里屋"))
+    following = await execute_run(repo, repo.load_session(), next_llm.gateway(), reg)
+
+    assert len(repo.all_nodes()) == 1, "一次打断 + 一次续跑 = 一个节点"
+    assert following.node.outline == "她话说到一半，停住了。"
+    assert following.node.prose == "她把话说完了。"
     assert repo.state_at(following.node.id).values["地点"] == "里屋"
+    assert repo.load_draft() is None
 
 
 # -- 引导与打断：单位是一次操作，不是一轮（D119） --------------------------------

@@ -31,12 +31,10 @@ def new_id(prefix: str) -> str:
 class RunStatus(StrEnum):
     COMPLETE = "complete"
 
-    PARTIAL = "partial"
-    """writer 阶段被打断——已生成的正文片段被保留，state 增量照常提交（D60）。
-
-    保留而非丢弃，是因为那片段是有效内容："话说了一半被打断"在 RP 里是真实感的
-    来源，不是需要清理的垃圾。
-    """
+    # `PARTIAL`（writer 阶段被打断，保留正文片段）**已删除**（D142）。
+    # 留半截正文看似省事，实则是把一个失败的阶段当成了产出：下一轮会接着那半句
+    # 往下写，而用户按停止恰恰是因为不想要那半句。现在打断即该阶段失败，
+    # 已完成的上游产物存进草稿等续跑，节点根本不落。
 
     FAILED = "failed"
 
@@ -128,7 +126,11 @@ class Node(BaseModel):
     """
 
     state_delta: StateDelta = Field(default_factory=StateDelta)
-    """由 director 通过 ``state_write`` 提交（D55，唯一写者）。"""
+    """由 state_manager 通过 ``state_write`` 提交（D143 起；此前是 director，D55）。
+
+    **唯一写者仍然只有一个**，只是换了人：状态维护后置到 writer 之后，
+    记的人因此看得见这一轮最终写出来的正文。
+    """
 
     goal_plan: GoalPlan | None = None
     """goal_manager 在这一轮之后留下的阶段计划（D141）。

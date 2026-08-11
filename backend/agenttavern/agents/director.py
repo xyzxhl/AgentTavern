@@ -22,7 +22,8 @@ from typing import TypeVar
 from ..llm import Message, Role, Usage
 from ..models import (
     Actor,
-    DirectorDraft,
+    RunDraft,
+    RunStage,
     TraceEventType,
     UserInput,
     trim_dangling_tool_call,
@@ -73,7 +74,8 @@ async def run_director(
     tracer: Tracer,
     user_input: UserInput | None,
     *,
-    resume: DirectorDraft | None = None,
+    resume: RunDraft | None = None,
+    previous_attempt: str = "",
     max_rounds: int = MAX_ROUNDS,
     soft_rounds: int = SOFT_ROUNDS,
 ) -> DirectorResult:
@@ -109,6 +111,10 @@ async def run_director(
         worldinfo=ctx.repo.worldbook(),
         # 工具面的索引由注册表自己渲染——YAML 只决定它出现在哪（D140）。
         tools=registry.render(),
+        # **上一次没写完的那一轮**（D142）。writer / state 阶段被打断、而用户又
+        # 说了新的话时，这一轮从头重跑 director，把旧细纲摆给它看：
+        # 「你上次写的是这个，用户又说了话，判断要不要改」。平时是空的，整节不出现。
+        previous_attempt=previous_attempt,
     )
     messages = prompt.messages
 
@@ -227,7 +233,7 @@ async def run_director(
     except asyncio.CancelledError:
         # **挂起，不作废**（D118）。已经查过的资料、已经暂存的增量、已经想到
         # 一半的推演都留着，等下一条输入把它接下去。
-        _save_draft(ctx, messages, turn_start, round_index)
+        _save_draft(ctx, messages, turn_start, round_index, user_input)
         raise
 
     raise DirectorFailed(f"director 在 {max_rounds} 轮内没有提交细纲")
@@ -291,10 +297,25 @@ def _boundary(
 
 
 def _save_draft(
-    ctx: RunContext, messages: list[Message], turn_start: int, round_index: int
+    ctx: RunContext,
+    messages: list[Message],
+    turn_start: int,
+    round_index: int,
+    user_input: UserInput | None,
 ) -> None:
+    """挂起这一段推演。**草稿由这里写，不由编排层写**——只有这里知道该从哪儿截：
+    尾部那个没收到结果的工具调用必须一起丢掉，否则续跑时端点会拒绝整份请求。
+    """
     kept = trim_dangling_tool_call(turn_messages(messages, turn_start))
-    ctx.repo.save_draft(DirectorDraft(parent_id=ctx.parent_id, messages=kept, rounds=round_index))
+    ctx.repo.save_draft(
+        RunDraft(
+            parent_id=ctx.parent_id,
+            stage=RunStage.DIRECTOR,
+            user_input=user_input,
+            messages=kept,
+            rounds=round_index,
+        )
+    )
 
 
 def _push(messages: list[Message], body: str) -> None:

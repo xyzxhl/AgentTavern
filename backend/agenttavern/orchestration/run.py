@@ -13,19 +13,22 @@ import asyncio
 import contextlib
 from dataclasses import dataclass, field
 
-from ..agents.director import DirectorFailed, run_director
+from ..agents.director import DirectorFailed, DirectorResult, run_director
 from ..agents.postrun import ask_segment_cut
 from ..agents.replay import without_reasoning
 from ..agents.state_manager import run_state_manager
 from ..agents.summarizer import MAX_SEGMENT_RUNS, SUMMARY_MAX_CHARS, summarize_text
 from ..agents.writer import run_writer
-from ..llm import LLMGateway, Usage
+from ..llm import LLMGateway, Message, Usage
 from ..models import (
     Actor,
     ControlOverride,
     Node,
+    RunDraft,
+    RunStage,
     RunStatus,
     Session,
+    StateDelta,
     SummarizeMode,
     TraceEventType,
     UserInput,
@@ -69,12 +72,14 @@ async def execute_run(
     if registry is None:
         registry = ToolRegistry.for_session(session.capabilities, repo.worldbook())
 
-    # **打断是挂起**（D118）：上一次被截断的推演在这里被接回来。
+    # **打断是挂起**（D118）：上一次被截断的那一段在这里被接回来。
     # 认领的条件是父节点一致——不一致说明用户已经切到别的分支去了，接不上（D48）。
     draft = repo.load_draft()
     if draft is not None and draft.parent_id != parent_id:
         repo.clear_draft()
         draft = None
+
+    stage = _resume_point(draft, user_input)
 
     ctx = RunContext(
         run_id=run_id,
@@ -84,59 +89,78 @@ async def execute_run(
         parent_id=parent_id,
         ask_user=ask_user,
         inbox=inbox,
+        # state 阶段被打断时，已经写下的那几笔是**已经完成的动作**，不必重来（D118）。
+        staged_delta=draft.staged_delta if draft and stage is RunStage.STATE else StateDelta(),
     )
 
     tracer.emit(
         TraceEventType.RUN_STARTED,
         Actor.ORCHESTRATOR,
-        "开始新的一轮",
+        "开始新的一轮" if draft is None else f"从「{stage.value}」接着跑",
         {
             "parent": parent_id,
             "control": control.model_dump(mode="json"),
             "resumed": draft is not None,
+            "stage": stage.value,
         },
     )
 
-    if inbox is not None:
-        inbox.accepting = True
-    try:
-        director = await run_director(ctx, registry, tracer, user_input, resume=draft)
-    except asyncio.CancelledError:
-        # 细纲还没成型，所以不落节点——但**推演本身留着**，存成草稿等下一条输入
-        # 接下去（D118）。草稿由 `run_director` 在同一处截断并写入，因为要在那里
-        # 才知道该从哪里截：尾部那个没收到结果的工具调用必须一起丢掉。
-        tracer.emit(
-            TraceEventType.RUN_INTERRUPTED,
-            Actor.ORCHESTRATOR,
-            "推演阶段被打断，已挂起等待续跑",
-        )
-        raise
-    except DirectorFailed as exc:
-        tracer.emit(TraceEventType.RUN_FAILED, Actor.ORCHESTRATOR, "推演失败", {"error": str(exc)})
-        raise
-    finally:
-        # 出了 tool loop 就没有操作边界了，信箱**必须关掉**——否则写正文时
-        # 按下的停止会进一个没人读的信箱，看起来像按钮坏了。
+    outline = draft.outline if draft is not None else ""
+    prose = draft.prose if draft is not None else ""
+    deviation = draft.deviation if draft is not None else None
+    turn_messages: list[Message] = []
+    # 被打断那一轮的输入是**唯一不可再生的东西**，续跑时它顶在前面。
+    turn_input = (draft.user_input if draft is not None else None) or user_input
+    # 从 writer / state 阶段续跑时**这一轮根本没有 director**，所以它是可空的。
+    director: DirectorResult | None = None
+
+    if stage is RunStage.DIRECTOR:
         if inbox is not None:
-            inbox.accepting = False
+            inbox.accepting = True
+        try:
+            director = await run_director(
+                ctx,
+                registry,
+                tracer,
+                user_input,
+                # 只有 director 阶段的草稿才接得下去：它存着这一轮查过的资料。
+                # writer / state 阶段的草稿走的是**重跑**，那些消息不留（D142）。
+                resume=draft if draft is not None and draft.stage is RunStage.DIRECTOR else None,
+                previous_attempt=_previous_attempt(draft),
+            )
+        except asyncio.CancelledError:
+            # 细纲还没成型，所以不落节点——但**推演本身留着**，存成草稿等下一条
+            # 输入接下去。草稿由 `run_director` 在同一处截断并写入，因为要在那里
+            # 才知道该从哪里截：尾部那个没收到结果的工具调用必须一起丢掉。
+            tracer.emit(
+                TraceEventType.RUN_INTERRUPTED, Actor.ORCHESTRATOR, "推演阶段被打断，已挂起"
+            )
+            raise
+        except DirectorFailed as exc:
+            tracer.emit(
+                TraceEventType.RUN_FAILED, Actor.ORCHESTRATOR, "推演失败", {"error": str(exc)}
+            )
+            raise
+        finally:
+            # 出了 tool loop 就没有操作边界了，信箱**必须关掉**——否则写正文时
+            # 按下的停止会进一个没人读的信箱，看起来像按钮坏了。
+            if inbox is not None:
+                inbox.accepting = False
 
-    status = RunStatus.COMPLETE
-    prose = ""
-    deviation: str | None = None
+        outline, prose, deviation = director.outline, "", None
+        turn_messages = director.turn_messages
+        turn_input = user_input
 
-    try:
-        written = await run_writer(ctx, tracer, director.outline)
-        prose, deviation = written.prose, written.deviation
-    except asyncio.CancelledError:
-        # writer 阶段被打断：**保留已生成的正文片段**，state 增量照常提交——
-        # 那段剧情确实发生了。「话说了一半被打断」在 RP 里是真实感的来源，
-        # 不是需要清理的垃圾（D60）。
-        status = RunStatus.PARTIAL
-        tracer.emit(
-            TraceEventType.RUN_INTERRUPTED,
-            Actor.ORCHESTRATOR,
-            "成文阶段被打断，保留已产出的部分",
-        )
+    if stage is not RunStage.STATE:
+        try:
+            written = await run_writer(ctx, tracer, outline)
+            prose, deviation = written.prose, written.deviation
+        except asyncio.CancelledError:
+            # **半截正文不留**（D142，推翻 D60 的这一半）。留着看似省事，实则是
+            # 把一个失败的阶段当成了产出：下一轮会接着那半句往下写，而用户按停止
+            # 恰恰是因为不想要那半句。细纲留着，它是上游、已经完成了。
+            _suspend(ctx, tracer, RunStage.WRITER, turn_input, outline=outline)
+            raise
 
     # **状态维护后置**（D143）：读着刚写完的细纲和正文去记，而不是 director
     # 边推演边记。位置卡在 `save_node` **之前**——节点是原子的，细纲、正文、
@@ -144,14 +168,28 @@ async def execute_run(
     # 瞬时节点，那一刻沿路径重放状态的人（分支、`state_at`）会算错。
     # 代价是这一轮的结束晚一次模型调用，而用户此时已经看完正文了。
     if session.capabilities.state:
-        await _maintain_state(ctx, tracer, director.outline, prose)
+        try:
+            await _maintain_state(ctx, tracer, outline, prose)
+        except asyncio.CancelledError:
+            # 这一段的上游全都完成了，所以草稿把它们一并带上：空输入时下一次
+            # 只重跑这一段，正文不会被重写一遍。
+            _suspend(
+                ctx,
+                tracer,
+                RunStage.STATE,
+                turn_input,
+                outline=outline,
+                prose=prose,
+                deviation=deviation,
+            )
+            raise
 
     notes = sampling_flags(
         delta=ctx.staged_delta,
         prose=prose,
         density=control.expansion_density,
         deviation=deviation,
-        outline=director.outline,
+        outline=outline,
         state_before=repo.state_at(parent_id).values,
     )
     for note in notes:
@@ -160,17 +198,18 @@ async def execute_run(
     node = Node(
         id=run_id,
         parent_id=parent_id,
-        status=status,
-        user_input=user_input,
+        status=RunStatus.COMPLETE,
+        user_input=turn_input,
         control=control,
-        outline=director.outline,
+        outline=outline,
         prose=prose,
         deviation_report=deviation,
         state_delta=ctx.staged_delta,
         # 推理段只活到本 run 结束（D120）——一轮推理有上万字，存下来会让持续
         # 对话每两轮就撞预算，压缩变成每轮都发生，前缀反复失效。
-        director_messages=without_reasoning(director.turn_messages),
+        director_messages=without_reasoning(turn_messages),
     )
+    repo.clear_draft()
 
     # 暂存的增量在此刻随节点一并落盘——细纲与增量同时抵达，节点是原子的（D48/D56）。
     repo.save_node(node)
@@ -178,7 +217,7 @@ async def execute_run(
         TraceEventType.STATE_COMMITTED,
         Actor.ORCHESTRATOR,
         "本轮已提交",
-        {"empty_delta": ctx.staged_delta.is_empty(), "status": status.value},
+        {"empty_delta": ctx.staged_delta.is_empty(), "resumed_from": stage.value},
     )
 
     session.active_leaf_id = node.id
@@ -187,8 +226,12 @@ async def execute_run(
     # **生成后追问**：本轮产出已定，这一步只影响以后怎么回看（D112）。
     # 问的是"这一轮是不是一段的结尾"——**判定在生成时，压缩在需要时**（D113）：
     # 分界往往要等下一轮才认得出来，而等它滑出窗口再问就已经看不见下一轮了。
-    # 被打断的一轮不追问：它连正文都没写完，谈不上"是不是一段的结尾"。
-    if session.capabilities.summarize is SummarizeMode.AUTO and status is RunStatus.COMPLETE:
+    #
+    # **必须问刚写完的 director 本人**：它手里有 state、有前情、知道故事要往哪走。
+    # 所以从 writer / state 阶段续跑的那一轮不问——这一轮根本没有 director 在跑，
+    # 另起一个只看得见几段细纲的冷调用，判据全靠猜（D112）。那一轮因此不带
+    # 分段标记，代价只是这一处分界要等下一轮才被认出来。
+    if session.capabilities.summarize is SummarizeMode.AUTO and director is not None:
         with contextlib.suppress(Exception):
             open_nodes = _open_segment(repo, node.id)
             cut = await ask_segment_cut(
@@ -209,11 +252,76 @@ async def execute_run(
         TraceEventType.RUN_FINISHED,
         Actor.ORCHESTRATOR,
         "本轮结束",
-        {"rounds": director.rounds, "prose_chars": len(prose)},
+        {"rounds": director.rounds if director else 0, "prose_chars": len(prose)},
         usage=None,
     )
 
     return RunOutcome(node=node, usage=tracer.usage, notes=notes)
+
+
+def _resume_point(draft: RunDraft | None, user_input: UserInput | None) -> RunStage:
+    """这一轮从哪一段开始跑（D142）。
+
+    **判据是生成内容的依赖关系**：state 依赖正文，正文依赖细纲，细纲依赖输入。
+    用户又说了话，细纲就可能要改，那下游全都不作数——回 director 重来；用户
+    什么也没说，就是「刚才那步没跑完，接着跑」，从被打断的那一段接。
+
+    director 阶段不受这条影响：它本来就是**续跑**（D118），新输入追加进那段
+    没跑完的推演里，已经查过的资料一并留着。
+    """
+    if draft is None:
+        return RunStage.DIRECTOR
+    if user_input is not None and user_input.text.strip():
+        return RunStage.DIRECTOR
+    return draft.stage
+
+
+def _previous_attempt(draft: RunDraft | None) -> str:
+    """回 director 时摆给它看的「上一次的推演」。
+
+    只在 writer / state 阶段的草稿上有内容——那两种情况这一轮从头重跑，
+    而旧细纲不该白写。director 阶段的草稿走续跑，它自己的消息里就有细纲。
+    """
+    if draft is None or draft.stage is RunStage.DIRECTOR or not draft.outline:
+        return ""
+    said = draft.user_input.text if draft.user_input else "（当时没有新的用户输入。）"
+    return f"当时的用户输入：{said}\n\n你写下的细纲：\n{draft.outline}"
+
+
+def _suspend(
+    ctx: RunContext,
+    tracer: Tracer,
+    stage: RunStage,
+    user_input: UserInput | None,
+    *,
+    outline: str,
+    prose: str = "",
+    deviation: str | None = None,
+) -> None:
+    """把这一段挂起：上游产物存进草稿，节点不落。
+
+    **不落节点是关键**。留半截产出看似省事，实则会让下一轮接着那半句往下写，
+    而用户按停止恰恰是因为不想要它（D142 推翻 D60 的后半句）。
+    """
+    ctx.repo.save_draft(
+        RunDraft(
+            parent_id=ctx.parent_id,
+            stage=stage,
+            user_input=user_input,
+            outline=outline,
+            prose=prose,
+            deviation=deviation,
+            staged_delta=ctx.staged_delta,
+        )
+    )
+    tracer.emit(
+        TraceEventType.RUN_INTERRUPTED,
+        Actor.ORCHESTRATOR,
+        {RunStage.WRITER: "成文阶段被打断，已挂起", RunStage.STATE: "状态阶段被打断，已挂起"}[
+            stage
+        ],
+        {"stage": stage.value},
+    )
 
 
 async def _maintain_state(ctx: RunContext, tracer: Tracer, outline: str, prose: str) -> None:

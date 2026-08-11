@@ -145,6 +145,7 @@ def director_prompt(
     capabilities: Capabilities | None = None,
     worldinfo: list[WorldbookEntry] | None = None,
     tools: str = "",
+    previous_attempt: str = "",
 ) -> Prompt:
     """装配 director 收到的整串消息。
 
@@ -168,6 +169,8 @@ def director_prompt(
             "tools": tools,
             "history": history,
             "state": render_state(state, expandable=caps.state_query) if caps.state else "",
+            # 上一次没写完的那一轮（D142）。平时是空串，整节不出现。
+            "previous_attempt": previous_attempt,
             "user_input": user_text or text("director", "no_user_input"),
         },
         values={
