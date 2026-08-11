@@ -159,8 +159,14 @@ async def run_director(
     )
 
     specs = registry.specs()
-    # 打断过的轮次接着数，硬上限才仍然是硬上限——否则反复打断可以无限续下去。
-    start_round = min(resume.rounds if resume else 0, max_rounds - 1)
+    # **只有真正的续跑才接着数轮数。**
+    #
+    # 硬上限防的是「反复打断、把同一段推演无限续下去」，所以 director 阶段被打断
+    # 再接回来时，用掉的额度不退（D118）。但 writer / state 阶段被打断后回到这里
+    # 是**重新交一份细纲**——那是一次新的推演，不是把上次那段接着往下跑。
+    # 算在它头上的话，在正文阶段反复打断几次就能把这 24 轮提前吃光。
+    continuing = resume is not None and resume.stage is RunStage.DIRECTOR
+    start_round = min(resume.rounds, max_rounds - 1) if continuing and resume else 0
 
     round_index = start_round
 

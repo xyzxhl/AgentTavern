@@ -754,3 +754,38 @@ async def test_trace_covers_the_whole_run(tmp_path: Path) -> None:
     assert [e.seq for e in events] == list(range(len(events)))
     assert all(e.label for e in events)
     assert outcome.usage.tokens_in > 0
+
+
+async def test_going_back_to_the_director_starts_the_round_count_over(tmp_path: Path) -> None:
+    """**回 director 重来是一次新的推演，不是续跑**，所以轮数归零（D142）。
+
+    硬上限防的是「反复打断、把同一段推演无限续下去」，所以 director 阶段续跑时
+    用掉的额度不退。但正文阶段被打断后回来，交的是**另一份细纲**——把额度算在
+    它头上的话，在正文阶段反复打断几次就能把 24 轮提前吃光。
+    """
+    repo, session, gw, reg = setup(
+        tmp_path,
+        CancelWriter(tool("submit_outline", outline="她推开门。")),
+        Session(capabilities=Capabilities(trace=True)),
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
+
+    draft = repo.load_draft()
+    assert draft is not None and draft.rounds > 0, "director 那一轮确实用掉了额度"
+
+    resume = ScriptedLLM(tool("submit_outline", outline="她停在门口。"), text("她没有推。"))
+    outcome = await execute_run(
+        repo,
+        repo.load_session(),
+        resume.gateway(),
+        reg,
+        user_input=UserInput(text="等等，她其实没推开"),
+    )
+    assert outcome.node.outline == "她停在门口。"
+
+    # **从「第 1 轮」重新数。** 接着数的话这里会是「第 2 轮」——那正是在正文阶段
+    # 反复打断几次就能把 24 轮吃光的形态。
+    labels = [e.label for e in repo.read_trace(outcome.node.id)]
+    assert "director 第 1 轮思考" in labels
+    assert "director 第 2 轮思考" not in labels
