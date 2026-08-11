@@ -485,7 +485,7 @@ def submit_tool() -> Tool[Any]:
     """
     return _tool(
         "submit_outline",
-        "提交本轮细纲并结束。**每轮有且仅有一次**，调用后不能再做任何事。",
+        "提交本轮细纲。**调用即结束这一轮**，之后不能再做任何事。",
         SubmitOutlineParams,
         _submit_outline,
     )

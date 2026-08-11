@@ -26,7 +26,7 @@ import asyncio
 import sys
 from dataclasses import dataclass, field
 
-from ..agents.writer import DEVIATION_MARKER, RECENT_PROSE
+from ..agents.writer import DEVIATION_MARKER
 from ..config import Settings, load_settings
 from ..llm import LLMGateway, Message
 from ..models import ControlDimensions, SessionMeta
@@ -81,7 +81,8 @@ def load_takes(
     for i, node in enumerate(path):
         if not node.outline:
             continue
-        upstream = "\n\n".join(n.prose for n in path[max(0, i - RECENT_PROSE) : i] if n.prose)
+        window = session.capabilities.upstream_runs
+        upstream = "\n\n".join(n.prose for n in path[max(0, i - window) : i] if n.prose)
         takes.append(
             Take(index=i + 1, outline=node.outline, upstream=upstream, original=node.prose)
         )

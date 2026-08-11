@@ -54,10 +54,18 @@ _DIR = Path(__file__).parent
 
 @functools.cache
 def load(name: str) -> dict[str, Any]:
-    """读一份提示词文件。**进程内只读一次**，它跨请求不变。"""
+    """读一份提示词文件。**进程内只读一次**，它跨请求不变。
+
+    顶层通常是映射（`sections` + 若干命名块）。**顶层也可以直接是一个列表**——
+    那是「片段文件」：整份文件就是几条 section，没有命名块可引用。追加输入
+    （`director_append.yaml`）是这一类：它不是某个 agent 收到的全部文字，
+    而是**跑到一半往对话里追加的那一条**，没有别的东西要跟它放在一起。
+    """
     data = yaml.safe_load((_DIR / f"{name}.yaml").read_text(encoding="utf-8"))
+    if isinstance(data, list):
+        return {"sections": data}
     if not isinstance(data, dict):
-        raise ValueError(f"{name}.yaml 顶层必须是映射")
+        raise ValueError(f"{name}.yaml 顶层必须是映射或 section 列表")
     return data
 
 

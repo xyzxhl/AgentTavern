@@ -65,10 +65,11 @@ def _noir_session() -> Session:
     return Session(
         meta=SessionMeta(
             title="回归·悬疑",
+            user_character="林昭",
             genre_tone="现代，悬疑，克制",
             character_voices={"陈屿": "说话绕，答非所问，很少给准话"},
         ),
-        control=ControlDimensions(prose_style="jishi", pov="第三人称，跟随林昭"),
+        control=ControlDimensions(prose_style="jishi", pov="third"),
         capabilities=Capabilities(trace=True),
     )
 
@@ -129,10 +130,11 @@ def _data_session() -> Session:
     return Session(
         meta=SessionMeta(
             title="回归·数据化",
+            user_character="沈砚",
             genre_tone="修真，带明确的数值系统。资源、冷却、伤势都是硬约束，不能含糊带过。",
             character_voices={"柜台执事": "公事公办，只认规矩和价钱"},
         ),
-        control=ControlDimensions(prose_style="jishi", pov="第三人称，跟随沈砚"),
+        control=ControlDimensions(prose_style="jishi", pov="third"),
         capabilities=Capabilities(trace=True),
     )
 
@@ -332,13 +334,14 @@ def _pulp_session() -> Session:
     return Session(
         meta=SessionMeta(
             title="回归·网文",
+            user_character="周野",
             genre_tone="都市异能，节奏快，爽感优先。冲突直给，不绕弯子。",
             character_voices={
                 "赵铖": "居高临下，说话带刺，习惯用反问压人",
                 "小满": "语速快，爱插话，情绪都在脸上",
             },
         ),
-        control=ControlDimensions(prose_style="wangwen", pov="第三人称，跟随周野"),
+        control=ControlDimensions(prose_style="wangwen", pov="third"),
         capabilities=Capabilities(trace=True),
     )
 
@@ -408,13 +411,14 @@ def _gufeng_session() -> Session:
     return Session(
         meta=SessionMeta(
             title="回归·古风",
+            user_character="沈玉茹",
             genre_tone="架空古代，宫廷。含蓄，话里有话，礼数是武器。",
             character_voices={
                 "沈玉茹": "话不说满，越紧张越客气",
                 "崔嬷嬷": "句句合规矩，规矩就是她的刀",
             },
         ),
-        control=ControlDimensions(prose_style="gufeng", pov="第三人称，跟随沈玉茹"),
+        control=ControlDimensions(prose_style="gufeng", pov="third"),
         capabilities=Capabilities(trace=True),
     )
 
@@ -473,10 +477,11 @@ def _xihuan_session() -> Session:
     return Session(
         meta=SessionMeta(
             title="回归·西幻",
+            user_character="卡伦",
             genre_tone="低魔西幻，边境小镇。冷硬，务实，魔法昂贵且有代价。",
             character_voices={"教士艾德蒙": "引经据典，但话里全是价钱"},
         ),
-        control=ControlDimensions(prose_style="jishi", pov="第三人称，跟随卡伦"),
+        control=ControlDimensions(prose_style="jishi", pov="third"),
         capabilities=Capabilities(trace=True),
     )
 

@@ -20,10 +20,10 @@ from ..tracing import Tracer
 
 DEVIATION_MARKER = "---偏离---"
 
-RECENT_PROSE = 2
-"""注入几轮正文上文用于衔接。writer 只需要接住语气，不需要长程记忆——
-那是 director 的事，它读细纲历史。
-"""
+# 注入几轮正文上文用于衔接，**由 `Capabilities.upstream_runs` 决定（默认 3）**。
+# writer 只需要接住语气，不需要长程记忆——那是 director 的事，它读细纲历史。
+# 这个数以前是这里的一个常量，改它要动代码；它其实是每个故事都该自己定的东西
+# （节奏慢的故事上文要多给几轮），所以搬进了能力开关。
 
 
 @dataclass
@@ -66,7 +66,7 @@ async def run_writer(ctx: RunContext, tracer: Tracer, outline: str) -> WriterRes
 def _recent_prose(ctx: RunContext) -> str:
     if ctx.parent_id is None:
         return ""
-    nodes: list[Node] = ctx.repo.path_to(ctx.parent_id)[-RECENT_PROSE:]
+    nodes: list[Node] = ctx.repo.path_to(ctx.parent_id)[-ctx.capabilities.upstream_runs :]
     return "\n\n".join(n.prose for n in nodes if n.prose)
 
 

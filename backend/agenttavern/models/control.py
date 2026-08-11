@@ -98,8 +98,14 @@ class ControlDimensions(BaseModel):
     错误信息里带着文件名和键名。
     """
 
-    pov: str = ""
-    """视角。同上——读者偏好，不是世界属性。"""
+    pov: str = "third"
+    """视角。同上——读者偏好，不是世界属性。
+
+    **和文风一样是选项名，不是自由文本**：三档全文写在 `writer.yaml` 的 `pov`
+    选项组里，这里只说选哪一档。改成选项组是因为「第一人称／第二人称／第三人称」
+    本来就是三个互斥的档，写成自由文本时每个 session 各写各的措辞，
+    writer 那侧无从对齐。
+    """
 
     def merged_with(self, override: ControlOverride | None) -> ControlDimensions:
         """套用单轮覆盖。未指定的项沿用常驻设置（D45）。"""
@@ -231,6 +237,14 @@ class SessionMeta(BaseModel):
     character_voices: dict[str, str] = Field(default_factory=dict)
     """角色语言习惯：角色名 -> 说话方式。仅注入 writer。"""
 
+    user_character: str = ""
+    """用户扮演的是谁。**仅注入 writer**——它决定人称怎么落。
+
+    归这里而不是控制维度：换个人来读，"用户扮演林昭"这件事仍然成立，
+    它是这个故事的设定，不是读者偏好（同 D138 那条判据）。视角（第几人称）
+    才是偏好，那个在 `ControlDimensions.pov`。
+    """
+
     goal: Goal | None = None
 
 
@@ -295,6 +309,24 @@ class Capabilities(BaseModel):
     history_search: bool = False
     """细纲历史的检索。关闭时**禁止检索**——只有近期全文 + 更早的长期总结，
     ``history_search`` / ``history_read`` 都不注册。
+    """
+
+    upstream_runs: int = 3
+    """给 writer 几轮**正文**上文。它只用来接住语气和现场，不是长程记忆——
+    长程记忆是 director 的事，它读细纲历史（D52/D54）。
+    """
+
+    state_recent_runs: int = 3
+    """给 state_manager 几轮「细纲 → 成文 → 当时记下的」示范（D143）。
+
+    **这是 state_manager 最大的一笔开销**，也是整个系统里最贵的一段上下文：
+    它是滑动窗口，每轮全变，一点缓存前缀都吃不到，而前几轮的正文是其中的大头。
+    实测 `data` 场景取 3 时，state_manager 占掉了全场 42% 的 input token。
+    往下调省钱，代价是键名和值的形状更容易漂移。
+
+    **和 `upstream_runs` 分开**：两者要的东西不一样。writer 要的是语气的连续，
+    少一轮只是接得生硬些；state_manager 要的是记法的示范，少一轮直接影响
+    键名一致性。合成一个参数会让其中一侧被另一侧的理由绑架。
     """
 
     summarize: SummarizeMode = SummarizeMode.AUTO

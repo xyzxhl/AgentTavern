@@ -1,5 +1,6 @@
 """director 的 tool loop 与上下文装配。"""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -74,6 +75,16 @@ def director_messages(
 def prompt_for(**kwargs) -> str:
     """director 收到的全部文字。"""
     return joined(director_messages(**kwargs))
+
+
+def _state_block(prompt: str) -> str:
+    """从整段提示词里抠出「当前世界状态」那一节的 JSON。
+
+    状态现在整节就是一份 JSON（D145），所以断言直接 `json.loads` 它——
+    **比钉渲染出来的句子稳**：改一句措辞不该让状态测试变红。
+    """
+    body = prompt.split("<当前世界状态>", 1)[1].split("</当前世界状态>", 1)[0]
+    return body[body.index("{") : body.rindex("}") + 1]
 
 
 def writer_text(meta: SessionMeta, control: ControlDimensions) -> str:
@@ -303,27 +314,41 @@ def test_state_pack_inlines_small_values_and_defers_large_ones() -> None:
         ]
     )
     prompt = prompt_for(state=state)
+    packed = json.loads(_state_block(prompt))
 
-    assert "地点：客厅" in prompt
-    assert "时间：第三日 傍晚" in prompt
-    assert "性格：谨慎，话少" in prompt
-    # 清单要**看得出是清单**——渲染成裸的顿号串时它和字符串没有区别，
-    # 模型据此写回就会把它拍平，此后无法单独增删其中一项（D96）。
-    assert "知情：清单：照片" in prompt
+    assert packed["地点"] == "客厅"
+    assert packed["时间"] == "第三日 傍晚"
+    assert packed["林.性格"] == "谨慎，话少"
     # 大值只给体量，键名仍在——模型知道它存在，可以展开（D62）。
-    assert "林与陈" in prompt
     assert "非常长的一段关系描述" not in prompt
-    assert "state_query 展开" in prompt
+    assert "state_query 展开" in packed["林与陈.关系"]
 
 
-def test_state_pack_groups_by_dotted_prefix() -> None:
-    """`.` 仅用于渲染分组，系统不赋予它语义——不预设"角色"这类实体。"""
-    state = replay([StateDelta(set={"时间": "傍晚", "林.在场": True, "林.性格": "谨慎"})])
-    prompt = prompt_for(state=state)
+def test_state_is_json_so_the_shape_needs_no_marker() -> None:
+    """**形状标记只要落在值这一侧，就是可抄的。**
 
-    assert "时间：傍晚" in prompt
-    assert "\n林\n" in prompt
-    assert "  在场：是" in prompt
+    此前清单渲染成 `清单：照片、信`，那个前缀是 D96 的修法——不加的话清单和
+    字符串长得一模一样。**但实测（`data` 场景第 5 轮）模型把「清单：」当成了
+    值的开头抄了回来**，写回一个以那四个字打头的字符串，形状照样塌。
+
+    JSON 自带区分，一个标记都不用：`[…]` 不是 `"…"`，`3` 不是 `"3"`，
+    `{}` 不是 `""`。而且它和 `state_write` 的参数是同一套写法，中间没有翻译。
+    """
+    state = replay(
+        [
+            StateDelta(
+                set={"时间": "傍晚", "林.在场": True, "沈砚.灵石": 3, "沈砚.冷却": {}},
+                append={"林.知情": ["照片"]},
+            )
+        ]
+    )
+    packed = json.loads(_state_block(prompt_for(state=state)))
+
+    assert packed["林.知情"] == ["照片"], "清单还是清单"
+    assert packed["沈砚.灵石"] == 3, "数字还是数字，不是 '3'"
+    assert packed["林.在场"] is True, "布尔还是布尔，不是「是」"
+    assert packed["沈砚.冷却"] == {}, "空字典还是空字典，不是「（无，可逐项填）」"
+    assert "清单" not in json.dumps(packed, ensure_ascii=False), "不该再有任何形状标记"
 
 
 # -- 能力开关对 prompt 的影响 --------------------------------------------------
@@ -334,7 +359,7 @@ def test_state_off_removes_the_state_section_and_step() -> None:
         state=replay([StateDelta(set={"地点": "客厅"})]),
         capabilities=Capabilities(state=False),
     )
-    assert "地点：客厅" not in prompt
+    assert "客厅" not in prompt
     assert "state_write" not in prompt
 
 
@@ -369,7 +394,7 @@ def test_the_flow_steps_are_gone_and_the_tools_carry_them() -> None:
         assert gone not in prompt
 
     submit = next(t for t in build_tools(ALL_ON) if t.name == "submit_outline")
-    assert "每轮有且仅有一次" in (submit.description or "")
+    assert "调用即结束这一轮" in (submit.description or "")
 
 
 def test_empty_state_renders_cleanly() -> None:
@@ -717,3 +742,31 @@ def test_the_turn_starts_after_the_history(monkeypatch) -> None:
         *carried,
         Message(role=Role.USER, content="本轮输入"),
     ]
+
+
+# -- 追加输入：说明之后再追加（D145） -----------------------------------------
+
+
+def test_an_appended_input_is_wrapped_with_an_explanation() -> None:
+    """引导 / 打断插进来的那条**不能裸着塞**。
+
+    裸文本塞进对话，模型读到的是一条突然冒出来的用户发言，看不出它和这一轮
+    已经进行到一半的推演是什么关系。措辞归 `director_append.yaml`——它是提示词，
+    跟别的提示词放在一起（同 D140），不写死在 Python 里。
+    """
+    from agenttavern.agents.replay import INTERJECTION_MARK, append_message
+
+    message = append_message("等等，先别问他")
+
+    assert message.role is Role.USER
+    assert "等等，先别问他" in (message.content or "")
+    # **结构标记从 YAML 那一条的 title 推出来，不另写一份。** 对不上的后果是
+    # 插话在重放时被当成编排层的催促悄悄丢掉（同 D125）。
+    assert INTERJECTION_MARK in (message.content or "")
+
+
+def test_a_fragment_file_may_be_a_bare_section_list() -> None:
+    """片段文件顶层可以直接是列表——它不是某个 agent 收到的全部文字，
+    只是跑到一半往对话里追加的那一条，没有别的东西要跟它放在一起。
+    """
+    assert isinstance(assembler.load("director_append")["sections"], list)

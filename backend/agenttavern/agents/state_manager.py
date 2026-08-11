@@ -45,11 +45,10 @@ from ..tracing import Tracer
 MAX_ROUNDS = 4
 """硬上限。正常一到两轮就完（写一次、然后空手回来收口）。"""
 
-RECENT_TURNS = 3
-"""给几轮示范。**这是这个 agent 最大的一笔开销**——前几轮的正文占了上下文的大头，
-而且是滑动窗口，每轮都在变，一点缓存前缀都吃不到。往下调会省钱，代价是键名和
-值的形状更容易漂移。
-"""
+# 给几轮示范由 **`Capabilities.state_recent_runs` 决定（默认 3）**。
+# **这是这个 agent 最大的一笔开销**——前几轮的正文占了上下文的大头，而且是滑动
+# 窗口，每轮都在变，一点缓存前缀都吃不到。实测 `data` 场景取 3 时它占了全场
+# 42% 的 input token。往下调省钱，代价是键名和值的形状更容易漂移。
 
 
 @dataclass
@@ -73,11 +72,13 @@ async def run_state_manager(
     节点是原子的（D48/D56）。
     """
     path = ctx.repo.path_to(ctx.parent_id) if ctx.parent_id else []
+    window = ctx.capabilities.state_recent_runs
+    recent = path[-window:] if window else []
     messages = state_manager_prompt(
         # 本 run 开始时的状态。loop 中途写下的增量由 `state_query` 反映
         # （那个走 `current_state`），不必重新装配一次。
         ctx.base_state(),
-        recent=path[-RECENT_TURNS:],
+        recent=recent,
         outline=outline,
         prose=prose,
         tools=registry.render(),
@@ -91,7 +92,7 @@ async def run_state_manager(
         {
             "prompt_messages": len(messages),
             "prompt_chars": sum(len(m.content or "") for m in messages),
-            "recent_turns": len(path[-RECENT_TURNS:]),
+            "recent_turns": len(recent),
         },
     )
 

@@ -267,10 +267,12 @@ async def test_a_new_input_goes_back_to_the_director(tmp_path: Path) -> None:
 
     assert outcome.node.outline == "她停在门口，没有推。"
 
+    # **旧细纲不必另开一节说明——它就在接回来的对话里。**上一次那句
+    # `submit_outline` 连同它交出的细纲一起被草稿带了过来，所以 director
+    # 看得见自己写过什么，也看得见当时的输入。
     context = str(resume.messages_of(0))
-    assert "上一次的推演" in context, "旧细纲要摆出来，不能让它假装没写过"
-    assert "她推开门。" in context
-    assert "我推开门" in context, "当时的输入也要给，否则旧细纲没有由来"
+    assert "她推开门。" in context, "旧细纲要在，不能让它假装没写过"
+    assert "我推开门" in context, "当时的输入也要在，否则旧细纲没有由来"
     assert "等等，她其实没推开" in context
 
 

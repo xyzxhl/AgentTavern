@@ -49,8 +49,9 @@ sections:
   # 而 content_scale 是判据（能到什么程度），归 director 那侧的「设定」。
   - {role: user, title: 情色描写, key: nsfw}
   - {role: user, title: 角色语言习惯, context: character_voices}
-  - role: user
-  - text: 用户扮演的角色是{{user_character}}，基于这点处理人称使用。
+  # 两行合成了一条：原来写成 `- role: user` / `- text: …` 两个条目，
+  # 前者没有正文来源、后者没有 role，装配器两头都报错。
+  - {role: user, text: "用户扮演的角色是{{user_character}}，基于这点处理人称使用。"}
   - {role: user, title: 视角, choice: pov}
   - {role: user, title: 铺陈程度, choice: density}
 

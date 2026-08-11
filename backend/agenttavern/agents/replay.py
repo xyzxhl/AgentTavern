@@ -36,7 +36,7 @@ from __future__ import annotations
 
 from ..llm import Message, Role
 from ..models import Node
-from ..prompting import titled
+from ..prompting import assemble, load, titled
 
 CONTEXT_BUDGET_CHARS = 96_000
 """越过这个体量才压缩。
@@ -46,13 +46,47 @@ CONTEXT_BUDGET_CHARS = 96_000
 """
 
 
-INTERJECTION_MARK = "（用户在这里插了一句）"
-"""引导 / 打断插进来的那条消息的抬头（D119）。
+APPEND_FILE = "director_append"
+"""追加输入那一条的提示词文件。
 
-**它是结构标记，不是措辞。** 扁平化时要靠它把用户的插话和编排层的催促
-（"请通过工具完成本轮……"）分开：前者是不可再生的用户输入，必须留；
-后者是脚手架，跨轮带着只会像一条仍然生效的指令。
+它是**片段文件**：顶层直接是一条 section，没有命名块——因为它不是某个 agent
+收到的全部文字，而是**跑到一半往对话里追加的那一条**。
 """
+
+
+def append_message(said: str) -> Message:
+    """把用户追加的那一句**说明之后再追加**进对话。
+
+    引导和打断插进来的那条消息，以前是裸文本前面顶一句写死在 Python 里的
+    `（用户在这里插了一句）`。裸着塞进去，模型读到的是一条突然冒出来的用户
+    发言，看不出它和这一轮已经进行到一半的推演是什么关系。措辞现在归
+    `director_append.yaml`——它是提示词，跟别的提示词放在一起（同 D140）。
+    """
+    messages = assemble(APPEND_FILE, contexts={"user_additional_input": said}).messages
+    if len(messages) != 1:
+        raise ValueError(f"{APPEND_FILE}.yaml 只能有一条 section，现在有 {len(messages)} 条")
+    return messages[0]
+
+
+def _append_tag() -> str:
+    """追加输入那一条的**结构标记**：它的 `<标题>`。
+
+    扁平化时要靠它把用户的插话和编排层的催促（"请调用 submit_outline……"）
+    分开：前者是不可再生的用户输入，跨轮必须留；后者是脚手架，跨轮带着只会
+    像一条仍然生效的指令。
+
+    **从 YAML 那一条的 title 推出来，不另写一份**——两份必然对不上，而对不上的
+    后果是插话在重放时被当成催促悄悄丢掉（同 D125）。所以那一条必须有 title，
+    没有就直接报错。
+    """
+    sections = load(APPEND_FILE).get("sections") or []
+    title = next((s["title"] for s in sections if isinstance(s, dict) and s.get("title")), None)
+    if not title:
+        raise ValueError(f"{APPEND_FILE}.yaml 那一条必须有 title——重放时靠它认出用户的插话")
+    return f"<{title}>"
+
+
+INTERJECTION_MARK = _append_tag()
 
 SUBMIT_TOOL = "submit_outline"
 """扁平化时跳过它——它的产出就是 `node.outline`，直接取节点上的更准。"""

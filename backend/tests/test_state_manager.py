@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from conftest import STATE_MARK, ScriptedLLM, text, tool
 
-from agenttavern.agents.state_manager import MAX_ROUNDS, RECENT_TURNS, run_state_manager
+from agenttavern.agents.state_manager import MAX_ROUNDS, run_state_manager
 from agenttavern.models import Capabilities, Node, Session, StateDelta, UserInput, WorldbookEntry
 from agenttavern.orchestration import execute_run
 from agenttavern.storage import Store
@@ -92,12 +92,17 @@ async def test_recent_turns_carry_the_full_triple(tmp_path: Path) -> None:
 
 
 async def test_only_the_last_few_turns_come_along(tmp_path: Path) -> None:
-    """滑动窗口——**这是它最大的一笔开销**，前几轮的正文占了上下文的大头。"""
+    """滑动窗口，宽度由 `Capabilities.state_recent_runs` 定（默认 3）。
+
+    **这是它最大的一笔开销**——前几轮的正文占了上下文的大头，而且每轮全变，
+    一点缓存前缀都吃不到。所以窗口是用户可调的，不是代码里的常量。
+    """
     llm = ScriptedLLM(text("无变化。"), auto_state=False)
     ctx, tracer, reg = _ctx(tmp_path, llm)
+    window = ctx.capabilities.state_recent_runs
 
     parent = None
-    for i in range(RECENT_TURNS + 2):
+    for i in range(window + 2):
         node = Node(
             id=f"run_{i}", parent_id=parent, outline=f"第{i}轮细纲。", prose=f"第{i}轮正文。"
         )
@@ -108,8 +113,8 @@ async def test_only_the_last_few_turns_come_along(tmp_path: Path) -> None:
     await run_state_manager(ctx, reg, tracer, outline="本轮。", prose="本轮正文。")
 
     sent = str(llm.messages_of(0))
-    assert "第0轮细纲。" not in sent, f"只该带最近 {RECENT_TURNS} 轮"
-    assert f"第{RECENT_TURNS + 1}轮细纲。" in sent
+    assert "第0轮细纲。" not in sent, f"只该带最近 {window} 轮"
+    assert f"第{window + 1}轮细纲。" in sent
 
 
 # -- loop 怎么收口 ------------------------------------------------------------

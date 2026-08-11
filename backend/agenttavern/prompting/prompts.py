@@ -17,6 +17,7 @@ D35（否定项两边都要）**已删除**（D139）：否定项这个字段整
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 
 from ..llm import Message
@@ -47,66 +48,52 @@ STATE_INLINE_LIMIT = 200
 """单个状态值超过这个长度就只给体量、不给内容，由模型按需 state_query 展开。"""
 
 
-def _render_value(value: object, *, expandable: bool = True) -> str:
-    """渲染一个状态值，**并让它的形状可见**。
+HIDDEN = "（{chars} 字，用 state_query 展开）"
+"""长值的占位。**它是字符串，所以只能顶替字符串值**——见 `_hide_long`。"""
 
-    清单原先渲染成 `青锋剑、止血符 ×2、定身符 ×1`，与一个字符串**长得完全一样**。
-    模型据此写回时自然写成字符串，清单就被拍平了，此后再也无法单独增删其中一项
-    （D96 的实测来源）。标出“清单”是最便宜的修法：它同时告诉模型这里可以
-    append / remove。
+
+def _hide_long(value: object) -> object:
+    """体量大的值只给体量，由模型按需 `state_query` 展开。
+
+    **只对字符串生效。** 清单和字典即使很长也原样给出：顶替掉它们会把形状也
+    一起顶替成一个字符串，而形状正是这里最要紧的东西（D96）——模型照着写回，
+    清单就塌了。长清单该做的是拆键，不是藏起来。
     """
-    if isinstance(value, list):
-        if not value:
-            return "（清单，空）"
-        body = "、".join(str(v) for v in value)
-        prefix = "清单："
-    elif isinstance(value, dict):
-        # 空字典曾渲染成「（无）」，形状信息全丢——与 D96 里空清单的病一模一样。
-        # 实测后果：种子给的 `沈砚.冷却: {}` 被写回成一个字符串。
-        if not value:
-            return "（无，可逐项填）"
-        body = "；".join(f"{k}={v}" for k, v in value.items())
-        prefix = ""
-    elif isinstance(value, bool):
-        body, prefix = ("是" if value else "否"), ""
-    else:
-        body, prefix = str(value), ""
-
-    # **只有还能展开时才允许截断。** 截断 + 按需展开是无损降维；一旦没了展开的路，
-    # 它就变成有损筛选——模型看得见键名却永远拿不到内容，而且不知道自己丢了什么。
-    # 那正是 D62 判 lorebook 关键词触发不合格的同一条理由。
-    if expandable and len(body) > STATE_INLINE_LIMIT:
-        return f"（{len(body)} 字，用 state_query 展开）"
-    return prefix + body
+    if isinstance(value, str) and len(value) > STATE_INLINE_LIMIT:
+        return HIDDEN.format(chars=len(value))
+    return value
 
 
 def render_state(state: WorldState, *, expandable: bool = True) -> str:
-    """状态默认包：**全量键名 + 体量小的值内联，大的只给体量**。
+    """状态默认包：**JSON**，全量键名 + 体量大的字符串只给体量。
 
-    这与 history / worldinfo 是同一个模式（D63 全量索引 + 按需展开），因此同样
-    满足 D62 的准入标准：规则只调精度、不做相关性筛选，模型始终知道有哪些键存在。
+    ## 为什么是 JSON
 
-    **不预设任何维度。** 键由模型自由命名，`.` 前缀仅用于此处分组显示，
-    系统不赋予它语义，时间、地点、角色属性的粒度与形态都取决于故事，
-    定不了固定 schema（见 models/state.py 的说明）。
+    此前是「键：值」的文本，清单渲染成 `清单：青锋剑、止血符 ×2`。加那个「清单：」
+    前缀是 D96 的修法——不加的话清单和字符串长得一模一样，模型照着写回就把清单
+    拍平了。**但实测（`data` 场景第 5 轮）模型把「清单：」当成了值的开头抄了回来**，
+    写回一个以「清单：」四个字打头的字符串，形状照样塌，还多了四个字的垃圾。
+    形状标记只要落在值这一侧就是可抄的。
 
-    **这里只渲染键值，一句提示词都不带。** 「这是速查表不是完整记录」「旧值不成立
-    就要改掉」那些话现在写在 `director.yaml` 那一节的 `outro` 里——它们是提示词，
-    该跟别的提示词放在一起，而不是散在 Python 里。
+    JSON 从根上消掉这件事：`[...]` 和 `"..."`、`3` 和 `"3"`、`{}` 和 `""`
+    自带区分，不需要任何额外标记，而且**和 `state_write` 的参数是同一套写法**——
+    模型读到什么形状就写回什么形状，中间没有一次翻译。
+
+    代价是 `.` 分组的视觉层次没了（`grouped()` 只剩 UI 在用）。换来的是形状不再
+    需要靠提示词维护。
+
+    **不预设任何维度。** 键由模型自由命名，系统不赋予 `.` 任何语义，时间、地点、
+    角色属性的粒度与形态都取决于故事，定不了固定 schema（见 models/state.py）。
+
+    **这里只渲染键值，一句提示词都不带**——那些话是提示词，写在 YAML 里。
     """
     if not state.values:
         return "（尚无记录）"
 
-    lines: list[str] = []
-    for group, items in state.grouped().items():
-        if not group:
-            lines += [f"{k}：{_render_value(v, expandable=expandable)}" for k, v in items.items()]
-    for group, items in state.grouped().items():
-        if group:
-            lines.append(f"\n{group}")
-            lines += [f"  {k}：{_render_value(v, expandable=expandable)}" for k, v in items.items()]
-
-    return "\n".join(lines)
+    values = state.values
+    if expandable:
+        values = {k: _hide_long(v) for k, v in values.items()}
+    return json.dumps(values, ensure_ascii=False, indent=2, sort_keys=True)
 
 
 def render_worldinfo(entries: list[WorldbookEntry], *, expandable: bool = True) -> str:
@@ -145,7 +132,6 @@ def director_prompt(
     capabilities: Capabilities | None = None,
     worldinfo: list[WorldbookEntry] | None = None,
     tools: str = "",
-    previous_attempt: str = "",
 ) -> Prompt:
     """装配 director 收到的整串消息。
 
@@ -169,14 +155,10 @@ def director_prompt(
             "tools": tools,
             "history": history,
             "state": render_state(state, expandable=caps.state_query) if caps.state else "",
-            # 上一次没写完的那一轮（D142）。平时是空串，整节不出现。
-            "previous_attempt": previous_attempt,
             "user_input": user_text or text("director", "no_user_input"),
         },
         values={
             "content_scale": meta.content_scale,
-            # 视角是读者偏好，跟着控制维度走，不跟着世界设定走。
-            "pov": control.pov,
             "goal": meta.goal.description if meta.goal else "",
         },
         options={
@@ -195,23 +177,16 @@ def director_prompt(
 
 
 def render_delta(delta: StateDelta) -> str:
-    """一次状态更新的可读形式。给 state_manager 看它前几轮**自己写过什么**。
+    """一次状态更新。给 state_manager 看它前几轮**自己写过什么**。
 
-    **这里不隐藏长值**（`expandable=False`）：这一节的全部用处就是做记法示范，
-    把示范里的值换成"（1234 字，用 state_query 展开）"，示范就废了。
+    **原样给 `state_write` 的参数 JSON，不隐藏也不改写。** 这一节的全部用处就是
+    做示范，而示范必须和它要模仿的那次调用逐字一致——换个形式重述一遍，模仿的
+    就是那个形式了。
     """
     if delta.is_empty():
         return "（本轮无变化）"
 
-    lines = [
-        f"- {key} ← {'（删除）' if value is None else _render_value(value, expandable=False)}"
-        for key, value in delta.set.items()
-    ]
-    for verb, changes in (("追加", delta.append), ("移除", delta.remove)):
-        lines += [
-            f"- {key} {verb} {'、'.join(str(i) for i in items)}" for key, items in changes.items()
-        ]
-    return "\n".join(lines)
+    return json.dumps(delta.model_dump(exclude_defaults=True), ensure_ascii=False, indent=2)
 
 
 def render_recent(nodes: Sequence[Node]) -> str:
@@ -285,12 +260,15 @@ def writer_prompt(
             "upstream": upstream,
             "outline": outline,
         },
-        values={"pov": control.pov},
-        # **文风是选项名，不是自由文本**：档位全文写在 writer.yaml 里，
-        # 这里只说选哪一档。而且它和铺陈程度一样来自 `control`——
-        # 文风是读者这一侧的偏好，不是这个世界的属性。
+        # 用户扮演谁是**这个故事的设定**（D138 那条判据：换个人来读仍然成立），
+        # 所以它在 meta；第几人称是读者偏好，所以在 control，且已改成选项组。
+        values={"user_character": meta.user_character},
+        # **文风与视角都是选项名，不是自由文本**：档位全文写在 writer.yaml 里，
+        # 这里只说选哪一档。它们和铺陈程度一样来自 `control`——都是读者这一侧的
+        # 偏好，不是这个世界的属性。
         options={
             "prose_style": control.prose_style,
+            "pov": control.pov,
             "density": control.expansion_density.value,
         },
     )

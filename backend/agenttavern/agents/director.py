@@ -31,7 +31,7 @@ from ..models import (
 from ..prompting import choice, director_prompt, text
 from ..tools import RunContext, ToolOutcome, ToolRegistry
 from ..tracing import Tracer
-from .replay import INTERJECTION_MARK, replay_messages, turn_messages
+from .replay import append_message, replay_messages, turn_messages
 
 MAX_ROUNDS = 24
 """硬上限。撞上即强制收尾——tool 往返直接加在用户等待上（D7 已放弃流式）。"""
@@ -75,7 +75,6 @@ async def run_director(
     user_input: UserInput | None,
     *,
     resume: RunDraft | None = None,
-    previous_attempt: str = "",
     max_rounds: int = MAX_ROUNDS,
     soft_rounds: int = SOFT_ROUNDS,
 ) -> DirectorResult:
@@ -111,10 +110,6 @@ async def run_director(
         worldinfo=ctx.repo.worldbook(),
         # 工具面的索引由注册表自己渲染——YAML 只决定它出现在哪（D140）。
         tools=registry.render(),
-        # **上一次没写完的那一轮**（D142）。writer / state 阶段被打断、而用户又
-        # 说了新的话时，这一轮从头重跑 director，把旧细纲摆给它看：
-        # 「你上次写的是这个，用户又说了话，判断要不要改」。平时是空的，整节不出现。
-        previous_attempt=previous_attempt,
     )
     messages = prompt.messages
 
@@ -290,7 +285,10 @@ def _boundary(
     stopped = aborted or ctx.inbox.interrupted.is_set()
     texts = ctx.inbox.drain()
     for said in texts:
-        messages.append(Message(role=Role.USER, content=f"{INTERJECTION_MARK}\n{said}"))
+        # **说明之后再追加**：裸着塞进去，模型读到的是一条突然冒出来的用户发言，
+        # 看不出它和这一轮已经进行到一半的推演是什么关系。措辞归
+        # `director_append.yaml`，不写在这里（同 D140）。
+        messages.append(append_message(said))
         tracer.emit(TraceEventType.USER_INTERJECTED, Actor.USER, said)
     if stopped and not texts:
         raise asyncio.CancelledError

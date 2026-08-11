@@ -123,10 +123,11 @@ async def execute_run(
                 registry,
                 tracer,
                 user_input,
-                # 只有 director 阶段的草稿才接得下去：它存着这一轮查过的资料。
-                # writer / state 阶段的草稿走的是**重跑**，那些消息不留（D142）。
-                resume=draft if draft is not None and draft.stage is RunStage.DIRECTOR else None,
-                previous_attempt=_previous_attempt(draft),
+                # **草稿一律接下去，不分阶段。** writer / state 阶段被打断而用户
+                # 又说了话时，这一轮回 director 重来——但已经查过的资料、以及那次
+                # `submit_outline` 连同它交出的细纲，都还在这几条消息里。
+                # 于是「上一次写的是什么」不必再单开一节说明：**它就在对话里**。
+                resume=draft,
             )
         except asyncio.CancelledError:
             # 细纲还没成型，所以不落节点——但**推演本身留着**，存成草稿等下一条
@@ -159,7 +160,9 @@ async def execute_run(
             # **半截正文不留**（D142，推翻 D60 的这一半）。留着看似省事，实则是
             # 把一个失败的阶段当成了产出：下一轮会接着那半句往下写，而用户按停止
             # 恰恰是因为不想要那半句。细纲留着，它是上游、已经完成了。
-            _suspend(ctx, tracer, RunStage.WRITER, turn_input, outline=outline)
+            _suspend(
+                ctx, tracer, RunStage.WRITER, turn_input, messages=turn_messages, outline=outline
+            )
             raise
 
     # **状态维护后置**（D143）：读着刚写完的细纲和正文去记，而不是 director
@@ -178,6 +181,7 @@ async def execute_run(
                 tracer,
                 RunStage.STATE,
                 turn_input,
+                messages=turn_messages,
                 outline=outline,
                 prose=prose,
                 deviation=deviation,
@@ -294,6 +298,7 @@ def _suspend(
     stage: RunStage,
     user_input: UserInput | None,
     *,
+    messages: list[Message],
     outline: str,
     prose: str = "",
     deviation: str | None = None,
@@ -308,6 +313,9 @@ def _suspend(
             parent_id=ctx.parent_id,
             stage=stage,
             user_input=user_input,
+            # **这一轮的推演一并存着**：回 director 重来时它接得下去，
+            # 那次 `submit_outline` 和它交出的细纲就在里面，不必另开一节复述。
+            messages=messages,
             outline=outline,
             prose=prose,
             deviation=deviation,
