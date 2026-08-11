@@ -14,6 +14,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+from ..config import LIMITS
+
 # --------------------------------------------------------------------------
 # 控制维度（D42，四项）
 # --------------------------------------------------------------------------
@@ -148,13 +150,13 @@ class Goal(BaseModel):
     description: str
     """用户设定的可判定标准。表述越具体，模型判定越准。"""
 
-    max_runs: int = 50
+    max_runs: int = LIMITS.goal_manager.max_runs
     """硬上限保底——模型可能永远判不达标，或目标本身不可达。"""
 
-    max_total_tokens: int = 1_000_000
+    max_total_tokens: int = LIMITS.goal_manager.max_total_tokens
     """硬上限保底（同上）。"""
 
-    max_revisions: int = 3
+    max_revisions: int = LIMITS.goal_manager.max_revisions
     """最多重新规划几次（D141）。
 
     「未完成或轻度偏离 → 重新规划」这条路本身没有出口：每次重规划都会给出
@@ -311,12 +313,12 @@ class Capabilities(BaseModel):
     ``history_search`` / ``history_read`` 都不注册。
     """
 
-    upstream_runs: int = 3
+    upstream_runs: int = LIMITS.windows.upstream_runs
     """给 writer 几轮**正文**上文。它只用来接住语气和现场，不是长程记忆——
     长程记忆是 director 的事，它读细纲历史（D52/D54）。
     """
 
-    state_recent_runs: int = 3
+    state_recent_runs: int = LIMITS.windows.state_recent_runs
     """给 state_manager 几轮「细纲 → 成文 → 当时记下的」示范（D143）。
 
     **这是 state_manager 最大的一笔开销**，也是整个系统里最贵的一段上下文：

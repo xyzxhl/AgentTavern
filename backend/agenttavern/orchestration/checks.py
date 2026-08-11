@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+from ..config import LIMITS
 from ..models import ExpansionDensity, StateDelta
 
 _DENSITY_MIN_CHARS = {
@@ -27,7 +28,7 @@ _DENSITY_MIN_CHARS = {
 }
 
 
-EXPANSION_MIN_RATIO = 1.6
+EXPANSION_MIN_RATIO = LIMITS.sampling.expansion_min_ratio
 """正文 / 细纲的长度比下限。低于此值说明 writer 没有在展开，只是在照抄。
 
 **这个数不是质量判据，是隔离是否生效的指标**（D93）：细纲写事实、正文写描写，
@@ -36,7 +37,7 @@ EXPANSION_MIN_RATIO = 1.6
 """
 
 
-STATE_VALUE_MAX_CHARS = 60
+STATE_VALUE_MAX_CHARS = LIMITS.sampling.state_value_max_chars
 """单个状态值的长度上限。超过通常说明这个键装了不止一件事。
 
 state 的用处是**让模型在很多轮之后不写出矛盾**，因此每个键应当是一条可被违反的约束。

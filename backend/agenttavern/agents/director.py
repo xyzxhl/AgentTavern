@@ -19,6 +19,7 @@ from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from typing import TypeVar
 
+from ..config import LIMITS
 from ..llm import Message, Role, Usage
 from ..models import (
     Actor,
@@ -33,10 +34,10 @@ from ..tools import RunContext, ToolOutcome, ToolRegistry
 from ..tracing import Tracer
 from .replay import append_message, replay_messages, turn_messages
 
-MAX_ROUNDS = 24
+MAX_ROUNDS = LIMITS.director.max_rounds
 """硬上限。撞上即强制收尾——tool 往返直接加在用户等待上（D7 已放弃流式）。"""
 
-SOFT_ROUNDS = 16
+SOFT_ROUNDS = LIMITS.director.soft_rounds
 """软上限。到此提示模型收敛，但不强制。"""
 
 T = TypeVar("T")

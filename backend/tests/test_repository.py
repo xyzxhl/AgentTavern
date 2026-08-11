@@ -133,3 +133,69 @@ def test_files_are_human_readable(repo, tmp_path: Path) -> None:
 
     raw = repo.session_path.read_text(encoding="utf-8")
     assert "雨夜" in raw
+
+
+# -- config.yaml：调参统一到一处 ----------------------------------------------
+
+
+def test_config_yaml_covers_every_knob() -> None:
+    """**代码里不再写这些字面量。**
+
+    以前它们散在八个模块的模块级常量里：想知道"director 到底几轮上限"得先猜它在
+    哪个文件；想调一个数得改代码。这条钉的是"每个旋钮都真的从 config.yaml 来"——
+    漏掉一个的症状是改了配置没反应，而那是最难查的一类。
+    """
+    from agenttavern.agents import director, replay, state_manager, summarizer
+    from agenttavern.config import LIMITS, load_limits
+    from agenttavern.models import Capabilities, Goal
+    from agenttavern.orchestration import checks
+    from agenttavern.prompting import prompts
+    from agenttavern.tools import builtin
+
+    wired = {
+        "director.max_rounds": (LIMITS.director.max_rounds, director.MAX_ROUNDS),
+        "director.soft_rounds": (LIMITS.director.soft_rounds, director.SOFT_ROUNDS),
+        "state_manager.max_rounds": (LIMITS.state_manager.max_rounds, state_manager.MAX_ROUNDS),
+        "context.budget_chars": (LIMITS.context.budget_chars, replay.CONTEXT_BUDGET_CHARS),
+        "context.state_inline_limit": (
+            LIMITS.context.state_inline_limit,
+            prompts.STATE_INLINE_LIMIT,
+        ),
+        "context.tool_read_chars": (LIMITS.context.tool_read_chars, builtin.MAX_READ_CHARS),
+        "segment.summary_max_chars": (
+            LIMITS.segment.summary_max_chars,
+            summarizer.SUMMARY_MAX_CHARS,
+        ),
+        "segment.max_runs": (LIMITS.segment.max_runs, summarizer.MAX_SEGMENT_RUNS),
+        "segment.min_runs": (LIMITS.segment.min_runs, summarizer.MIN_SEGMENT_RUNS),
+        "sampling.expansion_min_ratio": (
+            LIMITS.sampling.expansion_min_ratio,
+            checks.EXPANSION_MIN_RATIO,
+        ),
+        "sampling.state_value_max_chars": (
+            LIMITS.sampling.state_value_max_chars,
+            checks.STATE_VALUE_MAX_CHARS,
+        ),
+        "windows.upstream_runs": (LIMITS.windows.upstream_runs, Capabilities().upstream_runs),
+        "windows.state_recent_runs": (
+            LIMITS.windows.state_recent_runs,
+            Capabilities().state_recent_runs,
+        ),
+        "goal_manager.max_runs": (LIMITS.goal_manager.max_runs, Goal(description="x").max_runs),
+    }
+    assert {k for k, (a, b) in wired.items() if a != b} == set()
+
+    # session 级那几处只是**取默认值**，仍然能单独覆盖。
+    assert Capabilities(upstream_runs=9).upstream_runs == 9
+
+    # **文件里的值就是真值**，不是被模型里那份兜底默认悄悄顶掉的。
+    assert load_limits().model_dump() == LIMITS.model_dump()
+
+
+def test_a_missing_config_file_falls_back_instead_of_crashing(tmp_path: Path) -> None:
+    """文件缺了要能起来。**在 import 阶段炸掉是最糟的失败方式**——
+    什么都跑不了，而错误看起来跟配置无关。
+    """
+    from agenttavern.config import Limits, load_limits
+
+    assert load_limits(tmp_path / "没有这个文件.yaml") == Limits()

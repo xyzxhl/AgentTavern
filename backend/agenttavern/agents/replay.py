@@ -34,11 +34,12 @@
 
 from __future__ import annotations
 
+from ..config import LIMITS
 from ..llm import Message, Role
 from ..models import Node
 from ..prompting import assemble, load, titled
 
-CONTEXT_BUDGET_CHARS = 96_000
+CONTEXT_BUDGET_CHARS = LIMITS.context.budget_chars
 """越过这个体量才压缩。
 
 取值上的取舍：**调小则压得勤、缓存失效频繁；调大则单次上下文更贵**。

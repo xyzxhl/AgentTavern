@@ -17,20 +17,21 @@
 
 from __future__ import annotations
 
+from ..config import LIMITS
 from ..llm import LLMGateway
 from ..prompting import assemble
 
-SUMMARY_MAX_CHARS = 200
+SUMMARY_MAX_CHARS = LIMITS.segment.summary_max_chars
 
 
-MAX_SEGMENT_RUNS = 6
+MAX_SEGMENT_RUNS = LIMITS.segment.max_runs
 """一段最多覆盖几轮。到顶就强制断开——**不能让"还没结束"无限拖下去**。
 
 它不是语义判断，是止损：真有一段剧情写了六轮还没完，那也该先压一半，
 否则缓冲区里的东西永远等不到摘要，索引就一直退化在头部截断上。
 """
 
-MIN_SEGMENT_RUNS = 1
+MIN_SEGMENT_RUNS = LIMITS.segment.min_runs
 """一段最少几轮。**允许单轮成段**——一次干脆的转场本来就是一段，没理由硬凑。
 
 早先设成 2，理由是"不值得为一轮花一次调用"。那个理由在冷调用的方案下成立，

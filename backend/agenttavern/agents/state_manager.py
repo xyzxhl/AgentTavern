@@ -36,13 +36,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..config import LIMITS
 from ..llm import Message, Role
 from ..models import Actor, StateDelta, TraceEventType
 from ..prompting import state_manager_prompt
 from ..tools import RunContext, ToolRegistry
 from ..tracing import Tracer
 
-MAX_ROUNDS = 4
+MAX_ROUNDS = LIMITS.state_manager.max_rounds
 """硬上限。正常一到两轮就完（写一次、然后空手回来收口）。"""
 
 # 给几轮示范由 **`Capabilities.state_recent_runs` 决定（默认 3）**。

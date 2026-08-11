@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 
+from ..config import LIMITS
 from ..llm import Message
 from ..models import (
     Capabilities,
@@ -44,7 +45,7 @@ def _speaking(allowed: bool) -> str:
     return "allowed" if allowed else "forbidden"
 
 
-STATE_INLINE_LIMIT = 200
+STATE_INLINE_LIMIT = LIMITS.context.state_inline_limit
 """单个状态值超过这个长度就只给体量、不给内容，由模型按需 state_query 展开。"""
 
 

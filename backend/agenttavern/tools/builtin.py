@@ -18,11 +18,12 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from ..config import LIMITS
 from ..models import ModelAuthority, Node, StateDelta
 from .base import Tool, ToolOutcome, ToolResult, error
 from .context import RunContext
 
-MAX_READ_CHARS = 8000
+MAX_READ_CHARS = LIMITS.context.tool_read_chars
 """单次工具返回的体量上限——防止一次调用撑爆上下文。"""
 
 
