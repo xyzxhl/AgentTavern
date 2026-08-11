@@ -43,16 +43,18 @@ Broadcast = Callable[[ServerMessage], Awaitable[None]]
 class _Queued:
     text: str
     control_override: ControlOverride | None = None
-    parent_id: str | None = None
-    """显式指定父节点，用于重生成（D46）。
+    regenerate: bool = False
+    """重生成：挂在**当前叶的父**下，成为它的兄弟（D46）；普通输入挂在当前叶下。
 
-    ``None`` 表示"出队时的活跃叶"，这是普通输入的语义。**重生成必须走这里，
-    不能靠改 `session.active_leaf_id` 来传参**——那是共享状态，若此刻有 run 在飞，
-    它结束时会把活跃叶覆盖成自己，重生成就挂到了错误的父节点上。
+    **这里不再带父节点 id**（D147）。以前带，是因为可以重生成任意历史节点，而那
+    时不能靠改 `session.active_leaf_id` 传参——共享状态，若此刻有 run 在飞，
+    它结束时会把活跃叶覆盖成自己。现在分支只能在当前节点上开，"父节点是谁"就是
+    出队那一刻的活跃叶推出来的，没有第二个来源可对不上。
+
+    **排队期间又落了一轮的话，重 roll 的就是新那一轮**——那是对的：约束本身就是
+    「只能重 roll 当前节点」，而那时的当前节点已经是它了。入队时会先校验一次
+    （见 `app.py` 的 `Regenerate` 分支），所以这种情况只发生在用户手速比 run 还快时。
     """
-
-    explicit_parent: bool = False
-    """``parent_id`` 是否是显式指定的。因为 ``None`` 本身也是合法的父节点（根）。"""
 
 
 class SessionRunner:
@@ -123,15 +125,9 @@ class SessionRunner:
         text: str,
         override: ControlOverride | None = None,
         *,
-        parent_id: str | None = None,
-        explicit_parent: bool = False,
+        regenerate: bool = False,
     ) -> None:
-        item = _Queued(
-            text=text,
-            control_override=override,
-            parent_id=parent_id,
-            explicit_parent=explicit_parent,
-        )
+        item = _Queued(text=text, control_override=override, regenerate=regenerate)
         self._pending.append(item)
         await self._queue.put(item)
         self._emit(QueueStatus(pending=[q.text for q in self._pending]))
@@ -253,12 +249,9 @@ class SessionRunner:
                     if item
                     else (UserInput(text=simulated) if simulated else None)
                 ),
-                # 重生成显式带来父节点；普通输入用出队时的活跃叶。
-                parent_id=(
-                    item.parent_id
-                    if item is not None and item.explicit_parent
-                    else session.active_leaf_id
-                ),
+                # **父节点只有一个来源：出队那一刻的活跃叶**（D147）。
+                # 普通输入挂在它下面（延长），重生成挂在它的父下面（开兄弟）。
+                parent_id=_parent_for(self._repo, session.active_leaf_id, item),
                 ask_user=self._ask_user,
                 control_override=item.control_override if item else None,
                 on_trace=lambda event: self._emit(Trace(event=event)),
@@ -408,3 +401,19 @@ class SessionRunner:
             with contextlib.suppress(Exception):
                 # 连接断了不该拖垮 runner——它还要把当前 run 跑完并落盘。
                 await self._broadcast(message)
+
+
+def _parent_for(repo: SessionRepository, leaf_id: str | None, item: _Queued | None) -> str | None:
+    """这一轮挂在哪个节点下。**分支只能在当前节点上开**（D147）。
+
+    - 普通输入（含 goal 驱动的自动续跑）→ 挂在**当前叶**下，这是延长，不是分支。
+    - 重生成 → 挂在**当前叶的父**下，成为它的兄弟，原分支保留（D46）。
+
+    以前还有第三条路：提交时显式指定任意 `parent_id`，于是可以在历史上任何一点
+    分叉。收掉它是因为**「当前节点」从此有唯一含义**——想在更早的地方分叉，
+    先 `SwitchBranch` 切过去再动手。**切换不受限制，受限的只是创建**，
+    所以任意分叉仍然可达，只是不能一步到位。
+    """
+    if item is None or not item.regenerate or leaf_id is None:
+        return leaf_id
+    return repo.load_node(leaf_id).parent_id

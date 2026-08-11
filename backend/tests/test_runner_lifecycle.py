@@ -104,12 +104,12 @@ async def test_stop_cancels_only_the_run_not_the_loop(tmp_path: Path) -> None:
         await asyncio.wait_for(runner.aclose(), timeout=2.0)
 
 
-async def test_regenerate_carries_its_parent_through_the_queue(tmp_path: Path) -> None:
-    """**重生成的父节点必须随输入入队**，不能靠改 `session.active_leaf_id` 传递。
+async def test_regenerate_opens_a_sibling_of_the_current_leaf(tmp_path: Path) -> None:
+    """重生成 = 在**当前叶的父**下新建兄弟（D46/D147）。
 
-    活跃叶是共享状态：若提交重生成时正有一个 run 在飞，那个 run 结束时会把
-    活跃叶覆盖成自己，重生成就挂到了错误的父节点上——**产出的文本是对的，
-    位置是错的**，这类错误在树里看不出来，要等切分支时才发现状态对不上。
+    父节点只有一个来源：出队那一刻的活跃叶。以前它随输入一起入队，因为可以
+    重生成任意历史节点，而活跃叶是共享状态（有 run 在飞时会被覆盖）。**分支只能
+    在当前节点上开之后，那个来源自然只剩一个，也就没有对不上的余地。**
     """
     llm = ScriptedLLM(*one_run(), *one_run(prose="第二轮。"), *one_run(prose="重生成。"))
     runner, repo, _sent = make_runner(tmp_path, llm)
@@ -120,8 +120,7 @@ async def test_regenerate_carries_its_parent_through_the_queue(tmp_path: Path) -
         await _until(lambda: bool(repo.all_nodes()))
         first = next(iter(repo.all_nodes().values()))
 
-        # 模拟 app.py 的重生成路径：显式带上父节点（这里是根）
-        await runner.submit("第一条", parent_id=first.parent_id, explicit_parent=True)
+        await runner.submit("第一条", regenerate=True)
         await _until(lambda: len(repo.all_nodes()) > 1)
 
         nodes = list(repo.all_nodes().values())
@@ -133,11 +132,7 @@ async def test_regenerate_carries_its_parent_through_the_queue(tmp_path: Path) -
 
 
 async def test_ordinary_submit_still_chains_onto_the_active_leaf(tmp_path: Path) -> None:
-    """对照：不带 explicit_parent 的普通输入仍然接在活跃叶后面。
-
-    ``parent_id=None`` 本身是合法的（根节点），所以不能用 None 来表示
-    "没指定"——这就是 `explicit_parent` 这个旗标存在的理由。
-    """
+    """对照：普通输入接在活跃叶后面——那是**延长**，不是分支。"""
     llm = ScriptedLLM(*one_run(), *one_run(prose="第二轮。"))
     runner, repo, _sent = make_runner(tmp_path, llm)
     runner.start()

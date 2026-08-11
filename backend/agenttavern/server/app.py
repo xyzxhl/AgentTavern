@@ -251,15 +251,15 @@ async def _handle(
         await broadcast(StateSnapshot(values=repo.state_at(node.id).values, leaf_id=node.id))
 
     elif isinstance(message, Regenerate):
-        # 重生成 = 在父节点下新建兄弟（D46）。**父节点随这一条输入一起入队**，
-        # 不通过改 `session.active_leaf_id` 传递——那是共享状态，若此刻有 run 在飞，
-        # 它结束时会把活跃叶覆盖成自己，重生成就挂到了错误的父节点上。
-        node = repo.load_node(message.node_id)
-        await runner.submit(
-            node.user_input.text if node.user_input else "",
-            parent_id=node.parent_id,
-            explicit_parent=True,
-        )
+        # 重生成 = 在当前叶的父节点下新建兄弟（D46）。**只能重 roll 当前节点**
+        # （D147）：分支只在当前节点上开，想在更早处分叉先 `SwitchBranch` 切过去。
+        # 这里当场校验而不是静默改写，是因为"你以为的当前节点已经不是当前节点了"
+        # 悄悄重 roll 掉另一轮，比报错难查得多。
+        if message.node_id != repo.load_session().active_leaf_id:
+            await broadcast(ServerError(message="只能重新生成当前节点。先切到那一支再重生成。"))
+        else:
+            node = repo.load_node(message.node_id)
+            await runner.submit(node.user_input.text if node.user_input else "", regenerate=True)
 
 
 def _apply_node_patch(repo: SessionRepository, node_id: str, patch: NodePatch) -> Node:

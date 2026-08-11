@@ -243,6 +243,63 @@ def test_switch_branch_replays_state(client_for) -> None:
         assert snapshot["values"]["地点"] == "客厅"
 
 
+def test_a_branch_can_only_be_opened_on_the_current_node(client_for) -> None:
+    """**分支只能在当前节点上开**（D147）：重生成非当前节点直接报错。
+
+    以前提交时可以显式指定任意 `parent_id`，于是能在历史上任何一点分叉。收掉它
+    是因为「当前节点」从此有唯一含义——想在更早的地方分叉，**先切过去再动手**。
+    当场报错而不是静默改写：悄悄重 roll 掉另一轮比报错难查得多。
+    """
+    llm = ScriptedLLM(
+        *one_run(outline="第一轮。"),
+        *one_run(outline="第二轮。"),
+        state=[one_state("客厅"), one_state("阳台")],
+    )
+    client = client_for(llm)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "第一条"}))
+        first = collect(ws, "run_finished")[-1]["node"]["id"]
+        ws.send_text(json.dumps({"type": "submit", "text": "第二条"}))
+        collect(ws, "run_finished")
+
+        # 当前叶是第二轮，去重 roll 第一轮——拒绝。
+        ws.send_text(json.dumps({"type": "regenerate", "node_id": first}))
+        assert "只能重新生成当前节点" in collect(ws, "error")[-1]["message"]
+
+
+def test_switching_to_an_earlier_node_is_not_restricted(client_for) -> None:
+    """**受限的只是创建，不是切换。** 切到更早的节点仍然随意——
+    任意分叉因此仍然可达，只是要"先切过去再重生成"两步走。
+    """
+    llm = ScriptedLLM(
+        *one_run(outline="第一轮。"),
+        *one_run(outline="第二轮。"),
+        *one_run(outline="另一个第二轮。"),
+        state=[one_state("客厅"), one_state("阳台"), one_state("门口")],
+    )
+    client = client_for(llm)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "第一条"}))
+        first = collect(ws, "run_finished")[-1]["node"]["id"]
+        ws.send_text(json.dumps({"type": "submit", "text": "第二条"}))
+        second = collect(ws, "run_finished")[-1]["node"]["id"]
+
+        # 切回第一轮，此刻它就是当前节点，于是可以在它这里分叉。
+        ws.send_text(json.dumps({"type": "switch_branch", "node_id": first}))
+        collect(ws, "state")
+        ws.send_text(json.dumps({"type": "regenerate", "node_id": first}))
+        third = collect(ws, "run_finished")[-1]["node"]
+
+    assert third["id"] not in {first, second}
+    assert third["parent_id"] is None, "重生成开的是第一轮的兄弟"
+
+
 def test_user_edit_rewrites_node_directly(client_for) -> None:
     """用户编辑**直接改写节点数据**，不做依赖检查（D65）。"""
     client = client_for(happy_llm())

@@ -96,7 +96,13 @@ class EditNode(BaseModel):
 
 
 class Regenerate(BaseModel):
-    """重生成：在指定节点的父节点下新建兄弟节点（D46）。原分支保留。"""
+    """重生成：在**当前节点**的父节点下新建兄弟（D46/D147）。原分支保留。
+
+    ``node_id`` 必须是当前活跃叶——**分支只能在当前节点上开**（D147）。想在更早
+    的地方分叉，先 `SwitchBranch` 切过去，再重生成或推进；**切换不受限制，
+    受限的只是创建**。带着 id 而不是省掉它，是为了让"你以为的当前节点已经不是
+    当前节点了"这件事当场报错，而不是悄悄重 roll 掉另一轮。
+    """
 
     type: Literal["regenerate"] = "regenerate"
     node_id: str
