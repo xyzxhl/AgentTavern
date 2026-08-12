@@ -59,12 +59,7 @@ sections:
   # writer 没有历史——它每次都是一次干净的渲染（D52）。
   # 上文只为接住语气，两轮就够（RECENT_PROSE）；长程记忆是 director 的事。
   - {role: user, title: 上文, context: upstream}
-
-  - role: user
-    title: 本轮细纲
-    intro: 以下是本段正文要实现的细纲。按前面所有要求把它展开成正文。
-    outro: 只输出正文，不要写标题、不要解释你的处理、不要复述细纲。
-    context: outline
+  - {role: user, title: 本轮细纲, context: outline}
 
 intro: |
   这是一个复杂的写作任务，你需要根据文风要求和写作指导，把用户提供的细纲展开为正文。

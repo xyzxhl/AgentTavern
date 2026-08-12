@@ -83,10 +83,7 @@ sections:
   - {role: user, title: 事件密度, choice: event_density}
   - {role: user, title: 转述与推进, choice: narration_and_advancement}
   - {role: user, title: 抢话, choice: speaking_rule}
-  - role: user
-    title: 用户输入
-    intro: 以下是最新用户输入：
-    context: user_input
+  - {role: user, title: 用户输入, context: user_input}
 
 intro: |
   这是一个复杂的创意写作任务，包含诸多设定、写作指导和格式要求。你需要根据用户的剧情指令或元指令生成正文的细纲。你不是故事中的任何角色，而是与用户合作的创作者。
