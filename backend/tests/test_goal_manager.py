@@ -118,7 +118,7 @@ def test_switching_branches_rebuilds_instead_of_extending() -> None:
     assert "另一支的正文。" in body
     assert "第1轮的正文。" not in body, "被放弃那一支不该留在对话里"
     # 重建丢掉工具调用的历史，但**计划与进度以投影的形式留着**。
-    assert "他先松口" in body and "已达成" in body
+    assert "他先松口" in body and "[已成立]" in body
 
 
 def test_before_the_goal_gets_outlines_and_during_gets_prose() -> None:
