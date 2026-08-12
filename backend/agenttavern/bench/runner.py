@@ -267,7 +267,13 @@ async def _drive_goal(
     run = session.goal_run or GoalRun(started_at_leaf_id=repo.load_node(leaf_id).parent_id)
     tracer = Tracer(repo, leaf_id, events.append, persist=session.capabilities.trace)
 
-    sync_conversation(goal, run, repo.path_to(leaf_id), density=session.control.expansion_density)
+    sync_conversation(
+        session.meta,
+        goal,
+        run,
+        repo.path_to(leaf_id),
+        density=session.control.expansion_density,
+    )
     step = await advance_goal(
         gateway, tracer, goal, run, density=session.control.expansion_density, user_id=session.id
     )

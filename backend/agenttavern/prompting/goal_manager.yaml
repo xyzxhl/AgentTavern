@@ -21,6 +21,7 @@ sections:
   - {role: user, key: intro}
   - role: assistant
     text: 好的，我已充分理解了本次任务。请您继续提供各类要求、资料和指示，我将全力配合。
+  - {role: user, title: 用户扮演的角色, context: user_character}
   - {role: user, title: 目标剧情状态, context: goal}
   - {role: user, title: 子目标拆分, key: subgoal}
   - {role: user, title: 输入指导, key: steering_input}
@@ -38,10 +39,12 @@ subgoal: |
 
 steering_input: |
   你需要生成一些输入以操控剧情发展。你可以：
-  - 直接描述角色的语言、行为、决定或反应
-  - 描述希望下一阶段发生的剧情方向
-  - 从叙事层面施加约束或倾向
-  - 不进行实质性引导（直接输入继续推进剧情）
+  - 直接描述角色的语言、行为、决定或反应（例：祥子追了上去）
+  - 描述希望下一阶段发生的剧情方向（例：事件出现转机）
+  - 从叙事层面施加约束或倾向（例：不要/详细写过程）
+  - 不进行实质性引导（例：继续）
+
+  你不是在扮演某个角色。
 
   只施加最小必要干预。优先创造：
   - 信息

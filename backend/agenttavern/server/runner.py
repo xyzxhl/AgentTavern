@@ -326,6 +326,7 @@ class SessionRunner:
         # 事件密度是 goal_manager 唯一读的控制维度：它决定阶段拆多细、
         # 一条输入推多远（D93 那条投影的第三面）。
         sync_conversation(
+            session.meta,
             goal,
             run,
             self._repo.path_to(leaf_id),

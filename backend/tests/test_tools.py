@@ -18,6 +18,7 @@ from agenttavern.models import (
     WorldbookEntry,
     WorldbookMode,
 )
+from agenttavern.prompting.assembler import text as _real_text
 from agenttavern.storage import Store
 from agenttavern.tools import (
     RunContext,
@@ -383,7 +384,12 @@ async def test_specs_are_valid_json_schema(reg) -> None:
 
 
 def test_state_write_says_what_to_record() -> None:
-    """判据必须在**工具描述**里，不能只在系统提示词里——模型是照着工具描述填参数的。
+    """判据在 **state_manager 的提示词**里，不在工具描述里（D152）。
+
+    它以前整整两千字堆在 `state_write` 的描述里。工具描述该只说「作用 + 参数
+    格式」——判据是提示词，而提示词该在 YAML 里，用户能改。
+
+    **判据本身一个字没变**，下面逐条钉的还是它：
 
     **state 是 history 的捷径，不是第二份记录**（D99）。这一句定位撑起了整个判据：
     它是**双条件**的，两条各排掉一类实测出现过的错记——
@@ -394,7 +400,12 @@ def test_state_write_says_what_to_record() -> None:
     单说"这是状态不是事件"两类都拦不住：物件朝向确实是状态。
     （第三类误解「把设定抄进 state」不靠描述解决，靠 worldbook 种子移除诱因，D90。）
     """
-    desc = next(t.description for t in build_state_tools(ALL_ON) if t.name == "state_write")
+    desc = _real_text("state_manager", "what_to_record")
+
+    # 工具描述那侧只剩一句话——**判据不再有第二个副本**。
+    tool_desc = next(t.description for t in build_state_tools(ALL_ON) if t.name == "state_write")
+    assert len(tool_desc) < 60
+    assert "约束类" not in tool_desc
 
     # 定位：捷径而非记录。删键不丢信息这条推论也要在，否则模型不敢删。
     assert "不是第二份记录" in desc

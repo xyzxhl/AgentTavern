@@ -5,17 +5,11 @@
 `Callable[[Any, P], ...]`，`ToolRegistry.dispatch` 也随之放宽到 `Any`。
 两套工具调度必然漂移，不如让一套认两种 context。
 
-## 为什么是三个
+## 描述只说「作用 + 参数格式」
 
-goal_manager 以前把同一件事拆成三次干净调用（`plan` / `step` / `verdict`），
-用一个选项组切任务。它们要看的东西完全一样，而真正的判据是连续的：
-「哪些达成了」和「剩下的还成不成立」是同一次判断的两面。现在合成一份长对话，
-模型自己决定这一轮该调哪几个：
-
-- 第一轮 `plan` + `advance`
-- 平常 `advance`
-- 剧情偏了 `plan`（就地重拆）+ `advance`
-- 该收了 `advance` + `finish`
+怎么拆中间状态、判定从严到什么程度、引导该多克制——**那些判据全在
+`goal_manager.yaml` 里**（`subgoal` / `goal_judge` / `steering_input` 三节）。
+这里一个字都不重复：两份必然对不上，而对不上的时候没人知道该信哪份（D152）。
 
 **收口条件是「这一次不再调用任何工具」**（同 state_manager）。
 """
@@ -54,28 +48,10 @@ class GoalContext:
 
 
 class PlanParams(BaseModel):
-    subgoals: list[str] = Field(
-        min_length=1,
-        description="若干中间状态，每个一句话。\n"
-        "**它们描述状态，不是步骤**：「他终于肯开口说那天的事」是中间状态，"
-        "「让林昭拿出照片」是步骤。**顺序不构成要求**——可以被跳过、"
-        "以不同顺序实现、同时实现，也可能因剧情变化而不再必要。\n"
-        "唯一的硬要求是**达成与否能被看出来**：读完剧情能明确回答它成立了没有。\n"
-        "数量按目标体量定。不要为了凑数把一件事切成两半，"
-        "也不要把整个目标压成一条——那样等于没拆。",
-    )
+    subgoals: list[str] = Field(min_length=1, description="若干中间状态，每个一句话。")
 
 
-_PLAN_DESC = """给出（或**重新给出**）目标与当前剧情之间的中间状态。
-
-**它们是给你自己用的脚手架，不是必须逐项兑现的合同。** 存在的目的是逼你在动手
-之前先想清楚差距在哪。**顺序不构成要求**：可以跳过、乱序、同时达成。
-
-**某一条不再必要，或者剧情已经走到别处，就地重调这个工具重给一版。**
-已经成立的状态不要再列，**从当前局面往下看**。
-
-重给不算失败，也不限次数。**但会清空进度**：新的一版一律从未达成算起——
-「已达成」不能跨着两版混在一起。"""
+_PLAN_DESC = "建立或重建中间状态。**重建会清空进度**，全部从未成立算起。"
 
 
 async def _plan(ctx: GoalContext, params: PlanParams) -> ToolResult:
@@ -91,10 +67,7 @@ async def _plan(ctx: GoalContext, params: PlanParams) -> ToolResult:
 class CheckParams(BaseModel):
     reached: list[int] = Field(
         default_factory=list,
-        description="本轮**新**成立的中间状态序号（从 1 数）。一条都没有就给空列表。\n"
-        "判定从严：**剧情里真的发生了**才算，「正在朝那个方向走」「达成条件已经"
-        "备好」都不算。一轮可能同时成立两条，也可能推好几轮一条都不成立——"
-        "不要为了显得有进展而放宽标准。",
+        description="本轮**新**成立的中间状态序号（从 1 数）。一条都没有就给空列表。",
     )
 
 
@@ -119,14 +92,7 @@ async def _check(ctx: GoalContext, params: CheckParams) -> ToolResult:
 
 
 class SteerParams(BaseModel):
-    next_input: str = Field(
-        min_length=1,
-        description="替用户写的下一条输入。\n"
-        "**只施加最小必要干预**：优先创造信息、选择、机会、冲突、条件、动机，"
-        "或可供角色响应的情境；避免直接制造目标要求的最终结果。\n"
-        "不要提中间状态、目标、进度这些词——用户不知道有这些东西；"
-        "顺着已经写出来的剧情接。",
-    )
+    next_input: str = Field(min_length=1, description="替用户写的下一条输入，一段话。")
 
 
 async def _steer(ctx: GoalContext, params: SteerParams) -> ToolResult:
@@ -141,15 +107,9 @@ async def _steer(ctx: GoalContext, params: SteerParams) -> ToolResult:
 
 class FinishParams(BaseModel):
     outcome: GoalOutcome = Field(
-        description="`done`——目标剧情状态的每一项都已在剧情里成立。\n"
-        "`failed`——**当前局面下再也走不到目标了**。"
-        "这一条要慎用：只是这一版中间状态没走通的话，重调 `plan` 重给一版即可。"
+        description="`done`（目标已成立）或 `failed`（当前局面下再也走不到）。"
     )
-    reason: str = Field(
-        min_length=1,
-        description="`done` 要**逐条**对着目标核对一遍写出来，不要只写一句"
-        "「已完成」；`failed` 要说明为什么现在这个局面下再也走不到。",
-    )
+    reason: str = Field(min_length=1, description="逐条对着目标核对的结果。")
 
 
 async def _finish(ctx: GoalContext, params: FinishParams) -> ToolResult:
@@ -183,26 +143,14 @@ def goal_tools() -> list[Tool[Any]]:
     """
     return [
         _tool("plan", _PLAN_DESC, PlanParams, _plan),
-        _tool(
-            "check",
-            "更新中间状态的成立情况。**只观察，不干预。**",
-            CheckParams,
-            _check,
-        ),
+        _tool("check", "更新中间状态的成立情况。只观察，不干预。", CheckParams, _check),
         _tool(
             "steer",
-            "替用户写出下一条输入，引导剧情。**不想实质性引导时就不要调它**——"
-            "那一轮会以「继续推进」交给写手。",
+            "替用户写出下一条输入。**不引导就不要调它**——那一轮会以「继续推进」交给写手。",
             SteerParams,
             _steer,
         ),
-        _tool(
-            "finish",
-            "结束这个目标，交回控制权。**只有两种终态。**\n"
-            "预算不够了不用调它——那是暂停，用户可以加预算接着跑。",
-            FinishParams,
-            _finish,
-        ),
+        _tool("finish", "结束这个目标，交回控制权。", FinishParams, _finish),
     ]
 
 

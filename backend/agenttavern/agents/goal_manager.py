@@ -45,6 +45,7 @@ from ..models import (
     GoalRun,
     InputSource,
     Node,
+    SessionMeta,
     TraceEventType,
 )
 from ..prompting import assemble, titled
@@ -79,14 +80,25 @@ def render_before(nodes: list[Node]) -> str:
     return "\n\n".join(f"{i + 1}. {n.summary_or_head()}" for i, n in enumerate(nodes))
 
 
-def _prefix(goal: Goal, density: ExpansionDensity, before: list[Node]) -> list[Message]:
-    """静态前缀：任务说明 + 目标 + 节奏 + goal 之前的剧情。
+def _prefix(
+    meta: SessionMeta, goal: Goal, density: ExpansionDensity, before: list[Node]
+) -> list[Message]:
+    """静态前缀：任务说明 + 用户扮演谁 + 目标 + 节奏 + goal 之前的剧情。
 
     **整个 goal 生命周期不变**——"之前"那段不会再长，goal 期间的轮次逐条追加在后面。
+
+    **`user_character` 必须给**（D152）：它替用户写输入，不知道用户扮演谁就只能
+    从种子输入的措辞里猜人称。猜对是运气——种子恰好是第一人称时它跟着写"我"，
+    而那一句本可以是第三人称、也可能根本没有种子（goal 从会话一开始就在）。
+    没设这个字段时整节不出现，它退回去猜，和以前一样。
     """
     return assemble(
         "goal_manager",
-        contexts={"goal": goal.description, "history_outline": render_before(before)},
+        contexts={
+            "user_character": meta.user_character,
+            "goal": goal.description,
+            "history_outline": render_before(before),
+        },
         options={"pace": density.value},
     ).messages
 
@@ -136,6 +148,7 @@ def plan_snapshot(run: GoalRun) -> Message | None:
 
 
 def sync_conversation(
+    meta: SessionMeta,
     goal: Goal,
     run: GoalRun,
     path: list[Node],
@@ -162,7 +175,7 @@ def sync_conversation(
     start = during_ids.index(run.seen_leaf_id) + 1 if resumable and run.seen_leaf_id else 0
 
     if not resumable:
-        run.conversation = _prefix(goal, density, before)
+        run.conversation = _prefix(meta, goal, density, before)
         snapshot = plan_snapshot(run)
         if snapshot is not None:
             run.conversation.append(snapshot)
