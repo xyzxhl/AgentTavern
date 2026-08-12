@@ -35,7 +35,7 @@ class GoalContext:
     run: GoalRun
 
     next_input: str | None = None
-    """这一轮 `advance` 写下的模拟用户输入，由编排层取走喂给下一轮。"""
+    """这一轮 `advance` 写下的操控剧情的输入，由编排层取走喂给下一轮。"""
 
     finished: tuple[GoalOutcome, str] | None = None
     """`finish` 填的终态。填了就该交回控制权。"""
@@ -49,9 +49,6 @@ class GoalContext:
 
 class PlanParams(BaseModel):
     subgoals: list[str] = Field(min_length=1, description="若干中间状态，每个一句话。")
-
-
-_PLAN_DESC = "建立或重建中间状态。**重建会清空进度**，全部从未成立算起。"
 
 
 async def _plan(ctx: GoalContext, params: PlanParams) -> ToolResult:
@@ -92,7 +89,7 @@ async def _check(ctx: GoalContext, params: CheckParams) -> ToolResult:
 
 
 class SteerParams(BaseModel):
-    next_input: str = Field(min_length=1, description="替用户写的下一条输入，一段话。")
+    next_input: str = Field(min_length=1, description="操控剧情发展的输入")
 
 
 async def _steer(ctx: GoalContext, params: SteerParams) -> ToolResult:
@@ -142,11 +139,13 @@ def goal_tools() -> list[Tool[Any]]:
     「不进行实质性引导」也是一种合法的选择。
     """
     return [
-        _tool("plan", _PLAN_DESC, PlanParams, _plan),
+        _tool(
+            "plan", "建立或重建中间状态。**重建会清空进度**，全部从未成立算起。", PlanParams, _plan
+        ),
         _tool("check", "更新中间状态的成立情况。只观察，不干预。", CheckParams, _check),
         _tool(
             "steer",
-            "替用户写出下一条输入。**不引导就不要调它**——那一轮会以「继续推进」交给写手。",
+            "填写操控剧情的输入",
             SteerParams,
             _steer,
         ),
