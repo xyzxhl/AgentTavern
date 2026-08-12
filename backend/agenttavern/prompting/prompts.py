@@ -132,7 +132,6 @@ def director_prompt(
     history: Sequence[Message] = (),
     capabilities: Capabilities | None = None,
     worldinfo: list[WorldbookEntry] | None = None,
-    tools: str = "",
 ) -> Prompt:
     """装配 director 收到的整串消息。
 
@@ -152,8 +151,6 @@ def director_prompt(
             # 题材与基调是这个故事自己写的话——**数据，不是模板**，所以走 context。
             "genre_tone": meta.genre_tone,
             "worldinfo": render_worldinfo(worldinfo or [], expandable=caps.worldinfo_read),
-            # 工具面的索引由工具模块自己给——这里只是把它放到该在的位置（D140）。
-            "tools": tools,
             "history": history,
             "state": render_state(state, expandable=caps.state_query) if caps.state else "",
             "user_input": user_text or text("director", "no_user_input"),
@@ -216,7 +213,6 @@ def state_manager_prompt(
     recent: Sequence[Node] = (),
     outline: str = "",
     prose: str = "",
-    tools: str = "",
     capabilities: Capabilities | None = None,
 ) -> Prompt:
     """装配 state_manager 收到的整串消息（D143）。
@@ -231,7 +227,6 @@ def state_manager_prompt(
     return assemble(
         "state_manager",
         contexts={
-            "tools": tools,
             "state": render_state(state, expandable=caps.state_query),
             "recent": render_recent(recent),
             "outline": outline,

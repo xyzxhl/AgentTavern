@@ -82,7 +82,6 @@ async def run_state_manager(
         recent=recent,
         outline=outline,
         prose=prose,
-        tools=registry.render(),
         capabilities=ctx.capabilities,
     ).messages
 

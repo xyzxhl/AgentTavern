@@ -114,18 +114,6 @@ class ToolRegistry:
         """
         return cls(goal_tools())
 
-    def render(self) -> str:
-        """工具面的**索引**：谁在场，各管什么事。
-
-        全文描述随 `tools` 参数一起发出去，这里只列名字和头一句——**它是占位**，
-        为的是让「有哪些工具」在提示词的顺序里看得见、位置可编排（D140）。
-        内容仍然归工具模块所有：一个工具怎么描述自己，跟它的参数、错误信息、
-        注册条件是同一件事，拆开写两处必然对不上。
-        """
-        return "\n".join(
-            f"- `{t.name}`：{(t.description or '').splitlines()[0]}" for t in self._tools.values()
-        )
-
     @property
     def names(self) -> list[str]:
         return list(self._tools)

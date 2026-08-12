@@ -130,8 +130,6 @@ async def run_director(
         history=prior,
         capabilities=session.capabilities,
         worldinfo=ctx.repo.worldbook(),
-        # 工具面的索引由注册表自己渲染——YAML 只决定它出现在哪（D140）。
-        tools=registry.render(),
     )
     messages = prompt.messages
 

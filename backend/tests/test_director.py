@@ -385,8 +385,7 @@ def test_the_flow_steps_are_gone_and_the_tools_carry_them() -> None:
     """**流程那四条已经删掉**（D143）：每一条都有工具描述覆盖它，且写得更细。
 
     这里钉的是"提示词里不再有第二份流程说明"——两份必然对不上，而工具描述
-    才是模型照着填参数的那一份。工具面本身由 `ToolRegistry.render()` 注入，
-    不由这份 YAML 拥有（D140）。
+    才是模型照着填参数的那一份。
     """
     prompt = prompt_for(capabilities=ALL_ON)
 
@@ -770,3 +769,21 @@ def test_a_fragment_file_may_be_a_bare_section_list() -> None:
     只是跑到一半往对话里追加的那一条，没有别的东西要跟它放在一起。
     """
     assert isinstance(assembler.load("director_append")["sections"], list)
+
+
+def test_the_tool_list_is_not_a_message() -> None:
+    """**工具清单不进消息**（D149）。
+
+    它走 API 请求的 `tools` 字段，模型本来就看得见。再放一条「可用的工具」的
+    消息，是同一份清单发了两遍——多花一份体量，还多一处会和真工具面对不上的地方。
+
+    这条容易反复：那一节当初是有意加的（D140，为了让「有哪些工具」在提示词的顺序
+    里看得见），加的时候没意识到工具根本不在 messages 里。
+    """
+    prompt = prompt_for(capabilities=ALL_ON)
+    for name in ToolRegistry.for_session(ALL_ON).names:
+        assert name not in prompt or name == "submit_outline", f"{name} 不该出现在消息里"
+
+    # `submit_outline` 是例外：它出现在「流程指导」那一句里，讲的是**什么时候调**，
+    # 不是在列清单。
+    assert "可用的工具" not in prompt
