@@ -273,7 +273,9 @@ async def _handle(
                     if v is not None
                 },
             )
-            session.goal_run = GoalRun()
+            # **记下从哪儿开始**（D150）：它之前的剧情给细纲、进静态前缀，
+            # 之后的每一轮给正文、逐条追加。
+            session.goal_run = GoalRun(started_at_leaf_id=session.active_leaf_id)
             repo.save_session(session)
 
     elif isinstance(message, SetGoalBudget):

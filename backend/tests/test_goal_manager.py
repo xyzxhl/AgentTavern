@@ -36,7 +36,8 @@ def _node(index: int, *, source: InputSource = InputSource.SIMULATED, said: str 
         id=f"run_{index}",
         parent_id=f"run_{index - 1}" if index else None,
         user_input=UserInput(text=said, source=source),
-        outline=f"第{index}轮的剧情。",
+        outline=f"第{index}轮的细纲。",
+        prose=f"第{index}轮的正文。",
     )
 
 
@@ -91,17 +92,45 @@ def test_switching_branches_rebuilds_instead_of_extending() -> None:
     """
     run = GoalRun(plan=GoalPlan(subgoals=[SubGoal(description="他先松口", done=True)]))
     sync_conversation(GOAL, run, [_node(0), _node(1)])
-    assert "第1轮的剧情。" in _joined(run)
+    assert "第1轮的正文。" in _joined(run)
 
     # 切到另一支：run_1 不在这条路径上了
-    other = Node(id="run_x", parent_id="run_0", outline="另一支的剧情。")
+    other = Node(id="run_x", parent_id="run_0", outline="另一支的细纲。", prose="另一支的正文。")
     sync_conversation(GOAL, run, [_node(0), other])
 
     body = _joined(run)
-    assert "另一支的剧情。" in body
-    assert "第1轮的剧情。" not in body, "被放弃那一支不该留在对话里"
+    assert "另一支的正文。" in body
+    assert "第1轮的正文。" not in body, "被放弃那一支不该留在对话里"
     # 重建丢掉工具调用的历史，但**计划与进度以投影的形式留着**。
     assert "他先松口" in body and "已达成" in body
+
+
+def test_before_the_goal_gets_outlines_and_during_gets_prose() -> None:
+    """**路径切成两段**（D150）。
+
+    goal 设立**之前**那段进静态前缀、给细纲——它只回答"故事到这儿了"，细纲够用
+    而且便宜，还全量给一次就够。goal **期间**每轮逐条追加、给正文——要判的是
+    "这一步到底有没有发生"，而**细纲只说定了什么，正文才是最终写出来的东西**。
+    """
+    run = GoalRun(started_at_leaf_id="run_1")
+    sync_conversation(GOAL, run, [_node(0), _node(1), _node(2), _node(3)])
+    body = _joined(run)
+
+    # 之前那两轮：细纲在、正文不在
+    assert "第0轮的细纲。" in body and "第1轮的细纲。" in body
+    assert "第0轮的正文。" not in body and "第1轮的正文。" not in body
+    # 之后那两轮：正文在
+    assert "第2轮的正文。" in body and "第3轮的正文。" in body
+
+
+def test_a_goal_set_at_session_start_treats_everything_as_during() -> None:
+    """`started_at_leaf_id` 为空 = 这个 goal 从会话一开始就在，整条路径都算期间。"""
+    run = GoalRun()
+    sync_conversation(GOAL, run, [_node(0), _node(1)])
+    body = _joined(run)
+
+    assert "第0轮的正文。" in body and "第1轮的正文。" in body
+    assert "还没有已经写出来的剧情" in body, "之前那段是空的，要说出来"
 
 
 # -- 三个工具 -----------------------------------------------------------------
@@ -114,10 +143,10 @@ async def _call(ctx: GoalContext, name: str, **args):
 
 
 async def test_replanning_resets_progress() -> None:
-    """**subgoal 是脚手架，不是执行契约**（D148）。
+    """**中间状态是脚手架，不是执行契约**（D148）。
 
-    剧情偏了就地重拆，不限次数、不算失败。但重拆会清空进度——新计划里的阶段
-    一律从未达成算起，否则「已达成」会跨着两份不同的计划混在一起。
+    剧情变了就地重给一版，不限次数、不算失败。但重给会清空进度——新的一版一律
+    从未成立算起，否则「已成立」会跨着两版混在一起。
     """
     ctx = GoalContext(goal=GOAL, run=GoalRun())
     await _call(ctx, "plan", subgoals=["甲", "乙"])
@@ -163,6 +192,23 @@ async def test_finish_failed_needs_no_such_precondition() -> None:
     result = await _call(ctx, "finish", outcome="failed", reason="用户把剧情带去了别的城市")
     assert not result.is_error
     assert ctx.finished is not None and ctx.finished[0] is GoalOutcome.FAILED
+
+
+async def test_progress_is_reported_as_what_is_left_not_as_a_next_one() -> None:
+    """**中间状态之间没有先后依赖**（D150）：可以跳过、乱序、同时成立。
+
+    所以回执列的是「还剩哪些」，不是「下一个是哪个」——挑出一个说"当前这个"
+    等于凭空造了个顺序，而模型会照着那个顺序推。
+    """
+    ctx = GoalContext(goal=GOAL, run=GoalRun())
+    await _call(ctx, "plan", subgoals=["甲", "乙", "丙"])
+
+    # 跳过甲，直接成立乙和丙——这在新语义下完全正常。
+    result = await _call(ctx, "advance", reached=[2, 3], next_input="我走过去")
+
+    assert "甲" in result.content
+    assert "乙" not in result.content and "丙" not in result.content
+    assert "当前" not in result.content
 
 
 async def test_advance_without_a_plan_is_recoverable() -> None:

@@ -67,11 +67,26 @@ class GoalStep:
     """``(outcome, reason)``。非空即该交回控制权。"""
 
 
-def _prefix(goal: Goal, density: ExpansionDensity) -> list[Message]:
-    """静态前缀：任务说明 + 目标 + 节奏。**整个 goal 生命周期不变。**"""
+def render_before(nodes: list[Node]) -> str:
+    """goal 设立**之前**那段剧情，给**细纲**（D150）。
+
+    摘要策略和 director 一样（`summary_or_head`）：归过段的用那段摘要，
+    没归段的用头部截断并写明还剩多少字（D144）。理由也一样——这段只回答
+    "故事到这儿了"，细纲够用而且便宜；它还在静态前缀里，全量给一次就够。
+    """
+    if not nodes:
+        return "（还没有已经写出来的剧情。）"
+    return "\n\n".join(f"{i + 1}. {n.summary_or_head()}" for i, n in enumerate(nodes))
+
+
+def _prefix(goal: Goal, density: ExpansionDensity, before: list[Node]) -> list[Message]:
+    """静态前缀：任务说明 + 目标 + 节奏 + goal 之前的剧情。
+
+    **整个 goal 生命周期不变**——"之前"那段不会再长，goal 期间的轮次逐条追加在后面。
+    """
     return assemble(
         "goal_manager",
-        contexts={"goal": goal.description},
+        contexts={"goal": goal.description, "history_outline": render_before(before)},
         options={"pace": density.value},
     ).messages
 
@@ -83,11 +98,15 @@ _SOURCE_LABEL = {
 
 
 def turn_record(node: Node, index: int, interjections: list[str]) -> Message:
-    """一轮的记录：**输入是谁给的** + 那一轮的剧情梗概。
+    """goal 期间某一轮的记录：**输入是谁给的** + **那一轮的正文**。
+
+    给正文而不是细纲（D150）：goal 期间要判的是"这一步到底有没有发生"，而**细纲
+    只说定了什么，正文才是最终写出来的东西**——留白处落成了什么、话说到什么份上，
+    只有正文看得见。goal 设立之前那段仍然给细纲，它在静态前缀里（`render_before`）。
 
     来源标注是这条消息里最要紧的东西（D148）：剧情偏了，是 goal_manager 自己
     推错了，还是用户主动把剧情带走了？后者强得多——用户的意图优先于目标。
-    不标注的话两种偏离在梗概里长得一模一样，而应对完全不同。
+    不标注的话两种偏离长得一模一样，而应对完全不同。
     """
     said = node.user_input
     parts = []
@@ -97,7 +116,8 @@ def turn_record(node: Node, index: int, interjections: list[str]) -> Message:
         parts.append("〔没有输入，直接推进〕")
     for word in interjections:
         parts.append(f"〔用户插话：{word}〕")
-    parts.append(node.summary_or_head(400))
+    # 正文没写成（那一轮失败或被打断）时回退到细纲——**有总比空着强**。
+    parts.append(node.prose or node.summary_or_head())
     return Message(role=Role.USER, content=titled(f"第 {index} 轮", "\n".join(parts)))
 
 
@@ -129,18 +149,25 @@ def sync_conversation(
     完整留着（`plan_snapshot`），**代价只在恢复那一刻付一次**——之后又是增量，
     静态前缀重新稳定下来。
     """
+    # **路径切成两段**（D150）：goal 之前给细纲（进静态前缀），之后给正文（逐条追加）。
     ids = [n.id for n in path]
-    resumable = bool(run.conversation) and run.seen_leaf_id in ids
-    start = ids.index(run.seen_leaf_id) + 1 if resumable and run.seen_leaf_id else 0
+    cut = ids.index(run.started_at_leaf_id) + 1 if run.started_at_leaf_id in ids else 0
+    before, during = path[:cut], path[cut:]
+
+    during_ids = [n.id for n in during]
+    resumable = bool(run.conversation) and run.seen_leaf_id in during_ids
+    start = during_ids.index(run.seen_leaf_id) + 1 if resumable and run.seen_leaf_id else 0
 
     if not resumable:
-        run.conversation = _prefix(goal, density)
+        run.conversation = _prefix(goal, density, before)
         snapshot = plan_snapshot(run)
         if snapshot is not None:
             run.conversation.append(snapshot)
 
-    for index in range(start, len(path)):
-        run.conversation.append(turn_record(path[index], index + 1, interjections_of(path[index])))
+    for index in range(start, len(during)):
+        run.conversation.append(
+            turn_record(during[index], cut + index + 1, interjections_of(during[index]))
+        )
     run.seen_leaf_id = path[-1].id if path else None
 
 
@@ -215,6 +242,7 @@ __all__ = [
     "MAX_ROUNDS",
     "GoalStep",
     "advance_goal",
+    "render_before",
     "plan_snapshot",
     "sync_conversation",
     "turn_record",

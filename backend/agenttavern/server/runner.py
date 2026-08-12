@@ -304,7 +304,12 @@ class SessionRunner:
         goal = session.meta.goal
         if goal is None:
             return
-        run = session.goal_run or GoalRun()
+        run = session.goal_run or GoalRun(
+            # 走到这里还没有 `GoalRun`，说明 goal 不是经 `SetGoal` 设的（会话创建时
+            # 就带着，或走 REST 改的）。那它是**这一轮之前**就有的，所以起点划在
+            # 这一轮的父节点上（D150）。
+            started_at_leaf_id=self._repo.load_node(leaf_id).parent_id
+        )
         if run.paused:
             return
 
