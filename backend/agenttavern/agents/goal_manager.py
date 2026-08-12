@@ -116,8 +116,11 @@ def turn_record(node: Node, index: int, interjections: list[str]) -> Message:
         parts.append("〔没有输入，直接推进〕")
     for word in interjections:
         parts.append(f"〔用户插话：{word}〕")
-    # 正文没写成（那一轮失败或被打断）时回退到细纲——**有总比空着强**。
-    parts.append(node.prose or node.summary_or_head())
+    # **正文没写成时不要回退到细纲**（D151）。回退看起来只是"降级用一份更粗的
+    # 记录"，实际上把一个失败悄悄补齐了：那一轮什么都没写出来，而 goal_manager
+    # 读到一段像模像样的剧情，会照着它判某个中间状态已经成立。
+    # 说出来，让它当成一次没有产出的轮次处理。
+    parts.append(node.prose or "（这一轮没有写出正文。）")
     return Message(role=Role.USER, content=titled(f"第 {index} 轮", "\n".join(parts)))
 
 

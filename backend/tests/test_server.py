@@ -354,19 +354,19 @@ def test_siblings_endpoint(client_for) -> None:
 def test_goal_drives_another_run_with_a_simulated_input(client_for) -> None:
     """goal_manager 在 run 末跑，未达标就开下一 run（D28）——**而且它替用户写输入**。
 
-    第一轮之后还没有阶段计划，所以那一次是 `plan` + `advance` 一起调：新计划的
-    第一条输入就在这一轮写好，下一轮直接能用。所以第二个 run 是有输入的，
-    只不过那条不是人打的——它的 `source` 因此是 `simulated`（D148）。
+    第一轮之后还没有中间状态，所以那一次是 `plan` + `steer`：下一条输入就在这一轮
+    写好，下一轮直接能用。所以第二个 run 是有输入的，只不过那条不是人打的——
+    它的 `source` 因此是 `simulated`（D148）。
     """
     llm = ScriptedLLM(
         *one_run(outline="第一轮。", prose="正文一。"),
         tools(
             ("plan", {"subgoals": ["他先松口", "两人摊开说"]}),
-            ("advance", {"reached": [], "next_input": "我把照片推过去。"}),
+            ("steer", {"next_input": "我把照片推过去。"}),
         ),
         text("先推到这里。"),
         *one_run(outline="第二轮。", prose="正文二。"),
-        tool("advance", reached=[], next_input="再问一句。"),
+        tool("steer", next_input="再问一句。"),
         text("接着推。"),
     )
     client = client_for(llm)
@@ -385,7 +385,7 @@ def test_goal_drives_another_run_with_a_simulated_input(client_for) -> None:
     assert second["user_input"]["text"] == "我把照片推过去。"
     assert second["user_input"]["source"] == "simulated"
 
-    # 计划挂在 session 上（D148），不再挂节点——goal 跑着的时候不允许切分支，
+    # 中间状态挂在 session 上（D148），不再挂节点——goal 跑着的时候不允许切分支，
     # D141 让它跟着节点走的那个理由（分支隔离）不成立了。
     run = client.get(f"/sessions/{session.id}").json()["session"]["goal_run"]
     assert [s["description"] for s in run["plan"]["subgoals"]] == ["他先松口", "两人摊开说"]
@@ -398,7 +398,7 @@ def test_a_finished_goal_says_which_way_it_ended(client_for) -> None:
         *one_run(outline="第一轮。", prose="正文一。"),
         tools(
             ("plan", {"subgoals": ["唯一的一步"]}),
-            ("advance", {"reached": [1], "next_input": ""}),
+            ("check", {"reached": [1]}),
             ("finish", {"outcome": "done", "reason": "逐条核对：那一步已兑现"}),
         ),
         text("完了。"),
@@ -431,7 +431,7 @@ def test_a_spent_budget_pauses_instead_of_finishing(client_for) -> None:
         *one_run(outline="第一轮。", prose="正文一。"),
         tools(
             ("plan", {"subgoals": ["甲", "乙"]}),
-            ("advance", {"reached": [], "next_input": "再走一步。"}),
+            ("steer", {"next_input": "再走一步。"}),
         ),
         text("先推到这里。"),
     )
@@ -462,7 +462,7 @@ def test_raising_the_budget_resumes_a_paused_goal(client_for) -> None:
         *one_run(outline="第一轮。", prose="正文一。"),
         tools(
             ("plan", {"subgoals": ["甲", "乙"]}),
-            ("advance", {"reached": [], "next_input": "再走一步。"}),
+            ("steer", {"next_input": "再走一步。"}),
         ),
         text("先推到这里。"),
     )

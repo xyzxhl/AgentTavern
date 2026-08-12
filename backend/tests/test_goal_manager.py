@@ -84,6 +84,20 @@ def test_each_turn_says_who_gave_the_input() -> None:
     assert "让她别走" in (butted_in.content or "")
 
 
+def test_a_turn_without_prose_says_so_instead_of_falling_back() -> None:
+    """**正文没写成时不要回退到细纲**（D151）。
+
+    回退看起来只是"降级用一份更粗的记录"，实际上把一个失败悄悄补齐了：那一轮
+    什么都没写出来，而 goal_manager 读到一段像模像样的剧情，会照着它判某个中间
+    状态已经成立。
+    """
+    empty = Node(id="run_9", outline="定下了很多事。", prose="")
+    body = turn_record(empty, 9, []).content or ""
+
+    assert "没有写出正文" in body
+    assert "定下了很多事。" not in body
+
+
 def test_switching_branches_rebuilds_instead_of_extending() -> None:
     """暂停期间用户切了分支 → **以最终选择的分支为准**（D148）。
 
@@ -150,7 +164,8 @@ async def test_replanning_resets_progress() -> None:
     """
     ctx = GoalContext(goal=GOAL, run=GoalRun())
     await _call(ctx, "plan", subgoals=["甲", "乙"])
-    await _call(ctx, "advance", reached=[1], next_input="我走过去")
+    await _call(ctx, "check", reached=[1])
+    await _call(ctx, "steer", next_input="我走过去")
 
     assert ctx.run.plan is not None
     assert [s.done for s in ctx.run.plan.subgoals] == [True, False]
@@ -160,28 +175,22 @@ async def test_replanning_resets_progress() -> None:
     assert [s.done for s in ctx.run.plan.subgoals] == [False, False, False]
 
 
-async def test_finish_done_is_blocked_until_every_stage_is_marked() -> None:
-    """**硬前提**：宣布完成之前，必须用**当前的**计划重核一遍（D148）。
+async def test_finish_does_not_check_the_subgoals() -> None:
+    """`finish` **不检查中间状态是否全部成立**（D151）。
 
-    它挡的不是"剧情没按计划走"——那种情况该重拆。它挡的是模型的**自我确认倾向**：
-    维持对话之后它读的是自己写的计划、自己判的进度，比干净上下文更容易往
-    "已经达标"的方向读。
+    D148 曾在这里加过一条硬前提，想靠它挡住自我确认倾向。但中间状态无序、可跳过、
+    可能已经不必要（D150）——于是在「目标确实达成、只是某条中间状态已经作废」
+    这个常见情形下，那条前提只是多逼出两次工具调用（先 `plan` 重给一版、再
+    `check` 标全），然后原样通过。**挡不住真问题，只收了个过路费。**
 
-    两条合起来才是要点：**重拆随时可以，而宣布完成之前必须重核一遍**，
-    不是照着三轮前那份打勾。
+    该由提示词担保的事交给提示词：判据写在 `goal_judge` 那一节里。
     """
     ctx = GoalContext(goal=GOAL, run=GoalRun())
     await _call(ctx, "plan", subgoals=["甲", "乙"])
 
-    blocked = await _call(ctx, "finish", outcome="done", reason="我觉得差不多了")
-    assert blocked.is_error
-    assert "乙" in blocked.content, "要点名还差哪些"
-    assert ctx.finished is None
-
-    await _call(ctx, "advance", reached=[1, 2])
-    ok = await _call(ctx, "finish", outcome="done", reason="逐条核对：甲已兑现，乙已兑现")
+    ok = await _call(ctx, "finish", outcome="done", reason="逐条核对：目标那两项都已成立")
     assert not ok.is_error
-    assert ctx.finished == (GoalOutcome.DONE, "逐条核对：甲已兑现，乙已兑现")
+    assert ctx.finished == (GoalOutcome.DONE, "逐条核对：目标那两项都已成立")
 
 
 async def test_finish_failed_needs_no_such_precondition() -> None:
@@ -204,17 +213,17 @@ async def test_progress_is_reported_as_what_is_left_not_as_a_next_one() -> None:
     await _call(ctx, "plan", subgoals=["甲", "乙", "丙"])
 
     # 跳过甲，直接成立乙和丙——这在新语义下完全正常。
-    result = await _call(ctx, "advance", reached=[2, 3], next_input="我走过去")
+    result = await _call(ctx, "check", reached=[2, 3])
 
     assert "甲" in result.content
     assert "乙" not in result.content and "丙" not in result.content
     assert "当前" not in result.content
 
 
-async def test_advance_without_a_plan_is_recoverable() -> None:
-    """没有计划就推进 → 可恢复的错误，回一句让它先拆，而不是让这一轮崩掉。"""
+async def test_checking_without_a_plan_is_recoverable() -> None:
+    """还没给过中间状态就来核对 → 可恢复的错误，回一句让它先给一版。"""
     ctx = GoalContext(goal=GOAL, run=GoalRun())
-    result = await _call(ctx, "advance", reached=[], next_input="随便")
+    result = await _call(ctx, "check", reached=[])
     assert result.is_error
     assert "plan" in result.content
 
@@ -231,7 +240,7 @@ async def test_a_round_ends_when_it_stops_calling_tools(tmp_path: Path) -> None:
     llm = ScriptedLLM(
         tools(
             ("plan", {"subgoals": ["他先松口", "两人摊开"]}),
-            ("advance", {"reached": [], "next_input": "我把照片推过去。"}),
+            ("steer", {"next_input": "我把照片推过去。"}),
         ),
         text("先推到这里。"),
     )
@@ -253,7 +262,7 @@ async def test_finishing_comes_back_as_an_outcome(tmp_path: Path) -> None:
     """`finish` 调完就不必再往下跑——终态已经定了。"""
     llm = ScriptedLLM(
         tool("plan", subgoals=["甲"]),
-        tool("advance", reached=[1], next_input=""),
+        tool("check", reached=[1]),
         tool("finish", outcome="done", reason="逐条核对：甲已兑现"),
         text("完了。"),
     )

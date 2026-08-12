@@ -88,26 +88,17 @@ async def _plan(ctx: GoalContext, params: PlanParams) -> ToolResult:
     )
 
 
-class AdvanceParams(BaseModel):
+class CheckParams(BaseModel):
     reached: list[int] = Field(
         default_factory=list,
-        description="本轮**新**成立的中间状态序号（从 1 数）。没有就给空列表。\n"
+        description="本轮**新**成立的中间状态序号（从 1 数）。一条都没有就给空列表。\n"
         "判定从严：**剧情里真的发生了**才算，「正在朝那个方向走」「达成条件已经"
         "备好」都不算。一轮可能同时成立两条，也可能推好几轮一条都不成立——"
         "不要为了显得有进展而放宽标准。",
     )
-    next_input: str = Field(
-        default="",
-        description="替用户写的下一条输入。\n"
-        "**只施加最小必要干预**：优先创造信息、选择、机会、冲突、条件、动机，"
-        "或可供角色响应的情境；避免直接制造目标要求的最终结果。\n"
-        "不要提中间状态、目标、进度这些词——用户不知道有这些东西；"
-        "顺着已经写出来的剧情接。\n"
-        "**目标已经成立时留空**，然后调用 `finish`。",
-    )
 
 
-async def _advance(ctx: GoalContext, params: AdvanceParams) -> ToolResult:
+async def _check(ctx: GoalContext, params: CheckParams) -> ToolResult:
     plan = ctx.run.plan
     if plan is None:
         return error("还没有中间状态。先调用 `plan` 给一版。", label="没有可核对的中间状态")
@@ -116,19 +107,35 @@ async def _advance(ctx: GoalContext, params: AdvanceParams) -> ToolResult:
     for index in hit:
         plan.subgoals[index - 1].done = True
 
-    ctx.next_input = params.next_input.strip() or None
-
     # **回执列的是「还剩哪些」，不是「下一个是哪个」**（D150）：中间状态之间
     # 没有先后依赖，挑出一个说"当前这个"等于凭空造了个顺序。
     left = [f"{i + 1}. {s.description}" for i, s in enumerate(plan.subgoals) if not s.done]
     ctx.labels.append(f"成立 {len(hit)} 条" if hit else "本轮无新成立")
     return ToolResult(
-        content=(
-            ("尚未成立：\n" + "\n".join(left) if left else "全部中间状态都已成立。")
-            + ("" if ctx.next_input else "\n（没有写下一条输入。）")
-        ),
+        content="尚未成立：\n" + "\n".join(left) if left else "全部中间状态都已成立。",
         label=(f"成立 {'、'.join(map(str, hit))}" if hit else "核对进度：无新成立"),
-        payload={"reached": hit, "next_input": ctx.next_input, "all_done": plan.all_done},
+        payload={"reached": hit, "all_done": plan.all_done},
+    )
+
+
+class SteerParams(BaseModel):
+    next_input: str = Field(
+        min_length=1,
+        description="替用户写的下一条输入。\n"
+        "**只施加最小必要干预**：优先创造信息、选择、机会、冲突、条件、动机，"
+        "或可供角色响应的情境；避免直接制造目标要求的最终结果。\n"
+        "不要提中间状态、目标、进度这些词——用户不知道有这些东西；"
+        "顺着已经写出来的剧情接。",
+    )
+
+
+async def _steer(ctx: GoalContext, params: SteerParams) -> ToolResult:
+    ctx.next_input = params.next_input.strip()
+    ctx.labels.append("写了下一条输入")
+    return ToolResult(
+        content="已记下，下一轮会用它。",
+        label=f"写了下一条输入：{ctx.next_input[:30]}",
+        payload={"next_input": ctx.next_input},
     )
 
 
@@ -146,19 +153,13 @@ class FinishParams(BaseModel):
 
 
 async def _finish(ctx: GoalContext, params: FinishParams) -> ToolResult:
-    plan = ctx.run.plan
-    if params.outcome is GoalOutcome.DONE and not (plan and plan.all_done):
-        # **硬前提**：宣布完成之前，必须用**当前的**那一版重核一遍（D148）。
-        # 它挡的不是"剧情没按中间状态走"（那种情况该重给一版），而是模型的自我
-        # 确认倾向——维持对话之后它读的是自己给的状态、自己判的进度，
-        # 比干净上下文更容易往"已经达标"的方向读。
-        left = [s.description for s in (plan.subgoals if plan else []) if not s.done]
-        return error(
-            "还有中间状态没标为成立，不能判完成：" + ("、".join(left) or "（还没有拆过）") + "\n"
-            "它们确实已经不必要了，就先调用 `plan` 按当前局面重给一版，再核对。",
-            label="尚有未成立的中间状态，退回",
-        )
-
+    # **不检查中间状态是否全部成立**（D151）。D148 曾在这里加过一条硬前提，
+    # 想靠它挡住自我确认倾向；但中间状态无序、可跳过、可能已经不必要（D150），
+    # 于是那条前提在「目标确实达成、只是某条中间状态已经作废」这个常见情形下
+    # 只是多逼出两次工具调用——先 `plan` 重给一版，再 `check` 标全，然后原样通过。
+    # 挡不住真问题，只收了个过路费。
+    #
+    # 该由提示词担保的事就交给提示词：判据写在 `goal_judge` 那一节里。
     ctx.finished = (params.outcome, params.reason)
     ctx.labels.append("目标完成" if params.outcome is GoalOutcome.DONE else "目标失败")
     return ToolResult(
@@ -173,13 +174,27 @@ def _tool(name: str, description: str, params: type[BaseModel], handler: Any) ->
 
 
 def goal_tools() -> list[Tool[Any]]:
+    """四个工具。**核对与引导是分开的两个**（D151）。
+
+    它们合成一个（`advance`）过一版，代价是每轮必须两件一起做：没有新成立也得
+    报一次进度，不想干预也得写一条输入。而这两件事本来就独立——**核对是观察，
+    引导是干预**，触发条件和频率都不一样：重给一版中间状态的那一轮不必核对，
+    「不进行实质性引导」也是一种合法的选择。
+    """
     return [
         _tool("plan", _PLAN_DESC, PlanParams, _plan),
         _tool(
-            "advance",
-            "核对中间状态，并替用户写出下一条输入。**每一轮都要调用一次。**",
-            AdvanceParams,
-            _advance,
+            "check",
+            "更新中间状态的成立情况。**只观察，不干预。**",
+            CheckParams,
+            _check,
+        ),
+        _tool(
+            "steer",
+            "替用户写出下一条输入，引导剧情。**不想实质性引导时就不要调它**——"
+            "那一轮会以「继续推进」交给写手。",
+            SteerParams,
+            _steer,
         ),
         _tool(
             "finish",
