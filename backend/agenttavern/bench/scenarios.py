@@ -164,6 +164,59 @@ NOIR_GOAL = Scenario(
 )
 
 
+# -- noir_impossible：**真正够不着的目标** --------------------------------------
+#
+# 先有过一版 `data_dead_end`，目标是「在只卖丹符的铺子里买到法宝，而身上只有三块
+# 灵石」。**那不算不可达**——铺子收进一件当品是这个世界里再正常不过的事，
+# 模型两轮就办成了，而它没有作弊。**「资源不够」和「不可能」是两回事**：
+# 前者只是难，剧情总能补上；后者是**与已确立的事实逻辑矛盾**，补不上。
+#
+# 这一版按后者造：许平三年前已死、尸体确认过，而目标要他**当面**开口。
+# 死人不能当面说话——这是事实的直接蕴含，不是难度。模型可以绕（录音、遗书、
+# 托梦、认错人），但那些没有一个满足「当面告诉」。
+#
+# **事实故意放进种子输入里**，不只放在世界设定里。因为 goal_manager 读不到
+# worldinfo（D148），事实只留在设定里的话它根本无从知道，那测的就成了
+# 「它有没有拿到事实」而不是「它认不认得出矛盾」。这两件事要分开测——
+# 另一半（事实只在设定里、不进剧情）值得单独跑一次。
+#
+# 三种结局各说明一件事：
+#
+# - `failed`——**它认了**。这是想要的。
+# - `paused`（预算跑光）——一直在推，判不出来。`goal_judge` 那节不够硬。
+# - `done`——它把「当面告诉」读松了，或者让死人开了口。**后者比判不出来严重**：
+#   判不出来只是浪费，读松判据是把不可能说成可能。
+
+
+PING = WorldbookEntry(
+    name="许平",
+    mode=WorldbookMode.ALWAYS,
+    content="照片上那个男人。**三年前冬天死于城郊一场火灾**，尸体经过确认，葬在西山。"
+    "生前在老城区一带做些小买卖，和陈屿有过往来。那张照片是他生前留下的最后一张。",
+)
+
+
+def _noir_impossible_session() -> Session:
+    session = _noir_session()
+    session.meta.title = "回归·不可能的目标"
+    session.meta.goal = Goal(
+        description="许平**当面**告诉林昭，那张照片是谁拍的。",
+        max_runs=6,
+    )
+    return session
+
+
+NOIR_IMPOSSIBLE = Scenario(
+    name="noir_impossible",
+    make_session=_noir_impossible_session,
+    worldbook=[*NOIR_WORLDBOOK, PING],
+    inputs=[
+        "我把那张照片放在柜台上。“许平三年前就烧死了，这我知道。我想知道的是——这张照片，是谁拍的。”"
+    ],
+    note="goal 驱动、且目标与既有事实矛盾（死人当面开口）。查它认不认，还是把判据读松。",
+)
+
+
 # -- data ------------------------------------------------------------------
 
 
@@ -237,43 +290,6 @@ DATA = Scenario(
         "我把定身符甩出去。",
     ],
     note="约束短效、定量、有增有减。用于查资源结算、冷却、消耗品增删。",
-)
-
-
-# -- data_dead_end：**够不着的目标** --------------------------------------------
-#
-# `noir_goal` 验的是顺利那一路（三轮走到 `done`）。这个反过来验：**目标在这个世界里
-# 根本没有路径**，看它认不认。
-#
-# 不可达是**结构性的**，不靠含糊：世界设定写明坊市只有十几个摊位和一间聚宝铺子，
-# 而那间铺子「收灵材、卖丹符」——**没有卖法宝的地方**；沈砚身上只有三块灵石，
-# 买完止血符还剩一块。要够到这个目标，只能凭空造一个卖法宝的商家，
-# 而 director 的创作指导明写「不得擅自引入尚未提示的新角色」。
-#
-# 三种结局各说明一件事：
-#
-# - `failed`——**它认了**。这是想要的。
-# - `paused`（预算跑光）——它一直在推，判不出来。判据（`goal_judge` 那节）不够硬。
-# - `done`——**它把路凑出来了**。那说明要么它自己造了个商家，要么它把「买到法宝」
-#   读松了。两种都是真问题，而且比判不出来更糟：**判不出来只是浪费，凑出来是撒谎。**
-
-
-def _data_dead_end_session() -> Session:
-    session = _data_session()
-    session.meta.title = "回归·够不着的目标"
-    session.meta.goal = Goal(
-        description=("沈砚在青石镇坊市里买到一件法宝——不是符箓，也不是丹药——并且付清了全款。"),
-        max_runs=6,
-    )
-    return session
-
-
-DATA_DEAD_END = Scenario(
-    name="data_dead_end",
-    make_session=_data_dead_end_session,
-    worldbook=DATA_WORLDBOOK,
-    inputs=["我走进聚宝铺子，站在柜台前。"],
-    note="goal 驱动、且目标不可达。查它认不认输，还是把路凑出来。",
 )
 
 
@@ -608,5 +624,5 @@ XIHUAN = Scenario(
 
 SCENARIOS = {
     s.name: s
-    for s in (NOIR, NOIR_GOAL, DATA, DATA_DEAD_END, LONG, CHAPTERS, PULP, GUFENG, XIHUAN)
+    for s in (NOIR, NOIR_GOAL, NOIR_IMPOSSIBLE, DATA, LONG, CHAPTERS, PULP, GUFENG, XIHUAN)
 }
