@@ -179,7 +179,7 @@ no_user_input: （没有新的用户输入，按当前设定继续推进。）
 nudge:
   "off": ""
   submit: 请调用 submit_outline 提交本轮细纲。
-  final_submit: 这是最后一轮：请立即调用 submit_outline 提交本轮细纲。
+  final_submit: 这是最后一轮：请立即调用 `submit_outline` 提交本轮细纲。
 
 # 工具用完了但迟迟不收口时推的那句。
 converge: 调查得差不多了，请开始收敛并提交细纲。
