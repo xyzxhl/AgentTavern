@@ -561,3 +561,19 @@ async def test_a_goal_scenario_stops_when_the_budget_runs_out(tmp_path: Path) ->
     assert result.goal_outcome == "paused"
     assert "1 轮" in result.goal_reason
     assert len(result.turns) == 1
+
+
+def test_every_defined_scenario_is_registered() -> None:
+    """**定义了却没注册**是这文件里最容易犯的错，而且现有测试一个都抓不到——
+    它们全都遍历 `SCENARIOS`，漏掉的那个自然不在里面。
+
+    症状是 `--scenario` 直接报 invalid choice，白等一次跑。
+    """
+    from agenttavern.bench import scenarios as module
+
+    defined = {
+        value.name
+        for name, value in vars(module).items()
+        if isinstance(value, Scenario) and not name.startswith("_")
+    }
+    assert defined == set(SCENARIOS), f"没注册：{defined - set(SCENARIOS)}"

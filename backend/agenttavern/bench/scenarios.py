@@ -606,4 +606,7 @@ XIHUAN = Scenario(
 )
 
 
-SCENARIOS = {s.name: s for s in (NOIR, NOIR_GOAL, DATA, LONG, CHAPTERS, PULP, GUFENG, XIHUAN)}
+SCENARIOS = {
+    s.name: s
+    for s in (NOIR, NOIR_GOAL, DATA, DATA_DEAD_END, LONG, CHAPTERS, PULP, GUFENG, XIHUAN)
+}
