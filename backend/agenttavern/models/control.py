@@ -227,7 +227,7 @@ class GoalPlan(BaseModel):
 
     def render(self) -> str:
         lines = [
-            f"{i + 1}. [{'已达成' if s.done else '未达成'}] {s.description}"
+            f"{i + 1}. [{'已成立' if s.done else '未成立'}] {s.description}"
             for i, s in enumerate(self.subgoals)
         ]
         return "\n".join(lines)

@@ -14,11 +14,22 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..agents import advance_goal, sync_conversation
 from ..config import Settings
 from ..llm import LLMGateway
-from ..models import Capabilities, ControlDimensions, Node, Session, TraceEvent, UserInput
+from ..models import (
+    Capabilities,
+    ControlDimensions,
+    GoalRun,
+    InputSource,
+    Node,
+    Session,
+    TraceEvent,
+    UserInput,
+)
 from ..orchestration import execute_run
 from ..storage import SessionRepository, Store
+from ..tracing import Tracer
 from .metrics import Metrics, collect
 from .scenarios import Scenario
 
@@ -86,6 +97,13 @@ class BenchResult:
 
     expected_boundaries: set[int] = field(default_factory=set)
     """场景设计时的预期分界。**不喂给模型**，只用来对分。"""
+
+    goal_outcome: str = ""
+    goal_reason: str = ""
+    """goal 怎么收的：`done` / `failed` / `paused:<理由>` / 空（没跑到头）。"""
+
+    goal_plan: list[str] = field(default_factory=list)
+    """收尾时那一版中间状态（带成立与否）。看它重给过几版要翻 trace。"""
 
     def boundary_score(self) -> dict[str, Any] | None:
         """分界准确率。没有预期分界的场景返回 ``None``。
@@ -167,12 +185,25 @@ async def run_scenario(
         repo.save_worldbook_entry(entry)
 
     result = BenchResult(scenario=scenario.name, variant=variant.name, session_id=session.id)
-    inputs = scenario.inputs[:limit] if limit else scenario.inputs
+    pending = list(scenario.inputs[:limit] if limit else scenario.inputs)
     parent_id: str | None = None
+    goal_input: str | None = None
+    index = 0
 
-    for i, text in enumerate(inputs):
+    # **带 goal 的场景由 goal_manager 接着驱动**：场景只给种子输入，之后每一轮的
+    # 输入都是它写的。跑到 goal 收尾、预算耗尽或 `limit` 为止。
+    while True:
+        if pending:
+            text, source = pending.pop(0), InputSource.USER
+        elif goal_input:
+            text, source, goal_input = goal_input, InputSource.SIMULATED, None
+        else:
+            break
+        if limit is not None and index >= limit:
+            break
+
         record = TurnRecord(
-            index=i,
+            index=index,
             user_text=text,
             state_before=dict(repo.state_at(parent_id).values),
             state_after={},
@@ -182,9 +213,12 @@ async def run_scenario(
         try:
             outcome = await execute_run(
                 repo,
-                session,
+                # **每轮重新载入**。`execute_run` 结尾会把这个对象存回去，
+                # 而 goal_manager 在上一轮末尾往盘上写过 `goal_run`——
+                # 跨轮持有同一个副本的话，那份进度每轮都被旧值覆盖掉。
+                repo.load_session(),
                 gateway,
-                user_input=UserInput(text=text),
+                user_input=UserInput(text=text, source=source),
                 parent_id=parent_id,
                 ask_user=auto_answer,
                 on_trace=events.append,
@@ -195,18 +229,68 @@ async def run_scenario(
             record.node = outcome.node
             record.notes = outcome.notes
             parent_id = outcome.node.id
+            goal_input = await _drive_goal(repo, gateway, parent_id, events, result)
 
         record.events = events
         record.metrics = collect(events)
         record.state_after = dict(repo.state_at(parent_id).values)
         result.turns.append(record)
+        index += 1
 
         if on_turn:
             on_turn(record)
+        if result.goal_outcome:
+            break
 
     result.expected_boundaries = scenario.boundaries
     result.actual_boundaries = _actual_boundaries(repo, parent_id)
     return result
+
+
+async def _drive_goal(
+    repo: SessionRepository,
+    gateway: LLMGateway,
+    leaf_id: str,
+    events: list[TraceEvent],
+    result: BenchResult,
+) -> str | None:
+    """run 末跑一次 goal_manager，返回它写的下一条输入（D148）。
+
+    这是 `SessionRunner._check_goal` 的 bench 版：没有 WebSocket、没有队列，
+    但**判定与预算的语义必须一致**——否则量出来的不是产品跑起来的样子。
+    """
+    session = repo.load_session()
+    goal = session.meta.goal
+    if goal is None:
+        return None
+
+    run = session.goal_run or GoalRun(started_at_leaf_id=repo.load_node(leaf_id).parent_id)
+    tracer = Tracer(repo, leaf_id, events.append, persist=session.capabilities.trace)
+
+    sync_conversation(goal, run, repo.path_to(leaf_id), density=session.control.expansion_density)
+    step = await advance_goal(
+        gateway, tracer, goal, run, density=session.control.expansion_density, user_id=session.id
+    )
+    run.spent_runs += 1
+    run.spent_tokens += tracer.usage.tokens_in + tracer.usage.tokens_out
+
+    if run.plan is not None:
+        result.goal_plan = run.plan.render().splitlines()
+
+    if step.finished is not None:
+        result.goal_outcome, result.goal_reason = step.finished
+        session.meta.goal, session.goal_run = None, None
+        repo.save_session(session)
+        return None
+
+    spent = run.exhausted(goal)
+    if spent is not None:
+        run.paused, run.paused_reason = True, spent
+        result.goal_outcome, result.goal_reason = "paused", spent
+
+    session.goal_run = run
+    repo.save_session(session)
+    return step.next_input
 
 
 def _actual_boundaries(repo: SessionRepository, leaf_id: str | None) -> set[int]:

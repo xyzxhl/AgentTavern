@@ -71,6 +71,21 @@ def render(
         "",
     ]
 
+    if result.goal_outcome:
+        # goal 驱动的场景：**要看的不是产出，是它怎么收的**。三样都得在——
+        # 收成什么、为什么、以及收尾时那一版中间状态长什么样。
+        out += [
+            "## goal",
+            "",
+            f"- 结局：`{result.goal_outcome}`",
+            f"- 理由：{result.goal_reason}",
+            "",
+            "收尾时的中间状态：",
+            "",
+            *(f"- {line}" for line in result.goal_plan),
+            "",
+        ]
+
     if (score := result.boundary_score()) is not None:
         out += [
             "## 语义分界",

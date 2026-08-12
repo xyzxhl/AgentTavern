@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from ..models import (
     Capabilities,
     ControlDimensions,
+    Goal,
     Session,
     SessionMeta,
     WorldbookEntry,
@@ -120,6 +121,46 @@ NOIR = Scenario(
         "（跳到当天夜里，林昭回到报社）",
     ],
     note="约束长效、定性、只增不减。用于查转述、抢话、知情累积。",
+)
+
+
+# -- noir_goal：goal 驱动的探针 ------------------------------------------------
+#
+# 除了种子那一条，**每一轮的输入都由 goal_manager 写**（D148）。要看的是四件事：
+#
+# 1. 中间状态拆得像不像**状态**——「陈屿说出照片上那个人是谁」是状态，
+#    「让林昭追问」是步骤。拆成步骤是最容易犯的错。
+# 2. 会不会**重给一版**。剧情一偏就该重给，抱着旧的一版硬推是 D141 那版的病。
+# 3. 会不会**过早 `finish(done)`**。D151 把那条硬前提删了，现在全靠提示词
+#    （`goal_judge` 那一节）担保——所以这一次实跑就是在验它。
+# 4. 引导的**力度**：`steering_input` 要求「只施加最小必要干预」，
+#    直接替角色把结果说出来就是过界。
+#
+# 目标写成**可判定的剧情状态**，不是抽象的进度描述——它是模型判定的唯一真值，
+# 含糊的目标测不出任何东西。
+
+
+def _noir_goal_session() -> Session:
+    session = _noir_session()
+    session.meta.title = "回归·目标驱动"
+    session.meta.goal = Goal(
+        description=(
+            "林昭得知照片上那名男子的姓名与死因，并且陈屿明确承认自己认识他。"
+            "三样缺一不可：姓名、死因、陈屿的承认。"
+        ),
+        # 八轮到顶就暂停。**够长到能看出重给一版，又不至于烧太多**——
+        # 判不出来时它会一直推下去，那正是 `max_runs` 要兜的。
+        max_runs=8,
+    )
+    return session
+
+
+NOIR_GOAL = Scenario(
+    name="noir_goal",
+    make_session=_noir_goal_session,
+    worldbook=NOIR_WORLDBOOK,
+    inputs=["我推开门走进钟表铺，柜台后面没有人。"],
+    note="goal 驱动：只给种子输入，其余每轮由 goal_manager 写。查拆状态、重给、过早收尾。",
 )
 
 
@@ -528,4 +569,4 @@ XIHUAN = Scenario(
 )
 
 
-SCENARIOS = {s.name: s for s in (NOIR, DATA, LONG, CHAPTERS, PULP, GUFENG, XIHUAN)}
+SCENARIOS = {s.name: s for s in (NOIR, NOIR_GOAL, DATA, LONG, CHAPTERS, PULP, GUFENG, XIHUAN)}

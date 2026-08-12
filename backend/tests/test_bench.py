@@ -2,14 +2,21 @@
 
 from pathlib import Path
 
-from conftest import ScriptedLLM, text, tool
+from conftest import ScriptedLLM, text, tool, tools
 
 from agenttavern.bench import SCENARIOS, Attribution, Variant, Verdict, grade_turn, run_scenario
 from agenttavern.bench.grader import parse
 from agenttavern.bench.report import attribution_table, render
+from agenttavern.bench.scenarios import Scenario
 from agenttavern.config import Settings
-from agenttavern.models import Capabilities, StateDelta
+from agenttavern.models import Capabilities, InputSource, StateDelta
 from agenttavern.prompting import choice
+
+
+def one_run(outline: str = "她推开门。", prose: str = "门轴响了。"):
+    """一轮的两次模型调用。状态那一次由 `ScriptedLLM(state=...)` 应答（D143）。"""
+    return [tool("submit_outline", outline=outline), text(prose)]
+
 
 # -- 回归集 ------------------------------------------------------------------
 
@@ -35,10 +42,17 @@ def test_scenarios_are_deliberately_opposite() -> None:
 
 def test_every_scenario_has_a_recorded_input_sequence() -> None:
     """回归集固定**输入**，不固定期望输出——创作输出不确定，
-    把某一次生成当标准答案是错的（§6）。"""
-    for scenario in SCENARIOS.values():
-        assert len(scenario.inputs) >= 3
+    把某一次生成当标准答案是错的（§6）。
+
+    **goal 驱动的场景是例外**：除了种子那一条，输入由 goal_manager 每轮现写
+    （D148）。它固定的是**目标**——那才是那种场景要复现的东西。
+    """
+    for name, scenario in SCENARIOS.items():
         assert scenario.worldbook
+        if scenario.make_session().meta.goal is not None:
+            assert scenario.inputs, f"{name} 至少要有一条种子输入"
+        else:
+            assert len(scenario.inputs) >= 3, name
 
 
 def test_scenarios_span_two_ends_of_prose_style() -> None:
@@ -476,3 +490,74 @@ async def test_report_renders_without_grading(tmp_path: Path) -> None:
 
     assert "她推开门。" in markdown
     assert "待人工判断" in markdown
+
+
+async def test_a_goal_scenario_is_driven_by_the_goal_manager(tmp_path: Path) -> None:
+    """**种子之后每一轮的输入都由 goal_manager 写**（D148）。
+
+    bench 以前直接调 `execute_run`，`_check_goal` 在 `SessionRunner` 里，
+    于是整套 goal 机制从来没进过回归集——"没跑过"和"跑过没问题"看起来一样。
+    """
+    llm = ScriptedLLM(
+        *one_run(outline="第一轮。", prose="正文一。"),
+        tools(
+            ("plan", {"subgoals": ["他说出那个名字"]}),
+            ("steer", {"next_input": "我把照片翻过来。"}),
+        ),
+        text("先推到这里。"),
+        *one_run(outline="第二轮。", prose="正文二。"),
+        tools(
+            ("check", {"reached": [1]}),
+            ("finish", {"outcome": "done", "reason": "逐条核对：名字已经说出来了"}),
+        ),
+        text("完了。"),
+    )
+    settings = Settings(data_dir=tmp_path, llm_model="test")
+
+    result = await run_scenario(SCENARIOS["noir_goal"], llm.gateway(), settings)
+
+    assert [t.user_text for t in result.turns] == [
+        SCENARIOS["noir_goal"].inputs[0],
+        "我把照片翻过来。",
+    ]
+    assert result.turns[1].node is not None
+    assert result.turns[1].node.user_input is not None
+    assert result.turns[1].node.user_input.source is InputSource.SIMULATED
+
+    assert result.goal_outcome == "done"
+    assert "名字" in result.goal_reason
+    assert result.goal_plan and "已成立" in result.goal_plan[0]
+
+
+async def test_a_goal_scenario_stops_when_the_budget_runs_out(tmp_path: Path) -> None:
+    """预算到顶 → **暂停，不是失败**（D148）。bench 记下来就收，不再往下跑。"""
+    llm = ScriptedLLM(
+        *one_run(outline="第一轮。", prose="正文一。"),
+        tools(
+            ("plan", {"subgoals": ["他说出那个名字"]}),
+            ("steer", {"next_input": "我把照片翻过来。"}),
+        ),
+        text("先推到这里。"),
+    )
+    settings = Settings(data_dir=tmp_path, llm_model="test")
+    scenario = SCENARIOS["noir_goal"]
+    stingy = Variant(name="穷", note="只给一轮预算")
+
+    session = scenario.make_session()
+    assert session.meta.goal is not None
+    session.meta.goal.max_runs = 1
+    result = await run_scenario(
+        Scenario(
+            name=scenario.name,
+            make_session=lambda: session,
+            worldbook=scenario.worldbook,
+            inputs=scenario.inputs,
+        ),
+        llm.gateway(),
+        settings,
+        variant=stingy,
+    )
+
+    assert result.goal_outcome == "paused"
+    assert "1 轮" in result.goal_reason
+    assert len(result.turns) == 1
