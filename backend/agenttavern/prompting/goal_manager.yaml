@@ -26,8 +26,9 @@ sections:
   - {role: user, title: 子目标拆分, key: subgoal}
   - {role: user, title: 输入指导, key: steering_input}
   - {role: user, title: 目标判断, key: goal_judge}
-  - {role: user, title: 流程指导, key: flow}
+  - {role: user, title: 探索, key: exploration}
   - {role: user, title: 推进节奏, choice: pace}
+  - {role: user, title: 流程指导, key: flow}
   - {role: user, title: 前文, context: history_outline}
 
 intro: |
@@ -73,6 +74,19 @@ flow: |
   根据需要新建或重建子目标。如果不需要，则检查并更新子目标完成状态。
   根据当前剧情状态，选择最自然且最小的方式引导剧情发展。
   
+exploration: |
+  当你不确定目标剧情状态应该如何达成时，你可以进行探索。
+  探索应围绕一个明确的不确定性展开。探索的目的，是获得能够改善后续决策的信息。
+
+  可以使用的探索方式：
+  - 向角色询问
+  - 尝试一个低承诺行为并观察反应
+  - 调查环境、人物、事件或已有线索
+  - 暴露少量信息，观察角色如何回应
+  - 暂时不行动，观察局势自然发展
+  - 创造一个能够观察角色选择的情境
+  - 使用剧情指令，让后续场景提供更多判断依据
+  - 使用元指令，要求暂时保留某种不确定性并观察其发展
 
 # 推进节奏。**和 director 的事件密度是同一个控制维度**（D93 那条投影的第三面）：
 # 铺陈少 → 一条输入可以推得远一点；铺陈多 → 一条输入只推一小步。
