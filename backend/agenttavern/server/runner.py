@@ -18,7 +18,15 @@ from dataclasses import dataclass
 
 from ..agents import advance_goal, sync_conversation
 from ..llm import LLMGateway, Usage
-from ..models import ControlOverride, GoalRun, InputSource, UserInput, new_id
+from ..models import (
+    ControlOverride,
+    GoalRun,
+    InputSource,
+    TraceEvent,
+    TraceEventType,
+    UserInput,
+    new_id,
+)
 from ..orchestration import execute_run
 from ..storage import SessionRepository
 from ..tools import Inbox
@@ -31,6 +39,7 @@ from .protocol import (
     RunFailed,
     RunFinished,
     RunInterrupted,
+    RunStarted,
     ServerMessage,
     StateSnapshot,
     Trace,
@@ -267,7 +276,7 @@ class SessionRunner:
                 parent_id=_parent_for(self._repo, session.active_leaf_id, item),
                 ask_user=self._ask_user,
                 control_override=item.control_override if item else None,
-                on_trace=lambda event: self._emit(Trace(event=event)),
+                on_trace=self._on_trace,
                 inbox=self._inbox,
                 developer=self._developer,
             )
@@ -374,6 +383,21 @@ class SessionRunner:
         self._save_goal_run(run)
         if spent is not None:
             self._emit(GoalPaused(reason=spent))
+
+    def _on_trace(self, event: TraceEvent) -> None:
+        """每条 trace 都推给 UI，**顺带把 `RunStarted` 补出来**。
+
+        `run_id` 是在 `execute_run` 内部生成的，外面拿不到——而生命周期消息
+        （`RunStarted` / `RunFinished` / `RunFailed` / `RunInterrupted`）是一组，
+        少一个前端就不知道一轮什么时候开始：进度指示不亮，上一轮的过程也不会清掉。
+        这条消息在协议里定义了很久却从没被发出过。
+        """
+        # **宣告排在它自己那条 trace 之前。** 反过来的话，客户端多半会在收到
+        # `run_started` 时清掉上一轮的过程记录——而这一轮的第一条已经先到了，
+        # 于是它当场被自己的开场白抹掉。
+        if event.type is TraceEventType.RUN_STARTED:
+            self._emit(RunStarted(run_id=event.run_id))
+        self._emit(Trace(event=event))
 
     def _save_goal_run(self, run: GoalRun) -> None:
         """写回运行时状态。**每次都重新载入 session**——判定期间可能有 REST

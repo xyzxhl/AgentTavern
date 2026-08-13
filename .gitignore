@@ -16,3 +16,4 @@ data/
 .env
 .DS_Store
 smoke/
+*.tsbuildinfo

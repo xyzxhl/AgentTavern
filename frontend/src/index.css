@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-ink-900 text-fg font-sans antialiased;
+  }
+
+  /* 滚动条不抢戏——三栏布局里到处都是可滚动区域。 */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded bg-ink-600;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer components {
+  .panel-title {
+    @apply px-3 py-2 text-[11px] font-medium uppercase tracking-wider text-dim;
+  }
+
+  .btn {
+    @apply rounded border border-line px-2.5 py-1 text-xs text-dim transition-colors;
+    @apply hover:border-dim hover:text-fg disabled:cursor-not-allowed disabled:opacity-40;
+    @apply disabled:hover:border-line disabled:hover:text-dim;
+  }
+}

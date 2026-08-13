@@ -658,6 +658,31 @@ def test_goal_messages_without_a_goal_say_so(client_for) -> None:
         assert "没有目标" in collect(ws, "error")[-1]["message"]
 
 
+def test_a_run_announces_that_it_started(client_for) -> None:
+    """**生命周期消息是一组**：开始 / 结束 / 失败 / 被打断。
+
+    `run_started` 在协议里定义了很久却从没被发出过——后三个都有人发，只有它没有。
+    少了它前端就不知道一轮什么时候开始：进度指示不亮，上一轮的过程也不会清掉，
+    于是两轮的 trace 会叠在一起显示。
+    """
+    llm = happy_llm()
+    client = client_for(llm)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "我推开门"}))
+        messages = collect(ws, "run_finished")
+
+    started = [m for m in messages if m["type"] == "run_started"]
+    assert len(started) == 1, "一轮只该宣告一次"
+    assert started[0]["run_id"] == messages[-1]["node"]["id"], "宣告的必须是这一轮"
+    # 顺序也要对：先说开始，再有过程。
+    assert [m["type"] for m in messages].index("run_started") < [m["type"] for m in messages].index(
+        "trace"
+    )
+
+
 # -- 开发者模式（D156） --------------------------------------------------------
 
 
