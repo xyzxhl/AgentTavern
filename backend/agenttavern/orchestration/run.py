@@ -1,6 +1,6 @@
 """一个 run 的编排。
 
-时序见 docs/MultiAgentSystem.md §10。**director → writer 是静态 workflow，交接
+时序见 docs/design/Architecture.md §4。**director → writer 是静态 workflow，交接
 固定且单向**（D53）——编排层按固定顺序调用二者，中间没有回流、没有协商、
 没有重试循环。
 

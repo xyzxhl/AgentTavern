@@ -12,7 +12,7 @@
 |---|---|
 | 正文 | writer |
 | 细纲 | director |
-| 状态增量 | director 写入，每 run 必交、可为空（D19/D55） |
+| 状态增量 | state_manager 写入，run 末随节点原子落盘（D143/D56） |
 | 偏离报告 | writer，通常为空（D57） |
 | trace 引用 | 见 §5 |
 

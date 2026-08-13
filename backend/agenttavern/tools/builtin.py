@@ -1,4 +1,4 @@
-"""内置工具。清单与理由见 docs/Tools.md。
+"""内置工具。清单与理由见 docs/design/Tools.md。
 
 **这里装的是全部工具，不是某一个 agent 的工具面**——谁拿到哪几个由
 `registry.py` 决定。`state_write` 只给 state_manager，`submit_outline` 只给

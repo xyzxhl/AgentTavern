@@ -1,8 +1,21 @@
-# director 的工具清单
+# 工具清单
 
 > 对应 [Decisions.md](../Decisions.md) Q22。术语见 [Retrieval.md](Retrieval.md) §1。
 >
 > **前提**：`director → writer` 每 run 有且仅有一次（D53），因此 director 的 loop 必须有唯一、明确的终止点。
+
+**工具面分四份**，谁拿到哪几个由 `registry.py` 决定：
+
+| agent | 工具 |
+|---|---|
+| director | `submit_outline` / `state_query` / `history_*` / `worldinfo_*` / `summarize` / `ask_question` |
+| writer | **没有工具**，单次调用 |
+| state_manager | `state_write` / `state_query` |
+| goal_manager | `plan` / `check` / `steer` / `finish` |
+
+**工具清单不进消息**（D149）：它走 API 的 `tools` 字段，所以任何提示词里都不该再有一节「可用的工具」。
+
+**工具描述只说「作用 + 参数格式」**（D152）。怎么拆中间状态、判定从严到什么程度、状态该记什么——那些判据全在 YAML 提示词里，描述里一个字都不重复：两份必然对不上，而对不上的时候没人知道该信哪份。唯一的例外是 `ask_question` 的调用积极性，它讲的只是"这个工具该多积极地被调用"，读到「这一档不要调用它」的地方就该是它自己。
 
 ## 1. 产出与终止
 
@@ -17,9 +30,11 @@ submit_outline(outline: str) -> void
 ## 2. state
 
 ```
-state_query(keys: [str]) -> {key: value}
-state_write(set: {key: value}, append: {key: [item]}) -> void
+state_query(keys: [str]) -> {key: value}                              # director + state_manager
+state_write(set: {...}, append: {...}, remove: {...}) -> void         # state_manager 独有
 ```
+
+**读写分属两个 agent**（D143）：director 只读状态推演，写侧整个搬到了后置的 state_manager 手里。`remove` 是后加的——改清单里的某一项要 `remove` 旧的再 `append` 新的，用 `set` 整体重写会把清单拍平。
 
 **不预设任何维度**（D74）：键自由命名，`.` 表达从属但仅用于渲染分组。写入语义只有两种——`set`（覆盖，`null` 删除）与 `append`（追加去重）。
 
@@ -27,9 +42,9 @@ state_write(set: {key: value}, append: {key: [item]}) -> void
 
 键名漂移的缓解手段不是闭集枚举（枚举不出来），而是**把已有键列表回给模型让它复用**——这也是 P9 在这里的正确形态：模型做的是"从已有键里挑"，不是"发明 schema"。
 
-`state_write` **可在 loop 中多次调用，写入进 run 内暂存区，run 完整结束时一并 commit**（D56）。否则 director 先写、writer 后跑，中途失败会造成"增量已落盘但正文不存在"。这与 D48（节点原子）一致。
+`state_write` **可在 loop 中多次调用，写入进 run 内暂存区，run 完整结束时一并 commit**（D56），与 D48（节点原子）一致。state_manager 的 loop **收口条件是「这一次不再调用任何工具」**。
 
-**契约（E0）**：`submit_outline` 之前必须**至少调用过一次** `state_write`，**空 delta 合法**。强制这一次调用是为了区分"确实没有变化"与"模型忘了提交"——后者才是 D19 要防的失败模式。这仍是纯形状检查，成本≈0。
+**契约 E0 已作废**（D143）。它原先要求 `submit_outline` 之前必须至少调用过一次 `state_write`（空 delta 合法），用来区分"确实没有变化"与"模型忘了提交"。director 卸下 `state_write` 之后，这个前置条件没有了立足点——现在"没有变化"就是一次也不调。
 
 **schema 键名列表走注入不走工具**——它体量小，且 director 每 run 都需要知道有哪些维度可写可查。Q17 的 schema 自描述机制在此落地为默认包的一部分。
 
@@ -58,10 +73,14 @@ worldinfo_read(refs: [{ref, start?, max_chars?}]) -> [{ref, content}]
 ## 5. summarize
 
 ```
-summarize(source: str, max_chars?: int) -> str      # source = "run:<run_id>" 或 "wi:<ref>"
+summarize(source: str) -> str      # source = "run:<run_id>" 或 "wi:<ref>"
 ```
 
 压缩一个**已知对象**：某轮细纲或某条设定。
+
+**没有 `max_chars`**（D154）。曾经有一个（默认 200），写进提示词是"压缩到 N 字以内"。实测**它说了不算，而且没有任何地方会发现**：48 条落盘摘要里 16 条超标，最坏 779 字 / 3.9 倍，且超出幅度随输入长度增长。一个说了不算的数比没有更糟——它让"压缩到 200 字"看起来是既成事实，于是 `budget_chars` 那套账全是虚的。现在只统计不约束：归段事件带 `chars_in` / `chars_out`，**看压缩比不看绝对字数**。
+
+**段落归段不走这个工具。** `summarize` 曾是模型可调的工具，实测 12 轮下来一次都没被调用——它的收益全在未来的轮次，这一轮花 token、好处归下一轮，优化当前轮的模型永远不会主动去做（D69）。现在段一收就由编排层压：判定在生成时（追问刚写完的 director），压缩在段收时。
 
 签名从最初设想的 `summarize(content: str)` 改为按引用寻址，是为了让缓存真正成立——传裸文本时系统不知道该把摘要挂到哪里，"缓存复用"就落不了地。
 
@@ -74,14 +93,37 @@ summarize(source: str, max_chars?: int) -> str      # source = "run:<run_id>" �
 ## 6. 用户交互
 
 ```
-ask_question(question: str, options: [str]) -> {selected: str, note?: str}
+ask_question(question: str, options: [str×3]) -> str
 ```
 
-调用积极性由模型剧情控制权决定（D58/D39）。**只考虑逻辑时间，不设超时**（D66）——等待期间逻辑上什么都没发生，director 上下文不会过期，从中断点续跑即可（suspend/resume，非 timeout/retry）。
+**一个题干 + 恰好三个选项，每个是一条不同的剧情发展方向**（D155）。三个是定死的，不是 2–4 的区间：两个把岔路压成二选一，四个开始出现凑数的那条。
+
+**用户可以都不选、自己写一条。** 所以不留「其他」位——实测模型自己造过这么一个选项（「其他：你另指定这一轮实际要用的手段」），那是在没有一等自由作答入口时的将就，白白花掉三分之一的选项位。服务端**不校验**回答在不在选项里：校验等于把"模型没想到的第四条路"判为非法，而那恰恰是最该传下去的一种回答。但工具回执要**分开写**（「用户选择：…」vs「用户没有选给出的选项，自己回答：…」），合成一句会让模型照着"这是我列过的选项"去理解一句它根本没列过的话。
+
+调用积极性由模型剧情控制权决定（D58/D39）——**那段措辞必须由编排层把 `control` 传进工具面才生效**，这里漏过一次，`low` 档从来没真正发出去过（D155）。**只考虑逻辑时间，不设超时**（D66）——等待期间逻辑上什么都没发生，director 上下文不会过期，从中断点续跑即可（suspend/resume，非 timeout/retry）。
 
 **多候选不需要新工具**：director 在上下文中推演出多个走向 → `ask_question` 给选项 → 用户选 → `submit_outline` 提交选中那份。"submit_outline 有且仅有一次"因此仍然成立。
 
 注意 `ask_question` 与 `submit_outline` 的区别：前者是普通 tool call（结果回到 loop 继续），后者终止 loop。
+
+## 6.5 goal_manager 的四个工具
+
+```
+plan(subgoals: [str])            # 建立或重建中间状态，重建清空进度
+check(reached: [int])            # 更新成立情况。只观察，不干预
+steer(next_input: str)           # 写下一条操控剧情的输入
+finish(outcome, reason)          # done / failed，交回控制权
+```
+
+**它们是 session 级的，不是 run 级的**——改的是 `GoalRun`，而 `GoalRun` 跨 run 活着。收口条件同 state_manager：这一次不再调用任何工具。
+
+**中间状态不是阶段**（D150）：无序、可跳过、可同时实现、可因剧情变化而失去必要性。它们是脚手架，逼模型动手前先想清楚路径，某一条最终有没有原样实现并不要紧。所以 `check` 的回执列的是"还剩哪些"，不是"下一个是哪个"——挑出一个说"当前这个"等于凭空造了个顺序。
+
+**`finish` 不检查中间状态是否全部成立**（D151）。这里加过一条硬前提，想靠它挡住自我确认倾向；但中间状态无序、可跳过，那条前提在"目标确实达成、只是某条中间状态已经作废"这个常见情形下只是多逼出两次工具调用，挡不住真问题，只收了个过路费。该由提示词担保的事交给提示词。
+
+**核对与引导是分开的两个**（D151）。合成一个过一版，代价是每轮必须两件一起做：没有新成立也得报一次进度，不想干预也得写一条输入。而这两件事本来就独立——核对是观察，引导是干预，触发条件和频率都不一样。
+
+**终态只有两种**：`done` / `failed`。`replan` 不是去向是动作，`derailed` 并进了 `failed`。**预算耗尽不是终态**——用户可以加预算接着跑，所以它是暂停。
 
 ## 7. 明确不提供
 

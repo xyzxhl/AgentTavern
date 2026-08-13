@@ -9,7 +9,7 @@
 | Web 框架 | **FastAPI** | async 原生、WebSocket 内建、与 Pydantic 一体 |
 | 并发 | **asyncio**（标准库） | 一个 session 一个 supervisor task；`ask_question` 挂起就是 `await` 一个 future |
 | 传输 | **原生 WebSocket**（Starlette） | 见下 |
-| 数据校验 / schema | **Pydantic v2** | 工具 schema、state 固定核心（D21 代码定义）、契约校验（E0）共用一套 |
+| 数据校验 / schema | **Pydantic v2** | 工具 schema、协议消息、落盘模型共用一套 |
 | LLM 调用 | **`openai` SDK 的 chat completions** | 见下 |
 | 配置 | **pydantic-settings**（`.env`） | 与 Pydantic 一体，无需额外的 dotenv 封装 |
 | 存储 | **本地 JSON 文件** | 见下 |
@@ -36,7 +36,7 @@ SSE 三条都不满足。不用 socket.io——不需要它的房间与 fallback
 
 只用 **chat completions 这一个面**意味着任何兼容端点都能接：OpenAI、OpenRouter、DeepSeek、本地 llama.cpp / vLLM。配置走 `.env`（`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`），换 provider 不动代码。本地端点常常不校验 key，而 SDK 要求非空，因此空值时填占位串。
 
-**非流式**（D7）。`complete()` 接受 `model` 覆盖参数——director / writer / goal 判定将来可能用不同模型（goal 判定是一次极短的窄调用，用便宜的就够）。
+**非流式**（D7）。`complete()` 接受 `model` 覆盖参数——四个 agent 将来可能用不同模型。
 
 **仍保留一层自己的类型**，理由只有一个但很实在：**工具参数解析失败不抛异常**。OpenAI 格式里 `arguments` 是 JSON 字符串，模型时常输出不合法 JSON。这属于**模型可恢复的错误**，应作为结构化 tool result 回给它重试，而不是让整个 run 崩掉——所以 `ToolCall` 同时保留 `arguments_raw` 与 `parse_error`，这个区分 SDK 的类型表达不了。
 
@@ -86,13 +86,17 @@ WebSocket 消息用 **Pydantic 模型定义，导出 JSON Schema 生成 TS 类�
 
 ```
 backend/agenttavern/
-  models/         节点、state 增量、控制维度、trace 事件
+  models/         节点、state 增量、控制维度、goal 运行时、trace 事件
   storage/        JSON 文件、节点树、路径重放
   llm/            gateway（裸 HTTP + OpenAI 格式）
-  tools/          Tools.md 的实现 + 注册表与调度
-  agents/         director（tool loop）/ writer / goal 判定 / 上下文装配
-  orchestration/  一个 run 的时序、eval 采样标记
+  tools/          design/Tools.md 的实现 + 注册表与调度（四份工具面）
+  agents/         director / writer / state_manager / goal_manager
+                  + summarizer（摘要）/ postrun（归段追问）/ replay（上下文重建）
+  prompting/      提示词 YAML + 装配器。约定见 prompting/README.md
+  orchestration/  一个 run 的时序、归段、eval 采样标记
   server/         FastAPI 入口、WS 协议、SessionRunner
+  bench/          批量采集、指标、场景与报告
+  config.py       .env（Settings）+ config.yaml（Limits）
 frontend/src/
 docs/
 ```

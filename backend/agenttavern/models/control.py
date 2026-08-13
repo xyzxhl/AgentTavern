@@ -5,7 +5,7 @@
   - 控制维度 改变**处理方式**——每 run 怎么处理。会话内可调。
   - 模式     改变**触发源**——谁触发生成。
 
-详见 docs/ControlDimensions.md。
+详见 docs/design/Configuration.md。
 """
 
 from __future__ import annotations

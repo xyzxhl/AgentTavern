@@ -56,8 +56,7 @@ class LLMGateway:
     ) -> ModelResponse:
         """一次非流式补全。
 
-        ``model`` 可覆盖默认值——director / writer / goal 判定将来可能用不同模型
-        （goal 判定是一次极短的窄调用，用便宜的就够）。
+        ``model`` 可覆盖默认值——四个 agent 将来可能用不同模型。
 
         ``thinking`` 显式开关思考模式。**DeepSeek 上它默认开启（effort=high），
         而开启时 `temperature` / `top_p` / `presence_penalty` / `frequency_penalty`
