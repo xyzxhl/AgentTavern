@@ -64,8 +64,9 @@ class _StateManager(BaseModel):
 
 
 class _GoalManager(BaseModel):
+    max_rounds: int = 4
     max_runs: int = 50
-    max_total_tokens: int = 1_000_000
+    max_total_tokens: int = 8_000_000
 
 
 class _Context(BaseModel):

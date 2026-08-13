@@ -145,7 +145,7 @@ def test_config_yaml_covers_every_knob() -> None:
     哪个文件；想调一个数得改代码。这条钉的是"每个旋钮都真的从 config.yaml 来"——
     漏掉一个的症状是改了配置没反应，而那是最难查的一类。
     """
-    from agenttavern.agents import director, replay, state_manager, summarizer
+    from agenttavern.agents import director, goal_manager, replay, state_manager, summarizer
     from agenttavern.config import LIMITS, load_limits
     from agenttavern.models import Capabilities, Goal
     from agenttavern.orchestration import checks
@@ -181,7 +181,12 @@ def test_config_yaml_covers_every_knob() -> None:
             LIMITS.windows.state_recent_runs,
             Capabilities().state_recent_runs,
         ),
+        "goal_manager.max_rounds": (LIMITS.goal_manager.max_rounds, goal_manager.MAX_ROUNDS),
         "goal_manager.max_runs": (LIMITS.goal_manager.max_runs, Goal(description="x").max_runs),
+        "goal_manager.max_total_tokens": (
+            LIMITS.goal_manager.max_total_tokens,
+            Goal(description="x").max_total_tokens,
+        ),
     }
     assert {k for k, (a, b) in wired.items() if a != b} == set()
 

@@ -17,7 +17,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from ..agents import advance_goal, sync_conversation
-from ..llm import LLMGateway
+from ..llm import LLMGateway, Usage
 from ..models import ControlOverride, GoalRun, InputSource, UserInput, new_id
 from ..orchestration import execute_run
 from ..storage import SessionRepository
@@ -289,9 +289,9 @@ class SessionRunner:
             )
         )
 
-        await self._check_goal(outcome.node.id)
+        await self._check_goal(outcome.node.id, outcome.usage)
 
-    async def _check_goal(self, leaf_id: str) -> None:
+    async def _check_goal(self, leaf_id: str, usage: Usage) -> None:
         """goal_manager 在 **run 末**跑（D28/D40/D141/D148）——与控制权（轮内）
         作用点不同。
 
@@ -299,6 +299,11 @@ class SessionRunner:
         搭台：把这一轮的记录追加进对话、跑一轮、把结果记回 session。
         **它写的那条输入存在 `_goal_input` 里，下一次自动续跑拿去用**——
         这就是"模拟用户输入"落地的地方。
+
+        ``usage`` 是**刚跑完那一轮**的开销。它得算进 goal 的预算里：D28 那条预算
+        兜的是「自主运行成本」，而钱主要花在它开出来的那些 run 上（细纲 + 正文 +
+        状态），不是它自己那一两次判定调用——只算后者的话预算兜住的是零头。
+        暂停期间不算：那时候是用户自己在写，goal 没有在跑。
         """
         session = self._repo.load_session()
         goal = session.meta.goal
@@ -314,8 +319,7 @@ class SessionRunner:
             return
 
         # goal_manager 是真实的模型调用，因此它**必须和 run 一样可见、一样计入预算**：
-        # 不推事件的话，goal 为什么迟迟不达标就完全无从查起；不计 token 的话，
-        # D28 那个用来兜住自主运行成本的预算就漏掉了每轮都发生的调用。
+        # 不推事件的话，goal 为什么迟迟不达标就完全无从查起。
         tracer = Tracer(
             self._repo,
             leaf_id,
@@ -344,7 +348,9 @@ class SessionRunner:
 
         # **无论成败都记一次 run**——否则持续失败的 run 会让自动续跑无限空转。
         run.spent_runs += 1
-        run.spent_tokens += tracer.usage.tokens_in + tracer.usage.tokens_out
+        run.spent_tokens += (
+            usage.tokens_in + usage.tokens_out + tracer.usage.tokens_in + tracer.usage.tokens_out
+        )
 
         if step.finished is not None:
             self._finish_goal(*step.finished)

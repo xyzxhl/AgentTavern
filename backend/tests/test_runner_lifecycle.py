@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from conftest import ScriptedLLM, text, tool
 
-from agenttavern.models import Session
+from agenttavern.models import Actor, Session
 from agenttavern.server.runner import SessionRunner
 from agenttavern.storage import Store
 
@@ -159,6 +159,10 @@ async def test_goal_spending_is_counted_and_lands_on_disk(tmp_path: Path) -> Non
     它以前用默认参数的 Tracer——既不推事件也不落盘，于是"goal 为什么迟迟不达标"
     无从查起；而且**计数在 `SessionRunner` 的实例字段上，进程重启就归零**，
     D28 那个用来兜住自主运行成本的上限实际上从来没生效过（D148 修掉）。
+
+    而**算进预算的是这一轮的全部开销**，不只是 goal_manager 自己那一两次判定调用：
+    钱主要花在它开出来的 run 上（细纲 + 正文 + 状态）。只算判定的话，一个名义上
+    "一百万 token" 的预算兜住的其实是零头，`max_runs` 之外等于没有第二道闸。
     """
     from agenttavern.models import Goal, SessionMeta
 
@@ -180,18 +184,31 @@ async def test_goal_spending_is_counted_and_lands_on_disk(tmp_path: Path) -> Non
 
     try:
         await runner.submit("我推开门")
-        await _until(lambda: (repo.load_session().goal_run or None) is not None)
+        # 等**最后一条**消息。出站走的是单条队列、顺序送出，所以它到了就说明前面
+        # 那些也到了；只等 `goal_run` 落盘的话，`UsageUpdate` 可能还在队列里，
+        # 下面那两笔就会一笔算成 0（原来那条 `>` 断言正是这样悄悄成立的）。
+        assert await _until(lambda: any(type(m).__name__ == "GoalPaused" for m in sent))
 
         run = repo.load_session().goal_run
         assert run is not None
         # **落在盘上**，不在内存里——这正是那个 bug 的形状。
         assert run.spent_runs == 1
+        # `UsageUpdate` 推的是这一轮 run 自己的开销；goal_manager 那次的落在
+        # 它自己的 trace 事件上。两笔都得在里面。
         run_only = sum(
             m.tokens_in + m.tokens_out  # type: ignore[attr-defined]
             for m in sent
             if type(m).__name__ == "UsageUpdate"
         )
-        assert run.spent_tokens > run_only, "goal_manager 的 token 没有计入预算"
+        judged = sum(
+            (e.tokens_in or 0) + (e.tokens_out or 0)  # type: ignore[attr-defined]
+            for m in sent
+            if type(m).__name__ == "Trace"
+            for e in [m.event]  # type: ignore[attr-defined]
+            if e.actor is Actor.GOAL_MANAGER
+        )
+        assert run_only and judged, "两笔开销都得真的发生过，否则下面那条断言是空的"
+        assert run.spent_tokens == run_only + judged, "预算算的是这一轮的全部开销"
     finally:
         await asyncio.wait_for(runner.aclose(), timeout=2.0)
 

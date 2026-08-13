@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..config import LIMITS
 from ..llm import LLMGateway, Message, Role
 from ..models import (
     Actor,
@@ -53,8 +54,13 @@ from ..tools import GoalContext, ToolRegistry
 from ..tracing import Tracer
 from .replay import interjections_of
 
-MAX_ROUNDS = 4
-"""一轮里最多几次模型往返。正常一到两次（调工具、然后空手回来收口）。"""
+MAX_ROUNDS = LIMITS.goal_manager.max_rounds
+"""一轮里最多几次模型往返。正常一到两次（调工具、然后空手回来收口）。
+
+**收口是模型自己的选择**，所以得有这条保底：一个每轮都再调一次工具的模型，
+在这里就是个死循环，而且每转一圈都是一次真实调用——卡住的不只是这一轮，
+是整条自动续跑的链。撞上它不是失败，只是这一轮到此为止（`advance_goal`）。
+"""
 
 
 @dataclass

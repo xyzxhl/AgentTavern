@@ -16,7 +16,7 @@ from typing import Any
 
 from ..agents import advance_goal, sync_conversation
 from ..config import Settings
-from ..llm import LLMGateway
+from ..llm import LLMGateway, Usage
 from ..models import (
     Capabilities,
     ControlDimensions,
@@ -229,7 +229,7 @@ async def run_scenario(
             record.node = outcome.node
             record.notes = outcome.notes
             parent_id = outcome.node.id
-            goal_input = await _drive_goal(repo, gateway, parent_id, events, result)
+            goal_input = await _drive_goal(repo, gateway, parent_id, events, result, outcome.usage)
 
         record.events = events
         record.metrics = collect(events)
@@ -253,11 +253,13 @@ async def _drive_goal(
     leaf_id: str,
     events: list[TraceEvent],
     result: BenchResult,
+    usage: Usage,
 ) -> str | None:
     """run 末跑一次 goal_manager，返回它写的下一条输入（D148）。
 
     这是 `SessionRunner._check_goal` 的 bench 版：没有 WebSocket、没有队列，
     但**判定与预算的语义必须一致**——否则量出来的不是产品跑起来的样子。
+    ``usage`` 因此也一样：刚跑完那一轮的开销要算进 goal 的预算。
     """
     session = repo.load_session()
     goal = session.meta.goal
@@ -278,7 +280,9 @@ async def _drive_goal(
         gateway, tracer, goal, run, density=session.control.expansion_density, user_id=session.id
     )
     run.spent_runs += 1
-    run.spent_tokens += tracer.usage.tokens_in + tracer.usage.tokens_out
+    run.spent_tokens += (
+        usage.tokens_in + usage.tokens_out + tracer.usage.tokens_in + tracer.usage.tokens_out
+    )
 
     if run.plan is not None:
         result.goal_plan = run.plan.render().splitlines()
