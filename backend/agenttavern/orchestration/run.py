@@ -69,8 +69,14 @@ async def execute_run(
 
     # 工具面按能力开关组装：关闭的能力其工具**不注册**，模型看不到。
     # worldinfo 全部常驻时也不注册其工具——没有东西可展开。
+    #
+    # **`control` 必须传**（D155）：`ask_question` 的调用积极性就写在它自己的
+    # 工具描述里，那段措辞按 `model_authority` 分三档（D39/D58）。这里漏掉过一次，
+    # 于是不管控制维度调成什么，模型读到的永远是 `medium` 那档——`low` 档
+    # 「遇到任何值得由用户决定的分岔都调用它征询」从来没真正发出去过。
+    # 单测直接调 `build_tools` 并显式传档位，所以它一直是绿的，漏的是**接线**。
     if registry is None:
-        registry = ToolRegistry.for_session(session.capabilities, repo.worldbook())
+        registry = ToolRegistry.for_session(session.capabilities, repo.worldbook(), control)
 
     # **打断是挂起**（D118）：上一次被截断的那一段在这里被接回来。
     # 认领的条件是父节点一致——不一致说明用户已经切到别的分支去了，接不上（D48）。

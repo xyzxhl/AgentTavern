@@ -38,6 +38,35 @@ def setup(tmp_path: Path, llm: ScriptedLLM, session: Session | None = None):
     return repo, repo.load_session(), llm.gateway(), ToolRegistry()
 
 
+async def test_the_run_hands_the_control_dimensions_to_the_tool_face(tmp_path: Path) -> None:
+    """**控制维度必须传到工具面**（D155）。
+
+    `ask_question` 的调用积极性写在它自己的工具描述里，按 `model_authority` 分三档
+    （D39/D58）。`execute_run` 组装工具面时漏掉了 `control`，于是不管控制维度调成
+    什么，模型读到的永远是 `medium` 那档——`low` 档「遇到任何值得由用户决定的分岔
+    都调用它征询」从来没真正发出去过。
+
+    **原来那条测试测不出这个**：它直接调 `build_tools` 并显式传档位，验的是机制；
+    漏的是接线。所以这条从 `execute_run` 进去，断言真正发给模型的那份 spec。
+    """
+    from agenttavern.models import ControlDimensions, ModelAuthority, SessionMeta
+
+    session = Session(
+        meta=SessionMeta(),
+        control=ControlDimensions(model_authority=ModelAuthority.LOW),
+        capabilities=Capabilities(ask_question=True),
+    )
+    llm = happy_llm()
+    repo = Store(tmp_path).create_session(session)
+
+    # `registry=None`，走 `execute_run` 自己那条组装路径——接线就在那里。
+    await execute_run(repo, repo.load_session(), llm.gateway(), user_input=UserInput(text="我推门"))
+
+    specs = next(r["tools"] for r in llm.requests if r.get("tools"))
+    ask = next(s for s in specs if s["function"]["name"] == "ask_question")
+    assert "一轮内可以多次" in ask["function"]["description"], "low 档的措辞没发出去"
+
+
 async def test_full_run_produces_a_node(tmp_path: Path) -> None:
     llm = happy_llm()
     repo, session, gw, reg = setup(tmp_path, llm)
