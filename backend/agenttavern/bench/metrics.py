@@ -62,6 +62,12 @@ class Metrics:
     cache_hit: int = 0
     """命中前缀缓存的输入 token。占 `tokens_in` 的比例才是 D114 该看的数。"""
 
+    questions: list[tuple[int, bool]] = field(default_factory=list)
+    """问过的问题：``(选项个数, 用户是否自由作答)``（D155）。
+
+    选项个数要记，是因为「恰好三个」是参数契约，而契约有没有被守住只有实跑看得出来。
+    """
+
     segments: list[tuple[int, int, int]] = field(default_factory=list)
     """这一轮归掉的段：``(轮数, 压缩前字数, 压缩后字数)``。
 
@@ -80,6 +86,7 @@ class Metrics:
             "tokens_in": self.tokens_in,
             "tokens_out": self.tokens_out,
             "cache_hit": self.cache_hit,
+            "questions": self.questions,
             "segments": self.segments,
         }
 
@@ -107,6 +114,8 @@ def collect(events: list[TraceEvent]) -> Metrics:
             m.e0_pushbacks += 1
         if "参数解析失败" in e.label or "参数错误" in e.label:
             m.parse_errors += 1
+        if tool == "ask_question" and "answer" in e.payload:
+            m.questions.append((len(e.payload["options"]), bool(e.payload["free_form"])))
         if "chars_in" in e.payload:
             m.segments.append((e.payload["span"], e.payload["chars_in"], e.payload["chars_out"]))
     return m

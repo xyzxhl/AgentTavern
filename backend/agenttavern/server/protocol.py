@@ -54,7 +54,12 @@ class Interject(BaseModel):
 
 
 class Answer(BaseModel):
-    """回答 director 通过 ``ask_question`` 提出的问题。"""
+    """回答 director 通过 ``ask_question`` 提出的问题。
+
+    ``selected`` **不校验是否在选项里**（D155）：用户可以三选一，也可以都不选、
+    自己写一条。校验等于把「模型没想到的第四条路」判为非法，而那恰恰是最该
+    传下去的一种回答。工具那侧按"在不在选项里"分开写回执。
+    """
 
     type: Literal["answer"] = "answer"
     question_id: str

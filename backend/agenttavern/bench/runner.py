@@ -11,6 +11,7 @@ n=1 的肉眼观察撑不起流程第 4 步的"看哪一类占多数"。
 from __future__ import annotations
 
 import asyncio
+import itertools
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -132,6 +133,7 @@ class BenchResult:
         done = self.completed
         ratios = [t.ratio for t in done if t.ratio is not None]
         segments = [s for t in done for s in t.metrics.segments]
+        questions = [q for t in done for q in t.metrics.questions]
         return {
             "turns": len(self.turns),
             "failed": sum(1 for t in self.turns if t.failure),
@@ -154,6 +156,11 @@ class BenchResult:
             "e0_pushbacks": sum(t.metrics.e0_pushbacks for t in done),
             "parse_errors": sum(t.metrics.parse_errors for t in done),
             "tool_errors": sum(t.metrics.tool_errors for t in done),
+            # ask_question（D155）。**`questions_not_three` 是契约检查**：
+            # 参数上写死了恰好三个，这里量的是模型实际给了几个。
+            "questions": len(questions),
+            "questions_not_three": sum(1 for n, _ in questions if n != 3),
+            "questions_free_form": sum(1 for _, free in questions if free),
             # 摘要**没有上限了，只统计**（D154）。看的是压缩比而不是绝对字数：
             # 249 字是 10× 还是 1.6×，取决于它从多少压下来。
             "segments": len(segments),
@@ -351,10 +358,22 @@ def load_result(settings: Settings, session_id: str) -> BenchResult:
     return result
 
 
+_answered = itertools.count()
+
+
 async def auto_answer(question: str, options: list[str]) -> str:
-    """非交互：取第一个选项。报告里会如实记下问了什么、选了什么。"""
+    """非交互作答。**两条路轮流走**（D155）：奇数次自由作答，偶数次挑一个选项。
+
+    以前一律取第一个选项，于是「用户自己写一条」那条路在采集里**一次都没跑过**——
+    而它和三选一对后续推演的分量完全不同（模型没列过的第四条路）。轮流走保证
+    一次采集里两条都出现，报告里如实记下问了什么、答了什么、是不是自由作答。
+    """
     await asyncio.sleep(0)
-    return options[0] if options else ""
+    if not options:
+        return ""
+    if next(_answered) % 2 == 0:
+        return "都不选。按你没想到的那条走：先别急着推进，把这一处的疑点摊开说清楚。"
+    return options[1] if len(options) > 1 else options[0]
 
 
 def repo_of(settings: Settings, session_id: str) -> SessionRepository:

@@ -148,7 +148,7 @@ def test_trace_events_carry_readable_labels(client_for) -> None:
 def test_ask_question_suspends_until_answered(client_for) -> None:
     """不设超时（D66）——等待期间逻辑上什么都没发生，恢复即从中断点续。"""
     llm = ScriptedLLM(
-        tool("ask_question", question="她怎么反应？", options=["否认", "沉默"]),
+        tool("ask_question", question="她怎么反应？", options=["否认", "沉默", "反问"]),
         tool("submit_outline", outline="她沉默了。"),
         text("她没有说话。"),
     )
@@ -160,7 +160,7 @@ def test_ask_question_suspends_until_answered(client_for) -> None:
         ws.send_text(json.dumps({"type": "submit", "text": "我问她"}))
 
         question = collect(ws, "question")[-1]
-        assert question["options"] == ["否认", "沉默"]
+        assert question["options"] == ["否认", "沉默", "反问"]
 
         ws.send_text(
             json.dumps(
@@ -173,6 +173,48 @@ def test_ask_question_suspends_until_answered(client_for) -> None:
         )
         finished = collect(ws, "run_finished")[-1]
         assert finished["node"]["prose"] == "她没有说话。"
+
+
+def test_an_answer_outside_the_options_is_passed_through(client_for) -> None:
+    """**用户可以都不选、自己写一条**（D155）。
+
+    服务端不校验 `selected` 在不在选项里——校验等于把"模型没想到的第四条路"
+    判为非法，而那恰恰是最该传下去的一种回答。
+    """
+    llm = ScriptedLLM(
+        tool("ask_question", question="她怎么反应？", options=["否认", "沉默", "反问"]),
+        tool("submit_outline", outline="她把杯子推了过去。"),
+        text("杯子在桌面上滑了半尺。"),
+    )
+    client = client_for(llm)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "我问她"}))
+        question = collect(ws, "question")[-1]
+
+        ws.send_text(
+            json.dumps(
+                {
+                    "type": "answer",
+                    "question_id": question["question_id"],
+                    "selected": "都不选：她把杯子推过来，不接话。",
+                }
+            )
+        )
+        finished = collect(ws, "run_finished")[-1]
+        assert finished["node"]["prose"] == "杯子在桌面上滑了半尺。"
+
+    # **模型必须知道这不是三选一**：回执分开写，否则它会照着"这是我列过的选项"
+    # 去理解一句它根本没列过的话。
+    asked = next(
+        m
+        for req in llm.requests
+        for m in req["messages"]
+        if m.get("role") == "tool" and "杯子" in (m.get("content") or "")
+    )
+    assert "没有选给出的选项" in asked["content"]
 
 
 def test_answering_an_unknown_question_errors(client_for) -> None:

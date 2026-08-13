@@ -374,8 +374,12 @@ async def _llm_summarize(ctx: RunContext, content: str) -> str:
 
 
 class AskQuestionParams(BaseModel):
-    question: str = Field(description="向用户提出的问题。")
-    options: list[str] = Field(description="供用户选择的选项，2–4 个。", min_length=2)
+    question: str = Field(description="题干：说清这一处岔在哪里。")
+    options: list[str] = Field(
+        description="恰好三个选项，每个是一条**不同的剧情发展方向**。",
+        min_length=3,
+        max_length=3,
+    )
 
 
 async def _ask_question(ctx: RunContext, params: AskQuestionParams) -> ToolResult:
@@ -384,10 +388,23 @@ async def _ask_question(ctx: RunContext, params: AskQuestionParams) -> ToolResul
 
     # 不设超时（D66）：等待期间逻辑上什么都没发生，上下文不会过期。
     answer = await ctx.ask_user(params.question, params.options)
+
+    # **用户可以不选，直接自己写**（D155）。所以回执要分得清是哪一种：
+    # 三选一是在模型给的岔路里挑，自由作答是**模型没想到的第四条路**，
+    # 两者对后续推演的分量完全不同。合成一句「用户选择：…」会把后者说成前者，
+    # 于是模型照着"这是我列过的选项"去理解一句它其实没列过的话。
+    free_form = answer not in params.options
     return ToolResult(
-        content=f"用户选择：{answer}",
+        content=(
+            f"用户没有选给出的选项，自己回答：{answer}" if free_form else f"用户选择：{answer}"
+        ),
         label=f"问了用户：{params.question}",
-        payload={"question": params.question, "options": params.options, "answer": answer},
+        payload={
+            "question": params.question,
+            "options": params.options,
+            "answer": answer,
+            "free_form": free_form,
+        },
     )
 
 
@@ -505,10 +522,17 @@ _ASK_QUESTION_EAGERNESS = {
 
 
 def ask_question_tool(authority: ModelAuthority = ModelAuthority.MEDIUM) -> Tool[Any]:
+    """**一个题干 + 恰好三个选项**（D155）。
+
+    三个是定死的，不是 2–4 的区间：两个把岔路压成二选一，四个开始出现凑数的那条。
+    而**用户随时可以不选、自己写一条**，所以不必留一个「其他」位——实测模型自己
+    造过这么一个选项（「其他：你另指定这一轮实际要用的手段」），那是在没有一等
+    自由作答入口时的将就，白白花掉三分之一的选项位。
+    """
     return _tool(
         "ask_question",
-        "向用户提问并等待选择。用于剧情方向不明、或用户指令与既有设定冲突时。\n"
-        + _ASK_QUESTION_EAGERNESS[authority],
+        "向用户提问并等待回答。用于剧情方向不明、或用户指令与既有设定冲突时。"
+        "**用户可以选一个，也可以都不选、自己写一条。**\n" + _ASK_QUESTION_EAGERNESS[authority],
         AskQuestionParams,
         _ask_question,
     )

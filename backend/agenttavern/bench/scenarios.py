@@ -21,6 +21,7 @@ from ..models import (
     Capabilities,
     ControlDimensions,
     Goal,
+    ModelAuthority,
     Session,
     SessionMeta,
     WorldbookEntry,
@@ -622,7 +623,67 @@ XIHUAN = Scenario(
 )
 
 
+# -- forks：让 ask_question 一定会触发 -------------------------------------------
+#
+# `ask_question` 在别的场景里**几乎不出场**：`model_authority` 是 `medium`，那一档
+# 的措辞是「本轮若存在真正的分岔，可以调用一次」，实测十几个 session 一共只问过
+# 三次。三个样本量不出任何东西，所以这个场景把两件事同时拧到位：
+#
+# - **控制权调到 `low`**——「遇到任何值得由用户决定的分岔都调用它征询」。
+# - **输入刻意留白或与设定冲突**，让分岔真的存在，而不是靠模型硬找。
+#
+# 要看的是三件事（D155）：
+#
+# 1. 选项是不是**恰好三个**。参数上写死了，这里量的是模型给不给得出来——
+#    给不出就是一次工具错误，会进 `tool_errors`。
+# 2. 三个选项是不是**三个不同的方向**，而不是同一条路的三种措辞。这条只能人看。
+# 3. **自由作答**接不接得住。采集侧 `auto_answer` 奇数次自由作答、偶数次挑选项，
+#    所以一次跑里两条路都会出现。
+
+
+def _forks_session() -> Session:
+    session = _noir_session()
+    session.meta.title = "回归·岔路"
+    # **控制权在用户这边**：这一档才会让它遇岔就问。
+    session.control = ControlDimensions(
+        prose_style="jishi", pov="third", model_authority=ModelAuthority.LOW
+    )
+    return session
+
+
+FORKS = Scenario(
+    name="forks",
+    make_session=_forks_session,
+    worldbook=NOIR_WORLDBOOK,
+    inputs=[
+        # 1. 留白：没说怎么开口，也没说来意。方向不明。
+        "我推开门走进旧货店。",
+        # 2. 留白：「问下去」有好几种问法，而且分量差得很远。
+        "我决定不再绕弯子，直接问下去。",
+        # 3. **与设定冲突**：worldbook 写的是「里屋的门常年锁着」，
+        #    而这条输入要求它开着。冲突时该问，不该悄悄改设定。
+        "我发现柜台后那扇门开着，就走了进去。",
+        # 4. 留白：里面有什么完全没定，正是该由用户定的那种。
+        "我在里屋看到了一样东西。",
+        # 5. 留白 + 分量重：摊牌的方式决定后面整条线怎么走。
+        "我拿着它走回柜台前。",
+    ],
+    note="ask_question 的专用探针：控制权 low + 输入留白/与设定冲突（D155）。",
+)
+
+
 SCENARIOS = {
     s.name: s
-    for s in (NOIR, NOIR_GOAL, NOIR_IMPOSSIBLE, DATA, LONG, CHAPTERS, PULP, GUFENG, XIHUAN)
+    for s in (
+        NOIR,
+        NOIR_GOAL,
+        NOIR_IMPOSSIBLE,
+        DATA,
+        LONG,
+        CHAPTERS,
+        PULP,
+        GUFENG,
+        XIHUAN,
+        FORKS,
+    )
 }

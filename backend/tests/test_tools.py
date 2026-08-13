@@ -339,6 +339,9 @@ async def test_summarize_rejects_bad_source(reg, ctx) -> None:
 # -- ask_question -----------------------------------------------------------
 
 
+_THREE = ["否认", "沉默", "反问"]
+
+
 async def test_ask_question_awaits_user(reg, ctx) -> None:
     asked: list[tuple[str, list[str]]] = []
 
@@ -347,10 +350,46 @@ async def test_ask_question_awaits_user(reg, ctx) -> None:
         return options[1]
 
     ctx.ask_user = ask
-    result = await call(reg, ctx, "ask_question", question="她怎么反应？", options=["否认", "沉默"])
+    result = await call(reg, ctx, "ask_question", question="她怎么反应？", options=_THREE)
 
-    assert asked == [("她怎么反应？", ["否认", "沉默"])]
+    assert asked == [("她怎么反应？", _THREE)]
     assert "沉默" in result.content
+    assert result.payload["free_form"] is False
+
+
+async def test_a_question_takes_exactly_three_options(reg, ctx) -> None:
+    """**恰好三个**（D155）。两个把岔路压成二选一，四个开始出现凑数的那条。
+
+    不留「其他」位是因为用户随时可以自己写一条——实测模型自己造过这么一个选项
+    （「其他：你另指定这一轮实际要用的手段」），那是在没有一等自由作答入口时的
+    将就，白白花掉三分之一的选项位。
+    """
+    ctx.ask_user = _pick_first
+    for options in (["甲", "乙"], ["甲", "乙", "丙", "丁"]):
+        result = await call(reg, ctx, "ask_question", question="?", options=options)
+        assert result.is_error, f"{len(options)} 个选项该被退回"
+
+
+async def test_an_answer_outside_the_options_reads_differently(reg, ctx) -> None:
+    """三选一和自由作答**对后续推演的分量不同**，回执必须分得清（D155）。
+
+    合成一句「用户选择：…」会把后者说成前者，于是模型照着"这是我列过的选项"
+    去理解一句它其实没列过的话。
+    """
+
+    async def ask(question: str, options: list[str]) -> str:
+        return "都不选：她把杯子推过来，不接话。"
+
+    ctx.ask_user = ask
+    result = await call(reg, ctx, "ask_question", question="她怎么反应？", options=_THREE)
+
+    assert result.payload["free_form"] is True
+    assert "没有选给出的选项" in result.content
+    assert "杯子" in result.content
+
+
+async def _pick_first(question: str, options: list[str]) -> str:
+    return options[0] if options else ""
 
 
 # -- 工具面 -----------------------------------------------------------------
