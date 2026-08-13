@@ -260,6 +260,33 @@ async def test_a_round_ends_when_it_stops_calling_tools(tmp_path: Path) -> None:
     assert "先推到这里。" not in _joined(run)
 
 
+async def test_a_round_that_never_stops_calling_tools_is_cut_off(tmp_path: Path) -> None:
+    """**收口条件靠不住时得有个保底**（同 director / state_manager 的硬上限）。
+
+    出口是"这一次不再调用工具"，而那是模型自己的选择——它完全可以每一轮都
+    再调一次。没有上限的话这里就是个死循环，而且每转一圈都是一次真实的模型
+    调用：卡住的不只是这一轮，是整条自动续跑的链。
+
+    撞上上限**不是失败**，只是这一轮到此为止：写下的东西照常生效，终态留空，
+    下一轮接着判。
+    """
+    # 脚本只剩一条时会一直重复它——一个永远在调工具、永远不收口的模型。
+    llm = ScriptedLLM(tool("plan", subgoals=["甲"]))
+    run = GoalRun()
+    sync_conversation(META, GOAL, run, [_node(0)])
+    before = len(run.conversation)
+
+    step = await advance_goal(
+        llm.gateway(), Tracer(_repo(tmp_path), "run_0"), GOAL, run, max_rounds=3
+    )
+
+    assert len(llm.requests) == 3, "撞上上限就得停，不能一直转"
+    assert step.finished is None, "撞上限不是终态——下一轮接着判"
+    # 三轮各留下「assistant + 一条 tool 结果」，一条都没丢。
+    assert len(run.conversation) == before + 6
+    assert run.plan is not None
+
+
 async def test_finishing_comes_back_as_an_outcome(tmp_path: Path) -> None:
     """`finish` 调完就不必再往下跑——终态已经定了。"""
     llm = ScriptedLLM(

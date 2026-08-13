@@ -22,6 +22,9 @@ FOLLOWUP_MARK = "本轮已经提交"
 STATE_MARK = "你负责维护一份"
 """state_manager 开场白的头几个字（D143）。用来认出是它在问。"""
 
+GOAL_MARK = "用户设置的目标"
+"""goal_manager 越狱词里的一句（D148）。用来在请求流水里认出是它在问。"""
+
 WRITER_MARK = "<本轮细纲>"
 """writer 提示词里那一节的**标签**，尖括号不能省——「本轮细纲」这四个字在
 director 那侧也出现（`submit_outline` 的描述、催促词），只认字面会把 director

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from conftest import ScriptedLLM, text, tool, tools
+from conftest import GOAL_MARK, ScriptedLLM, text, tool, tools
 from fastapi.testclient import TestClient
 
 from agenttavern.config import Settings
@@ -485,6 +485,132 @@ def test_raising_the_budget_resumes_a_paused_goal(client_for) -> None:
     assert body["meta"]["goal"]["max_runs"] == 9
     assert body["meta"]["goal"]["description"] == "写到摊牌"
     assert body["goal_run"]["paused"] is False, "预算够了就该解除暂停"
+
+
+def test_abandoning_is_the_only_way_to_swap_a_goal(client_for) -> None:
+    """**同一时间只有一个 goal**（D148）。`SetGoal` 直接换会被拒——goal_manager 的
+    对话是围着那个目标建起来的，换一个就得整份重来，而那正是 `abandon` 做的事。
+
+    所以放弃之后，目标与它的运行时状态一并清掉，新的目标才设得进去。
+    """
+    client = client_for(happy_llm())
+    session = Session(meta=SessionMeta(goal=Goal(description="写到摊牌", max_runs=5)))
+    client.post("/sessions", json=session.model_dump(mode="json"))
+
+    with client.websocket_connect(f"/sessions/{session.id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "set_goal", "description": "换一个"}))
+        assert "已经有一个目标在跑" in collect(ws, "error")[-1]["message"]
+
+        ws.send_text(json.dumps({"type": "goal_control", "action": "abandon"}))
+        ws.send_text(json.dumps({"type": "set_goal", "description": "换一个"}))
+        # 这一次没有报错——拿一条会报错的消息当同步点，确认上面两条都处理完了。
+        ws.send_text(json.dumps({"type": "不存在的类型"}))
+        assert "格式错误" in collect(ws, "error")[-1]["message"]
+
+    body = client.get(f"/sessions/{session.id}").json()["session"]
+    assert body["meta"]["goal"]["description"] == "换一个"
+    assert body["goal_run"] is not None, "新目标带着自己那份运行时状态"
+    assert body["goal_run"]["conversation"] == [], "旧对话没跟过来"
+
+
+def test_a_paused_goal_neither_judges_nor_continues(client_for) -> None:
+    """**暂停 = goal_manager 完全不出场**（D148）。
+
+    不只是"不开下一轮"：连判定也不做。它每轮都是一次真实的模型调用，暂停期间
+    还在那儿判，等于用户按了暂停却照样在烧钱，而且判的是用户自己在写的剧情。
+    """
+    llm = ScriptedLLM(*one_run(outline="第一轮。", prose="正文一。"), *one_run(outline="第二轮。"))
+    client = client_for(llm)
+    session = Session(meta=SessionMeta(goal=Goal(description="写到摊牌", max_runs=5)))
+    client.post("/sessions", json=session.model_dump(mode="json"))
+
+    with client.websocket_connect(f"/sessions/{session.id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "goal_control", "action": "pause"}))
+        ws.send_text(json.dumps({"type": "submit", "text": "我自己来"}))
+        collect(ws, "run_finished")
+        # 第二轮**得自己提交**——暂停期间没有自动续跑，这本身就是要测的东西之一。
+        # 它跑完也说明第一轮那次 run 末的检查已经过去了：队列是顺序的，
+        # `_check_goal` 在下一件被取走之前就 await 完了。
+        ws.send_text(json.dumps({"type": "submit", "text": "再来一句"}))
+        second = collect(ws, "run_finished")[-1]["node"]
+
+    assert second["user_input"]["text"] == "再来一句", "自动续跑没有插队进来"
+
+    assert not [r for r in llm.requests if GOAL_MARK in r["messages"][0]["content"]], (
+        "暂停期间不该有任何 goal_manager 调用"
+    )
+    assert second["user_input"]["source"] == "user", "暂停期间的轮次都是用户自己打的"
+    body = client.get(f"/sessions/{session.id}").json()["session"]
+    assert body["goal_run"]["paused"] is True
+    assert body["goal_run"]["paused_reason"] == "用户暂停"
+
+
+def test_resuming_hands_over_the_turns_the_user_wrote_meanwhile(client_for) -> None:
+    """**暂停期间用户自己跑的那几轮，恢复时要交给 goal_manager**（D148）。
+
+    这是「维持对话」最容易漏掉的一段：那几轮它当时没看见，但剧情实实在在动了。
+    不补上去的话，它是照着一个几轮之前的局面在判。
+
+    而且**必须标成"用户自己的输入"**——剧情偏了是它自己推错了、还是用户主动
+    把剧情带走了，两种偏离长得一模一样而应对完全相反。这一轮它据此判了 `failed`：
+    用户把局面带到了走不回去的地方，这正是 `failed` 该出现的场合。
+    """
+    llm = ScriptedLLM(
+        *one_run(outline="第一轮。", prose="正文一。"),
+        *one_run(outline="第二轮。", prose="正文二。"),
+        *one_run(outline="第三轮。", prose="正文三。"),
+        tool("finish", outcome="failed", reason="用户把局面带到了走不回去的地方"),
+        text("完了。"),
+    )
+    client = client_for(llm)
+    session = Session(meta=SessionMeta(goal=Goal(description="写到摊牌", max_runs=9)))
+    client.post("/sessions", json=session.model_dump(mode="json"))
+
+    with client.websocket_connect(f"/sessions/{session.id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "goal_control", "action": "pause"}))
+        for said in ("我自己来", "再来一句"):
+            ws.send_text(json.dumps({"type": "submit", "text": said}))
+            collect(ws, "run_finished")
+
+        ws.send_text(json.dumps({"type": "goal_control", "action": "resume"}))
+        ws.send_text(json.dumps({"type": "submit", "text": "接着说"}))
+        collect(ws, "run_finished")
+        finished = collect(ws, "goal_finished")[-1]
+
+    asked = [r for r in llm.requests if GOAL_MARK in r["messages"][0]["content"]]
+    assert len(asked) == 1, "恢复之后才轮到它，而且只轮到一次"
+    body = "\n".join(m.get("content") or "" for m in asked[0]["messages"])
+    assert body.count("用户自己的输入") == 3, "暂停期间那两轮也算，而且都是用户打的"
+    for prose in ("正文一。", "正文二。", "正文三。"):
+        assert prose in body, "补的是正文，不是细纲（D150）"
+
+    # `failed` 也是终态：和 `done` 一样交回控制权、一样把 goal 清掉。
+    assert finished["outcome"] == "failed"
+    assert "走不回去" in finished["reason"]
+    session_body = client.get(f"/sessions/{session.id}").json()["session"]
+    assert session_body["meta"]["goal"] is None
+    assert session_body["goal_run"] is None
+
+
+def test_goal_messages_without_a_goal_say_so(client_for) -> None:
+    """没有目标时这两条都无事可做——**要出声**，不能悄悄吞掉。
+
+    尤其 `set_goal_budget`：它是"加预算接着跑"的入口，静默失败的表现是
+    "我明明调大了预算，怎么还是不动"。
+    """
+    client = client_for(happy_llm())
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "set_goal_budget", "max_runs": 9}))
+        assert "没有目标" in collect(ws, "error")[-1]["message"]
+
+        ws.send_text(json.dumps({"type": "goal_control", "action": "pause"}))
+        assert "没有目标" in collect(ws, "error")[-1]["message"]
 
 
 def test_no_goal_means_no_autocontinue(client_for) -> None:
