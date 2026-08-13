@@ -36,8 +36,11 @@ def happy_llm(prose: str = "门轴发出一声长长的呻吟。") -> ScriptedLL
 
 @pytest.fixture
 def client_for(tmp_path: Path):
-    def build(llm: ScriptedLLM):
-        app = create_app(Settings(data_dir=tmp_path, llm_model="m"), gateway=llm.gateway())
+    def build(llm: ScriptedLLM, *, developer: bool = False):
+        app = create_app(
+            Settings(data_dir=tmp_path, llm_model="m", developer=developer),
+            gateway=llm.gateway(),
+        )
         return TestClient(app)
 
     return build
@@ -653,6 +656,91 @@ def test_goal_messages_without_a_goal_say_so(client_for) -> None:
 
         ws.send_text(json.dumps({"type": "goal_control", "action": "pause"}))
         assert "没有目标" in collect(ws, "error")[-1]["message"]
+
+
+# -- 开发者模式（D156） --------------------------------------------------------
+
+
+def test_developer_mode_records_every_agents_real_exchange(client_for) -> None:
+    """**开发者模式下每个 agent 的完整输入输出都要留下**（D156）。
+
+    别处的 trace 事件都是投影：`context_assembled` 只有条数和字数，
+    `model_response` 只有工具名。投影够回答"它做了什么"，回答不了"它为什么
+    这么做"——而调 prompt 时要看的恰恰是后者。
+
+    覆盖面是这条测试的重点：**writer 此前连 `model_response` 都没有**，
+    等于完全不可见。
+    """
+    llm = ScriptedLLM(
+        tool("submit_outline", outline="她推开门。"),
+        text("门轴响了。"),
+        state=one_state(),
+    )
+    client = client_for(llm, developer=True)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "我推开门"}))
+        messages = collect(ws, "run_finished")
+
+    exchanges = [
+        m["event"]
+        for m in messages
+        if m["type"] == "trace" and m["event"]["type"] == "model_request"
+    ]
+    # `orchestrator` 是归段追问那一次（`postrun`）——它挂在 ORCHESTRATOR 而不是
+    # DIRECTOR 名下，因为那是系统维护性的追问、不是创作轮次。**它此前一次模型
+    # 调用都没留下痕迹**，现在也在里面了。
+    assert {e["actor"] for e in exchanges} == {
+        "director",
+        "writer",
+        "state_manager",
+        "orchestrator",
+    }
+
+    # 原文要能一路读到底：role、内容、以及模型返回的工具调用。
+    writer = next(e for e in exchanges if e["actor"] == "writer")
+    assert writer["payload"]["messages"][0]["role"] == "system"
+    assert any("她推开门。" in (m.get("content") or "") for m in writer["payload"]["messages"])
+    assert writer["payload"]["response"]["content"] == "门轴响了。"
+
+    director = next(e for e in exchanges if e["actor"] == "director")
+    assert director["payload"]["response"]["tool_calls"][0]["name"] == "submit_outline"
+    assert "submit_outline" in director["payload"]["tools"]
+
+
+def test_without_developer_mode_the_originals_are_not_recorded(client_for) -> None:
+    """**默认不记**。一次往返的 messages 动辄几万字，四个 agent 加起来一轮上十万。
+
+    投影照旧——`trace` 事件本身不受影响，少的只是原文那一类。
+    """
+    llm = ScriptedLLM(
+        tool("submit_outline", outline="她推开门。"),
+        text("门轴响了。"),
+        state=one_state(),
+    )
+    client = client_for(llm)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "我推开门"}))
+        messages = collect(ws, "run_finished")
+
+    traces = [m for m in messages if m["type"] == "trace"]
+    assert traces, "投影照旧"
+    assert not [m for m in traces if m["event"]["type"] == "model_request"]
+
+
+def test_the_frontend_can_tell_which_mode_the_service_started_in(client_for) -> None:
+    """模式在启动服务时就定了，前端据此决定要不要显示开发者面板。
+
+    所以是只读的 `/meta`，没有对应的写接口——运行时切换会让"这一轮记了没有"
+    变成一个要翻日志才知道的问题。
+    """
+    assert client_for(happy_llm()).get("/meta").json()["developer"] is False
+    assert client_for(happy_llm(), developer=True).get("/meta").json()["developer"] is True
 
 
 def test_no_goal_means_no_autocontinue(client_for) -> None:

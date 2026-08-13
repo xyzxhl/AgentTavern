@@ -44,6 +44,18 @@ class Settings(BaseSettings):
 
     data_dir: Path = Path("data")
 
+    developer: bool = False
+    """**开发者模式，启动服务时选**（D156）。开了才额外记录每次模型往返的完整
+    输入输出（`Tracer.exchange` → `MODEL_REQUEST` 事件），并强制 trace 落盘。
+
+    **它是服务级的，不是 session 级**：「这台服务是拿来查问题的还是拿来玩的」
+    不该每个故事各答一遍。`Capabilities.trace` 管的是另一件事——那条 session
+    级开关决定要不要留 trace 文件，这条决定 trace 里有没有原文。
+
+    默认关闭的理由是体量：一次往返的 messages 动辄几万字，四个 agent 加起来
+    一轮上十万。前端的开发者面板也据此显隐。
+    """
+
 
 def load_settings() -> Settings:
     return Settings()

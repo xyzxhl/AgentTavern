@@ -19,7 +19,9 @@ from __future__ import annotations
 
 from ..config import LIMITS
 from ..llm import LLMGateway
+from ..models import Actor
 from ..prompting import assemble
+from ..tracing import Tracer
 
 MAX_SEGMENT_RUNS = LIMITS.segment.max_runs
 """一段最多覆盖几轮。到顶就强制断开——**不能让"还没结束"无限拖下去**。
@@ -42,6 +44,7 @@ async def summarize_text(
     user_id: str | None = None,
     *,
     enabled: bool = True,
+    tracer: Tracer | None = None,
 ) -> str:
     """把一段内容压缩。
 
@@ -65,4 +68,8 @@ async def summarize_text(
         options={"compression": "on" if enabled else "off"},
     )
     response = await gateway.complete(prompt.messages, user_id=user_id)
+    # 开发者模式下这一次往返也要留下原文（D156）。摘要是**不可逆**的——一段压完
+    # 原细纲就不再进上下文了，压坏了事后只能从这里看出是压的时候丢的还是本来就没有。
+    if tracer is not None:
+        tracer.exchange(Actor.ORCHESTRATOR, prompt.messages, response)
     return response.content.strip()

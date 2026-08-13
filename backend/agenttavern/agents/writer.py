@@ -50,6 +50,7 @@ async def run_writer(ctx: RunContext, tracer: Tracer, outline: str) -> WriterRes
     )
 
     response = await ctx.gateway.complete(messages, user_id=ctx.session.id)
+    tracer.exchange(Actor.WRITER, messages, response)
     prose, deviation = _split_deviation(response.content)
 
     tracer.emit(

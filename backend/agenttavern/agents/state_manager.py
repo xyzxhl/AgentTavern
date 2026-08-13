@@ -102,6 +102,7 @@ async def run_state_manager(
     for rounds in range(1, max_rounds + 1):  # noqa: B007 — 出口在循环体里，要留住轮数
         response = await ctx.gateway.complete(messages, tools=specs, user_id=ctx.session.id)
 
+        tracer.exchange(Actor.STATE_MANAGER, messages, response, tools=specs)
         tracer.emit(
             TraceEventType.MODEL_RESPONSE,
             Actor.STATE_MANAGER,

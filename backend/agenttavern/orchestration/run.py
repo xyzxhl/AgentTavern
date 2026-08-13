@@ -60,9 +60,18 @@ async def execute_run(
     control_override: ControlOverride | None = None,
     on_trace: OnEvent | None = None,
     inbox: Inbox | None = None,
+    developer: bool = False,
 ) -> RunOutcome:
     run_id = new_id("run")
-    tracer = Tracer(repo, run_id, on_trace, persist=session.capabilities.trace)
+    # **开发者模式强制落盘**（D156）：记了不落盘，下次就查不了了，而查问题
+    # 恰恰总是事后。它与 `capabilities.trace` 是或的关系，不是覆盖。
+    tracer = Tracer(
+        repo,
+        run_id,
+        on_trace,
+        persist=session.capabilities.trace or developer,
+        developer=developer,
+    )
 
     control = session.control.merged_with(control_override)
     effective = session.model_copy(update={"control": control})
@@ -459,7 +468,9 @@ async def close_segment(
         # **一律压**（D154）。这里以前有条"已经比摘要还短就原样留下"的近路，
         # 阈值就是那个已经删掉的 `summary_max_chars`——它是同一个说了不算的数，
         # 换个名字留下来只是把问题藏起来。近路本来也几乎不触发：一段细纲动辄上千字。
-        end.outline_summary = await summarize_text(gateway, joined, user_id=repo.session_id)
+        end.outline_summary = await summarize_text(
+            gateway, joined, user_id=repo.session_id, tracer=tracer
+        )
         end.segment_span = len(segment)
     except asyncio.CancelledError:
         raise

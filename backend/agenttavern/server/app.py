@@ -85,6 +85,16 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
             raise HTTPException(404, f"session 不存在：{session_id}")
         return repo
 
+    # -- 服务本身 ------------------------------------------------------------
+
+    @app.get("/meta")
+    def server_meta() -> dict[str, Any]:
+        """服务级信息。**前端据此决定要不要显示开发者面板**（D156）。
+
+        模式在启动服务时就定了，不是运行时开关——所以这里只读，没有对应的写接口。
+        """
+        return {"developer": resolved.developer, "model": resolved.llm_model}
+
     # -- session ------------------------------------------------------------
 
     @app.post("/sessions")
@@ -150,7 +160,12 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
             repo,
             active,
             session.active_leaf_id,
-            Tracer(repo, session.active_leaf_id),
+            Tracer(
+                repo,
+                session.active_leaf_id,
+                persist=resolved.developer,
+                developer=resolved.developer,
+            ),
             forced=True,
         )
         if end is None:
@@ -182,7 +197,7 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
         async def broadcast(message: ServerMessage) -> None:
             await websocket.send_text(message.model_dump_json())
 
-        runner = SessionRunner(repo, active, broadcast)
+        runner = SessionRunner(repo, active, broadcast, developer=resolved.developer)
         runner.start()
 
         session = repo.load_session()

@@ -101,6 +101,7 @@ async def ask_segment_cut(
     # 追问接在 director 自己的对话后面，**必须用同一个 user_id**，
     # 否则它落在另一个缓存空间里，整份前缀白付一次。
     response = await gateway.complete(followup, model=model, user_id=user_id)
+    tracer.exchange(Actor.ORCHESTRATOR, followup, response)
     cut = parse_cut(response.content, open_runs)
 
     # **用 ORCHESTRATOR 而不是 DIRECTOR**：这是系统维护性的追问，不是创作轮次。

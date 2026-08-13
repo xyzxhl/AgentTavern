@@ -226,6 +226,7 @@ async def advance_goal(
 
     for _ in range(max_rounds):
         response = await gateway.complete(messages, tools=specs, model=model, user_id=user_id)
+        tracer.exchange(Actor.GOAL_MANAGER, messages, response, tools=specs)
         tracer.emit(
             TraceEventType.MODEL_RESPONSE,
             Actor.GOAL_MANAGER,

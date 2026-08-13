@@ -186,6 +186,7 @@ async def run_director(
                 _boundary(ctx, messages, tracer, aborted=True)
                 continue
 
+            tracer.exchange(Actor.DIRECTOR, messages, response, tools=specs)
             tracer.emit(
                 TraceEventType.MODEL_RESPONSE,
                 Actor.DIRECTOR,

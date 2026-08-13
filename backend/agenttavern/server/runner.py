@@ -64,10 +64,17 @@ class SessionRunner:
         repo: SessionRepository,
         gateway: LLMGateway,
         broadcast: Broadcast,
+        *,
+        developer: bool = False,
     ) -> None:
         self._repo = repo
         self._gateway = gateway
         self._broadcast = broadcast
+        self._developer = developer
+        """**服务级开发者模式**（D156，`Settings.developer`）：额外记录每次模型
+        往返的完整输入输出，并强制 trace 落盘。session 级的 `capabilities.trace`
+        管的是另一件事——那条决定要不要留 trace 文件，这条决定 trace 里有没有原文。
+        """
 
         self._queue: asyncio.Queue[_Queued] = asyncio.Queue()
         self._pending: list[_Queued] = []
@@ -262,6 +269,7 @@ class SessionRunner:
                 control_override=item.control_override if item else None,
                 on_trace=lambda event: self._emit(Trace(event=event)),
                 inbox=self._inbox,
+                developer=self._developer,
             )
         except asyncio.CancelledError:
             raise
@@ -324,7 +332,8 @@ class SessionRunner:
             self._repo,
             leaf_id,
             lambda event: self._emit(Trace(event=event)),
-            persist=session.capabilities.trace,
+            persist=session.capabilities.trace or self._developer,
+            developer=self._developer,
         )
 
         # 事件密度是 goal_manager 唯一读的控制维度：它决定阶段拆多细、
