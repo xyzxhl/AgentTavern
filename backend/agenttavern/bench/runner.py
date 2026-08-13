@@ -131,6 +131,7 @@ class BenchResult:
     def totals(self) -> dict[str, Any]:
         done = self.completed
         ratios = [t.ratio for t in done if t.ratio is not None]
+        segments = [s for t in done for s in t.metrics.segments]
         return {
             "turns": len(self.turns),
             "failed": sum(1 for t in self.turns if t.failure),
@@ -153,6 +154,14 @@ class BenchResult:
             "e0_pushbacks": sum(t.metrics.e0_pushbacks for t in done),
             "parse_errors": sum(t.metrics.parse_errors for t in done),
             "tool_errors": sum(t.metrics.tool_errors for t in done),
+            # 摘要**没有上限了，只统计**（D154）。看的是压缩比而不是绝对字数：
+            # 249 字是 10× 还是 1.6×，取决于它从多少压下来。
+            "segments": len(segments),
+            "summary_chars_avg": _mean([out for _, _, out in segments]),
+            "compression_avg": _mean([src / out for _, src, out in segments if out]),
+            "compression_min": (
+                round(min(src / out for _, src, out in segments if out), 2) if segments else None
+            ),
         }
 
 

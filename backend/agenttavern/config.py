@@ -76,7 +76,6 @@ class _Context(BaseModel):
 
 
 class _Segment(BaseModel):
-    summary_max_chars: int = 200
     max_runs: int = 6
     min_runs: int = 1
 

@@ -323,7 +323,6 @@ class SummarizeParams(BaseModel):
     source: str = Field(
         description="要压缩的对象：``run:<run_id>``（某轮细纲）或 ``wi:<ref>``（某条设定）。"
     )
-    max_chars: int = Field(default=200, ge=40, le=1000)
 
 
 async def _summarize(ctx: RunContext, params: SummarizeParams) -> ToolResult:
@@ -335,7 +334,7 @@ async def _summarize(ctx: RunContext, params: SummarizeParams) -> ToolResult:
             return error(f"没有这个 run：{ident}", label="压缩失败")
         if node.outline_summary:
             return ToolResult(content=node.outline_summary, label="复用了已有摘要")
-        summary = await _llm_summarize(ctx, node.outline, params.max_chars)
+        summary = await _llm_summarize(ctx, node.outline)
         node.outline_summary = summary
         ctx.repo.save_node(node)
 
@@ -345,7 +344,7 @@ async def _summarize(ctx: RunContext, params: SummarizeParams) -> ToolResult:
             return error(f"没有这个设定条目：{ident}", label="压缩失败")
         if entry.summary:
             return ToolResult(content=entry.summary, label="复用了已有摘要")
-        summary = await _llm_summarize(ctx, entry.content, params.max_chars)
+        summary = await _llm_summarize(ctx, entry.content)
         entry.summary = summary
         ctx.repo.save_worldbook_entry(entry)
 
@@ -360,13 +359,13 @@ async def _summarize(ctx: RunContext, params: SummarizeParams) -> ToolResult:
     )
 
 
-async def _llm_summarize(ctx: RunContext, content: str, max_chars: int) -> str:
+async def _llm_summarize(ctx: RunContext, content: str) -> str:
     # **函数内 import 是有意的**：模块级会成环（tools → agents → director → tools）。
     # 环一直在，只是恰好没人单独 import 过 `agenttavern.tools`——测试全跑时
     # 别的模块先把 agents 装好了，环就看不见。
     from ..agents.summarizer import summarize_text
 
-    return await summarize_text(ctx.gateway, content, max_chars)
+    return await summarize_text(ctx.gateway, content)
 
 
 # --------------------------------------------------------------------------

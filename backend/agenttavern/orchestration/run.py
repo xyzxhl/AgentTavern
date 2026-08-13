@@ -17,7 +17,7 @@ from ..agents.director import DirectorFailed, DirectorResult, run_director
 from ..agents.postrun import ask_segment_cut
 from ..agents.replay import without_reasoning
 from ..agents.state_manager import run_state_manager
-from ..agents.summarizer import MAX_SEGMENT_RUNS, SUMMARY_MAX_CHARS, summarize_text
+from ..agents.summarizer import MAX_SEGMENT_RUNS, summarize_text
 from ..agents.writer import run_writer
 from ..llm import LLMGateway, Message, Usage
 from ..models import (
@@ -450,12 +450,10 @@ async def close_segment(
     try:
         joined = "\n\n".join(n.outline for n in segment)
         end = segment[-1]
-        # 已经比摘要还短就原样留下——压它只会白白引入损失，还要多花一次调用。
-        end.outline_summary = (
-            joined
-            if len(joined) <= SUMMARY_MAX_CHARS
-            else await summarize_text(gateway, joined, user_id=repo.session_id)
-        )
+        # **一律压**（D154）。这里以前有条"已经比摘要还短就原样留下"的近路，
+        # 阈值就是那个已经删掉的 `summary_max_chars`——它是同一个说了不算的数，
+        # 换个名字留下来只是把问题藏起来。近路本来也几乎不触发：一段细纲动辄上千字。
+        end.outline_summary = await summarize_text(gateway, joined, user_id=repo.session_id)
         end.segment_span = len(segment)
     except asyncio.CancelledError:
         raise
@@ -468,10 +466,18 @@ async def close_segment(
         return None
 
     repo.save_node(end)
+    # **压缩比要落进事件里**（D154）：没有上限之后，"压到多少"是唯一还能看的东西，
+    # 而它只有和"从多少压下来的"放在一起才有意义——单看 249 字看不出是 10× 还是 1.6×。
     tracer.emit(
         TraceEventType.CROSS_CHECK,
         Actor.ORCHESTRATOR,
-        f"归段（{reason}）：{len(segment)} 轮压成 {len(end.outline_summary)} 字",
-        {"end": end.id, "span": len(segment), "reason": reason},
+        f"归段（{reason}）：{len(segment)} 轮 {len(joined)} 字压成 {len(end.outline_summary)} 字",
+        {
+            "end": end.id,
+            "span": len(segment),
+            "reason": reason,
+            "chars_in": len(joined),
+            "chars_out": len(end.outline_summary),
+        },
     )
     return end

@@ -62,6 +62,13 @@ class Metrics:
     cache_hit: int = 0
     """命中前缀缓存的输入 token。占 `tokens_in` 的比例才是 D114 该看的数。"""
 
+    segments: list[tuple[int, int, int]] = field(default_factory=list)
+    """这一轮归掉的段：``(轮数, 压缩前字数, 压缩后字数)``。
+
+    **只统计不约束**（D154）——摘要没有字数上限了，所以"压到多少"是唯一还能看的
+    东西，而它只有和"从多少压下来的"放在一起才有意义。
+    """
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "rounds": self.rounds,
@@ -73,6 +80,7 @@ class Metrics:
             "tokens_in": self.tokens_in,
             "tokens_out": self.tokens_out,
             "cache_hit": self.cache_hit,
+            "segments": self.segments,
         }
 
 
@@ -99,4 +107,6 @@ def collect(events: list[TraceEvent]) -> Metrics:
             m.e0_pushbacks += 1
         if "参数解析失败" in e.label or "参数错误" in e.label:
             m.parse_errors += 1
+        if "chars_in" in e.payload:
+            m.segments.append((e.payload["span"], e.payload["chars_in"], e.payload["chars_out"]))
     return m

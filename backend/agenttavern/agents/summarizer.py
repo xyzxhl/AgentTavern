@@ -21,9 +21,6 @@ from ..config import LIMITS
 from ..llm import LLMGateway
 from ..prompting import assemble
 
-SUMMARY_MAX_CHARS = LIMITS.segment.summary_max_chars
-
-
 MAX_SEGMENT_RUNS = LIMITS.segment.max_runs
 """一段最多覆盖几轮。到顶就强制断开——**不能让"还没结束"无限拖下去**。
 
@@ -42,12 +39,18 @@ MIN_SEGMENT_RUNS = LIMITS.segment.min_runs
 async def summarize_text(
     gateway: LLMGateway,
     content: str,
-    max_chars: int = SUMMARY_MAX_CHARS,
     user_id: str | None = None,
     *,
     enabled: bool = True,
 ) -> str:
-    """把一段内容压到 ``max_chars`` 以内。
+    """把一段内容压缩。
+
+    **没有字数上限**（D154）。曾经有一个（`segment.summary_max_chars: 200`，
+    写进提示词的"压缩到 N 字以内"），实测**它基本不起作用，而且没人发现**：
+    48 条落盘摘要里 16 条超标，最坏 779 字 / 3.9 倍，且**超出幅度随输入长度增长**
+    ——细纲 800 字时超 20%，细纲 1250 字时超到近 4 倍。一个说了不算的数比没有
+    更糟：它让"压缩到 200 字"看起来是既成事实，于是 `budget_chars` 那套账全是虚的。
+    现在改成**只统计不约束**：长度照旧量、照旧进 trace 和采集报告，但不再假装它被限住。
 
     **压缩判据是"可不可再生"，不是"重不重要"。** 后者是事后才知道的——
     写摘要的那一刻，无从知道台账上那行日期以后会成为关键（D106 的交集盲区）。
@@ -59,7 +62,6 @@ async def summarize_text(
     prompt = assemble(
         "summarizer",
         contexts={"content": content},
-        values={"max_chars": str(max_chars)},
         options={"compression": "on" if enabled else "off"},
     )
     response = await gateway.complete(prompt.messages, user_id=user_id)

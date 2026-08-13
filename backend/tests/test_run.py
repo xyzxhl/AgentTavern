@@ -416,11 +416,8 @@ async def test_segment_closes_when_the_director_says_it_closed(tmp_path: Path) -
     它对本轮产出毫无帮助，所以不能放进 tool loop；但"这场戏完了没有"是语义判断，
     需要 state、前情和故事走向——冷调用给不出来，只能接在刚写完的那段对话后面追问。
     """
-    from agenttavern.agents.summarizer import SUMMARY_MAX_CHARS
-
     runs = 4
     long_outline = "她推开门，屋里坐着陈。" * 30
-    assert len(long_outline) > SUMMARY_MAX_CHARS
 
     llm = _script(
         runs,
@@ -470,21 +467,23 @@ async def test_open_segment_waits_another_run(tmp_path: Path) -> None:
     assert all(n.outline_summary is None for n in repo.path_to(parent))
 
 
-async def test_a_short_segment_is_kept_verbatim(tmp_path: Path) -> None:
-    """整段拼起来还比摘要短，就原样留下——压它只会白白引入损失，还要多花一次调用。"""
-    from agenttavern.agents.summarizer import SUMMARY_MAX_CHARS
+async def test_every_segment_goes_through_the_summarizer(tmp_path: Path) -> None:
+    """**一律压，短段也压**（D154）。
 
+    这里以前有条近路：整段拼起来还比摘要短就原样留下。它的阈值是
+    `summary_max_chars`，而那个数已经删掉了——它说了不算（48 条落盘摘要里 16 条
+    超标，最坏 3.9 倍），换个名字留在这里只是把同一个问题藏起来。
+    近路本来也几乎不触发：一段细纲动辄上千字。
+    """
     runs = 4
     short = "她推开门。"
-    assert len(short) <= SUMMARY_MAX_CHARS
 
-    # 只给"收束"这一条回复；走到压缩就会用错脚本，测试会失败
-    llm = _script(runs, short, closes=["0", "0", "0", "4"])
+    # 最后那条 `text` 是压缩那次调用的回复。近路还在的话它根本不会被用到。
+    llm = _script(runs, short, text("她进了店。"), closes=["0", "0", "0", "4"])
     repo, session, gw, reg = setup(tmp_path, llm)
     parent = await _drive(repo, session, gw, reg, runs)
 
-    # 段一收就压，末节点是打标记的那一轮；整段拼起来仍比摘要短，于是原样留下
-    assert repo.path_to(parent)[-1].outline_summary == "\n\n".join([short] * runs)
+    assert repo.path_to(parent)[-1].outline_summary == "她进了店。"
 
 
 async def test_manual_close_does_not_ask_the_model(tmp_path: Path) -> None:
@@ -498,7 +497,7 @@ async def test_manual_close_does_not_ask_the_model(tmp_path: Path) -> None:
 
     runs = 4
     session = Session(capabilities=Capabilities(summarize=SummarizeMode.MANUAL))
-    llm = _script(runs, "她推开门。", followup=False)
+    llm = _script(runs, "她推开门。", text("四轮压成这一句。"), followup=False)
     repo, session, gw, reg = setup(tmp_path, llm, session)
 
     parent = await _drive(repo, session, gw, reg, runs)
@@ -507,7 +506,8 @@ async def test_manual_close_does_not_ask_the_model(tmp_path: Path) -> None:
 
     end = await close_segment(repo, gw, parent, Tracer(repo, parent), forced=True)
     assert end is not None
-    assert end.outline_summary == "\n\n".join(["她推开门。"] * runs)
+    assert end.outline_summary == "四轮压成这一句。"
+    assert end.segment_span == runs
 
 
 async def test_backfill_failure_does_not_fail_the_run(tmp_path: Path) -> None:
