@@ -3,15 +3,19 @@ import { useState } from "react";
 import { useSession } from "../store";
 
 /**
- * 输入框。
+ * 输入框。**只有一个按钮**，按两件事变形：模型在不在跑、框里有没有字。
  *
- * **发送与停止是同一个按钮**，按「有没有话要说」变形：跑着的时候没输入，
- * 你唯一想做的事就是叫停；有输入就还是发送。两个常驻按钮里总有一个是灰的，
- * 而灰按钮只是占位。
+ * | | 空 | 有内容 |
+ * |---|---|---|
+ * | 空闲 | 发送（灰，按不动） | 发送 |
+ * | 运行中 | **中断** | 发送 |
  *
- * 跑着的时候发送**默认排队**（D26：每条输入独立成一个 run，不打包）。
- * 想插进正在跑的这一轮走「引导」（D119）——两者结果差很远，所以并排给出口，
- * 不做成一个需要猜的默认值。
+ * 没话要说的时候，那一下唯一的意思就是「别再往下跑了」；有话要说就永远是发送——
+ * 跑着的时候发送进队列，作为新的一轮（D26：每条输入独立成一个 run，不打包）。
+ *
+ * **引导走 Ctrl+Enter**（D119）：它插进正在跑的这一轮、落在操作边界上，和排队
+ * 是两件事。不给它单独的按钮，是因为按钮一多，「发送」是干什么的就得先想一下；
+ * 而引导本来就是少数情况。
  */
 export function Composer(): JSX.Element {
   const [text, setText] = useState("");
@@ -23,7 +27,6 @@ export function Composer(): JSX.Element {
   const said = text.trim();
   // `asking` 也算在飞：那一轮挂起在等回答，没有结束。
   const inFlight = phase !== "idle";
-  // 有话要说就是发送，没话可说时那一下的意思只能是「别再往下跑了」。
   const stopping = inFlight && !said;
 
   function submit(): void {
@@ -39,7 +42,7 @@ export function Composer(): JSX.Element {
     setText("");
   }
 
-  function primary(): void {
+  function press(): void {
     if (stopping) send({ type: "stop" });
     else submit();
   }
@@ -67,7 +70,7 @@ export function Composer(): JSX.Element {
               e.preventDefault();
               // Ctrl/Cmd+Enter 直接走引导，不排队。
               if (e.ctrlKey || e.metaKey) guide();
-              else primary();
+              else press();
             }}
             rows={2}
             placeholder={
@@ -76,32 +79,46 @@ export function Composer(): JSX.Element {
             className="max-h-48 min-h-[3rem] flex-1 resize-none rounded border border-line bg-ink-800 px-3 py-2 text-sm text-fg placeholder:text-dim/60 focus:border-dim focus:outline-none"
           />
 
-          <div className="flex flex-col items-stretch gap-1.5">
-            <button
-              className={`btn ${stopping ? "border-dim text-fg" : ""}`}
-              onClick={primary}
-              disabled={!stopping && !said}
-              title={stopping ? "停止这一轮" : inFlight ? "排队，作为新的一轮" : "发送"}
-            >
-              {stopping ? "停止" : inFlight ? "排队" : "发送"}
-            </button>
-
-            {/* 只在真有得插的时候出现——没有 run 在跑时它和「发送」是同一件事。 */}
-            {inFlight && (
-              <button className="btn" onClick={guide} disabled={!said} title="Ctrl+Enter">
-                引导
-              </button>
-            )}
-          </div>
+          <button
+            onClick={press}
+            disabled={!stopping && !said}
+            title={stopping ? "中断这一轮" : inFlight ? "排队，作为新的一轮" : "发送"}
+            aria-label={stopping ? "中断" : "发送"}
+            className={`grid h-9 w-9 shrink-0 place-items-center rounded border transition-colors ${
+              stopping
+                ? "border-dim text-fg hover:border-fg"
+                : said
+                  ? "border-accent/60 text-accent hover:bg-accent/10"
+                  : "cursor-not-allowed border-line text-dim/40"
+            }`}
+          >
+            {stopping ? <StopIcon /> : <SendIcon />}
+          </button>
         </div>
 
         {inFlight && said && (
           <p className="mt-1.5 text-[11px] text-dim">
-            <b className="font-medium text-fg">排队</b> 等这一轮写完，作为新的一轮 ·{" "}
-            <b className="font-medium text-fg">引导</b> 插进正在跑的这一轮，当场改方向
+            <b className="font-medium text-fg">发送</b> 排队，等这一轮写完再作为新的一轮 ·{" "}
+            <b className="font-medium text-fg">Ctrl+Enter</b> 插进正在跑的这一轮，当场改方向
           </p>
         )}
       </div>
     </div>
+  );
+}
+
+function SendIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <path d="M8 13V3M8 3L4 7M8 3l4 4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function StopIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="currentColor">
+      <rect x="3" y="3" width="10" height="10" rx="1.5" />
+    </svg>
   );
 }
