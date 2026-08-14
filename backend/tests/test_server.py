@@ -1078,6 +1078,35 @@ def test_without_developer_mode_the_originals_are_not_recorded(client_for) -> No
     assert not [m for m in traces if m["event"]["type"] == "model_request"]
 
 
+def test_a_past_run_can_be_read_back_from_disk(client_for) -> None:
+    """**开发者面板离了这条只能看当前连接期间的轮次**（D162）。
+
+    事件是推过来的，刷新一次页面之前那些就没了。而开发者模式本来就强制落盘——
+    查问题总是事后，记了不给读回来的路等于没记。
+    """
+    llm = ScriptedLLM(
+        tool("submit_outline", outline="她推开门。"),
+        text("门轴响了。"),
+        state=one_state(),
+    )
+    client = client_for(llm, developer=True)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "我推开门"}))
+        run_id = collect(ws, "run_finished")[-1]["node"]["id"]
+
+    # 换一个"连接"（新客户端），照样读得到。
+    events = client.get(f"/sessions/{session_id}/trace/{run_id}").json()
+    exchanges = [e for e in events if e["type"] == "model_request"]
+    assert {e["actor"] for e in exchanges} >= {"director", "writer", "state_manager"}
+    assert exchanges[0]["payload"]["messages"], "原文要在"
+
+    # 没留过痕的轮次返回空，不是 404——那不是错误。
+    assert client.get(f"/sessions/{session_id}/trace/run_nope").json() == []
+
+
 def test_the_frontend_can_tell_which_mode_the_service_started_in(client_for) -> None:
     """模式在启动服务时就定了，前端据此决定要不要显示开发者面板。
 

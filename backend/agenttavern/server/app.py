@@ -19,6 +19,7 @@ from ..models import (
     Session,
     SessionMeta,
     SessionModes,
+    TraceEvent,
     WorldbookBundle,
     WorldbookEntry,
     new_id,
@@ -183,6 +184,19 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
         if end is None:
             return {"closed": False, "reason": "没有待归段的轮次"}
         return {"closed": True, "end": end.id, "span": end.segment_span}
+
+    @app.get("/sessions/{session_id}/trace/{run_id}")
+    def read_trace(session_id: str, run_id: str) -> list[TraceEvent]:
+        """回看某一轮落盘的 trace（D162）。
+
+        **开发者面板离了它只能看当前连接期间的轮次**：事件是推过来的，刷新一次
+        页面之前那些就没了。而开发者模式本来就强制落盘（D156）——查问题总是事后，
+        记了不给读回来的路等于没记。
+
+        没开发者模式时文件多半不存在，返回空列表而不是 404：那不是错误，
+        只是这一轮当时没留痕。
+        """
+        return repo_of(session_id).read_trace(run_id)
 
     # -- worldinfo ----------------------------------------------------------
 

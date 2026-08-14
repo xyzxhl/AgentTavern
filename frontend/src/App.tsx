@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { Composer } from "./components/Composer";
+import { DeveloperPanel } from "./components/DeveloperPanel";
 import { Notice } from "./components/Notice";
 import { QuestionPrompt } from "./components/QuestionPrompt";
 import { SessionList } from "./components/SessionList";
@@ -25,6 +26,7 @@ export function App(): JSX.Element {
   const developer = useSession((s) => s.meta?.developer ?? false);
   const [worldbook, setWorldbook] = useState(false);
   const [settings, setSettings] = useState(false);
+  const [devtools, setDevtools] = useState(false);
 
   useEffect(() => {
     void bootstrap();
@@ -40,9 +42,13 @@ export function App(): JSX.Element {
           <span className="text-sm text-fg">{title || "未命名"}</span>
           <span className="font-mono text-[11px] text-dim">{model}</span>
           {developer && (
-            <span className="rounded border border-accent/40 px-1.5 py-0.5 font-mono text-[10px] text-accent">
+            <button
+              onClick={() => setDevtools(true)}
+              className="rounded border border-accent/40 px-1.5 py-0.5 font-mono text-[10px] text-accent transition-colors hover:bg-accent/10"
+              title="每次模型往返的完整输入输出"
+            >
               开发者模式
-            </span>
+            </button>
           )}
           <div className="flex-1" />
           {sessionId && (
@@ -73,6 +79,7 @@ export function App(): JSX.Element {
 
         {worldbook && sessionId && <WorldbookPanel onClose={() => setWorldbook(false)} />}
         {settings && sessionId && <SettingsPanel onClose={() => setSettings(false)} />}
+        {devtools && sessionId && <DeveloperPanel onClose={() => setDevtools(false)} />}
       </main>
 
       <Sidebar />

@@ -5,6 +5,7 @@ import type {
   Node,
   ServerMessage,
   Session,
+  TraceEvent,
   WorldbookBundle,
   WorldbookEntry,
 } from "./protocol";
@@ -48,6 +49,10 @@ export const api = {
     }),
   deleteWorldbookEntry: (id: string, entryId: string) =>
     json<{ deleted: string }>(`/sessions/${id}/worldinfo/${entryId}`, { method: "DELETE" }),
+
+  /** 回看某一轮落盘的 trace（D162）。开发者面板靠它看当前连接之前的轮次。 */
+  readTrace: (id: string, runId: string) =>
+    json<TraceEvent[]>(`/sessions/${id}/trace/${runId}`),
 
   // 导入导出。格式与三条约定见 docs/design/WorldbookFormat.md。
   exportWorldbook: (id: string) => json<WorldbookBundle>(`/sessions/${id}/worldbook/export`),
