@@ -182,8 +182,14 @@ function ExchangeView({ exchange }: { exchange: Exchange }): JSX.Element {
 }
 
 /**
- * 一条消息。**默认折起长内容**——一份 director 的 prompt 动辄几万字，全摊开
- * 之后想找的那一条就淹了。
+ * 一条消息。**内容与思考段各有各的展开开关**（D163）。
+ *
+ * 合用一个不行：思考段动辄上万字（实测 director 一轮的思考段有两万多个分片），
+ * 而它和正文是**两件不同的东西**——查"它写了什么"和查"它为什么这么写"是两次
+ * 不同的排查，一次只想看一个。合在一起的话，思考段会把内容整个挤出视野。
+ *
+ * 两者都**默认折起**：一份 director 的 prompt 动辄几万字，全摊开之后想找的
+ * 那一条就淹了。
  */
 function Block({
   role,
@@ -196,34 +202,15 @@ function Block({
   reasoning?: string;
   calls?: { name?: string; arguments_raw?: string }[];
 }): JSX.Element {
-  const [open, setOpen] = useState(false);
-  const long = body.length > 400;
-  const shown = open || !long ? body : body.slice(0, 400);
-
   return (
     <div className="rounded border border-line">
       <div className="flex items-baseline gap-2 border-b border-line px-2.5 py-1">
         <span className="font-mono text-[10px] uppercase text-accent/80">{role}</span>
         {body.length > 0 && <span className="text-[10px] text-dim">{body.length} 字</span>}
-        {long && (
-          <button onClick={() => setOpen(!open)} className="ml-auto text-[10px] text-dim hover:text-fg">
-            {open ? "收起" : "展开"}
-          </button>
-        )}
       </div>
 
-      {reasoning && (
-        <pre className="whitespace-pre-wrap break-words border-b border-line px-2.5 py-1.5 font-mono text-[11px] leading-relaxed text-dim/70">
-          {reasoning}
-        </pre>
-      )}
-
-      {shown && (
-        <pre className="whitespace-pre-wrap break-words px-2.5 py-1.5 font-mono text-[11px] leading-relaxed text-fg">
-          {shown}
-          {!open && long && <span className="text-dim">…</span>}
-        </pre>
-      )}
+      {reasoning && <Foldable label="思考" text={reasoning} dim />}
+      {body && <Foldable label="内容" text={body} />}
 
       {calls?.map((call, i) => (
         <div key={i} className="border-t border-line px-2.5 py-1.5">
@@ -233,6 +220,47 @@ function Block({
           </pre>
         </div>
       ))}
+    </div>
+  );
+}
+
+const FOLD_AT = 400;
+
+/** 一段可折的长文本。短到一屏放得下就不折——为几行字加一个开关只是噪音。 */
+function Foldable({
+  label,
+  text,
+  dim,
+}: {
+  label: string;
+  text: string;
+  dim?: boolean;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const long = text.length > FOLD_AT;
+  const shown = open || !long ? text : text.slice(0, FOLD_AT);
+
+  return (
+    <div className="border-t border-line first:border-t-0">
+      {long && (
+        <button
+          onClick={() => setOpen(!open)}
+          className="flex w-full items-baseline gap-1.5 px-2.5 pt-1.5 text-[10px] text-dim transition-colors hover:text-fg"
+        >
+          <span className="select-none">{open ? "▾" : "▸"}</span>
+          <span>
+            {label} {text.length} 字
+          </span>
+        </button>
+      )}
+      <pre
+        className={`whitespace-pre-wrap break-words px-2.5 py-1.5 font-mono text-[11px] leading-relaxed ${
+          dim ? "text-dim/70" : "text-fg"
+        }`}
+      >
+        {shown}
+        {!open && long && <span className="text-dim">…</span>}
+      </pre>
     </div>
   );
 }

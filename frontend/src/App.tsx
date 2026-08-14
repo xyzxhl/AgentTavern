@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { Composer } from "./components/Composer";
 import { DeveloperPanel } from "./components/DeveloperPanel";
+import { GoalBar } from "./components/GoalBar";
 import { Notice } from "./components/Notice";
 import { QuestionPrompt } from "./components/QuestionPrompt";
 import { SessionList } from "./components/SessionList";
@@ -69,6 +70,7 @@ export function App(): JSX.Element {
           <>
             <Transcript />
             <QuestionPrompt />
+            <GoalBar />
             <Composer />
           </>
         ) : (
