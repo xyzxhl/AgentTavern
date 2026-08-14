@@ -24,35 +24,58 @@ class WorldbookMode(StrEnum):
 
 
 class EntryKind(StrEnum):
-    """条目分两类，外加一个特殊的（D158）。
+    """条目分三类（D158 / D159）。
 
-    早先是一条条目**同时**装静态设定（`content`）和初始状态（`seeds`），共用一个
-    `mode`。拆开的理由是这两样东西的可见性天然不同步：一个角色的背景可能几百字、
-    该按需展开，而他「在不在场」必须每轮都在眼前。共用一个开关时，只能迁就其中一个。
+    早先是一条条目**同时**装静态设定和初始状态、共用一个 `mode`。拆开的理由是
+    可见性天然不同步：一个角色的背景可能几百字、该按需展开，而他「在不在场」
+    必须每轮都在眼前——共用一个开关时只能迁就其中一个。
     """
 
-    LORE = "lore"
-    """世界信息：一段正文。静态的东西——性格、背景、身份、地方长什么样。"""
+    WORLD = "world"
+    """世界设定：**一段不受限制的文本**。地方、组织、规矩、历史。
+
+    它没有额外字段，因为世界里能有什么东西根本枚举不完——加字段只是把猜测挪深
+    一层（P14）。
+    """
+
+    CHARACTER = "character"
+    """角色设定：一段正文 + **角色语言习惯**（`voice`）。
+
+    和世界设定分开，是因为角色比别的东西多一样**只进 writer** 的属性：他怎么说话。
+    那一项此前挂在 `SessionMeta.character_voices` 这个 `名字 → 说话方式` 的字典
+    里，于是「这个角色是谁」和「他怎么说话」分在两个地方，改了一处另一处不动，
+    还得靠名字对上——改个名字就悄悄断了（同 D158 对 `user_character` 的处理）。
+    """
 
     STATE = "state"
     """初始状态：一棵键值树。会变的东西——在哪、知道什么、和谁什么关系。"""
-
-    PLAYER = "player"
-    """**用户扮演的角色**（D158）。形态同 `LORE`，但它额外回答"用户是谁"。
-
-    一份 worldbook 里至多一条。它此前只是 `SessionMeta.user_character` 里的一个
-    名字，于是「用户扮演谁」和「这个人是什么样」分在两个地方，改了一处另一处不动。
-    """
 
 
 class WorldbookEntry(BaseModel):
     id: str = Field(default_factory=lambda: new_id("wi"))
     name: str
 
-    kind: EntryKind = EntryKind.LORE
+    kind: EntryKind = EntryKind.WORLD
 
     content: str = ""
-    """`LORE` / `PLAYER` 的正文。`STATE` 条目不用它。"""
+    """`WORLD` / `CHARACTER` 的正文。`STATE` 条目不用它。"""
+
+    voice: str = ""
+    """角色的语言习惯。**只有 `CHARACTER` 用，而且只进 writer**（D33 那把刀）。
+
+    它不参与检索，参与每一个 token——所以它和文风一样归 writer，不进 director。
+    """
+
+    is_player: bool = False
+    """这个角色**是用户扮演的**（D159）。
+
+    **用户扮演的角色是一般角色的子类**，不是第四种条目：凡是对角色成立的
+    （正文、语言习惯、可展开），对它一样成立，它只是多回答一个「用户是谁」。
+    做成独立的一类，就得在每一处 `CHARACTER` 分支旁边记得再写一个 `PLAYER`——
+    而那种「记得」迟早会漏。
+
+    一份 worldbook 里至多一条为真。`SessionMeta.user_character` 从它取名字。
+    """
 
     values: dict[str, Any] = Field(default_factory=dict)
     """`STATE` 条目的初始状态，一棵嵌套的键值树（D157）。
@@ -98,8 +121,8 @@ class WorldbookEntry(BaseModel):
 
     @property
     def is_lore(self) -> bool:
-        """进 worldinfo 的那两类。`PLAYER` 也是一段设定，只是多回答一个问题。"""
-        return self.kind in (EntryKind.LORE, EntryKind.PLAYER)
+        """进 worldinfo 的那两类：世界设定与角色设定。"""
+        return self.kind in (EntryKind.WORLD, EntryKind.CHARACTER)
 
     def ref_hint(self) -> str:
         return self.id

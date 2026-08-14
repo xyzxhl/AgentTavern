@@ -40,6 +40,9 @@ async def run_writer(ctx: RunContext, tracer: Tracer, outline: str) -> WriterRes
         ctx.session.control,
         outline=outline,
         upstream=upstream,
+        # 角色的语言习惯挂在角色条目上（D159），所以 writer 也要看到设定条目。
+        # **它仍然不读设定正文**——`render_voices` 只取 `voice` 那一项。
+        worldinfo=ctx.repo.worldbook(),
     ).messages
 
     tracer.emit(

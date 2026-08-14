@@ -5,26 +5,29 @@ import type { EntryKind, WorldbookBundle, WorldbookEntry } from "../protocol";
 import { useSession } from "../store";
 import { JsonEditor } from "./JsonEditor";
 
-const KINDS = ["lore", "state", "player"] as const;
+const KINDS = ["world", "character", "state"] as const;
 
 const KIND_LABEL: Record<EntryKind, string> = {
-  lore: "世界信息",
+  world: "世界设定",
+  character: "角色设定",
   state: "初始状态",
-  player: "我扮演的角色",
 };
 
 const KIND_HINT: Record<EntryKind, string> = {
-  lore: "静态的东西：性格、背景、身份、地方长什么样。不因剧情改变。",
+  world: "一段不受限制的文本：地方、组织、规矩、历史。世界里能有什么东西枚举不完，所以它没有额外字段。",
+  character:
+    "一段正文 + 语言习惯。和世界设定分开，是因为角色比别的东西多一样只进 writer 的属性：他怎么说话。",
   state: "会变的东西：在哪、知道什么、和谁什么关系。它是这局故事第一帧的状态，之后由剧情推进改。",
-  player: "同世界信息，另外回答「用户扮演谁」。一份设定里至多一条。",
 };
 
 /**
- * 设定管理（worldbook，D90 / D158）。**用一份 worldbook 开启一个 session。**
+ * 设定管理（worldbook，D90 / D158 / D159）。**用一份 worldbook 开启一个 session。**
  *
- * 条目分两类，外加一个特殊的：世界信息（一段正文）、初始状态（一棵键值树）、
- * 我扮演的角色。**分开的理由是可见性天然不同步**——一个角色的背景可能几百字、
- * 该按需展开，而他「在不在场」必须每轮都在眼前；共用一个开关时只能迁就其中一个。
+ * 三类条目：世界设定（一段不受限制的文本）、角色设定（正文 + 语言习惯）、
+ * 初始状态（一棵键值树）。**用户扮演的角色不是第四类**，它是角色设定加一个标记。
+ *
+ * 静态与会变的分开，是因为可见性天然不同步——一个角色的背景可能几百字、该按需
+ * 展开，而他「在不在场」必须每轮都在眼前；共用一个开关时只能迁就其中一个。
  *
  * **占满主区而不是塞进侧栏**：正文常有几百字，在 320px 的窄栏里编辑很难受。
  */
@@ -61,7 +64,16 @@ export function WorldbookPanel({ onClose }: { onClose: () => void }): JSX.Elemen
 
   function create(kind: EntryKind): void {
     setSelected(null);
-    setDraft({ name: "新条目", kind, content: "", mode: "always", values: {}, depth: 0 });
+    setDraft({
+      name: "新条目",
+      kind,
+      content: "",
+      voice: "",
+      is_player: false,
+      mode: "always",
+      values: {},
+      depth: 0,
+    });
     setValuesText("{}");
     setValuesError(null);
   }
@@ -230,7 +242,10 @@ export function WorldbookPanel({ onClose }: { onClose: () => void }): JSX.Elemen
                 )}
               </div>
               <div className="mt-0.5 truncate text-[11px] text-dim">
-                <span className="text-accent/70">{KIND_LABEL[entry.kind ?? "lore"]}</span>
+                <span className="text-accent/70">
+                  {KIND_LABEL[entry.kind ?? "world"]}
+                  {entry.is_player && " · 我"}
+                </span>
                 {" · "}
                 {entry.kind === "state"
                   ? `${Object.keys(entry.values ?? {}).length} 项`
@@ -272,8 +287,9 @@ interface EditorProps {
 
 function Editor(props: EditorProps): JSX.Element {
   const { draft, setDraft, valuesText, setValuesText, valuesError, busy, onSave, onDelete } = props;
-  const kind = draft.kind ?? "lore";
+  const kind = draft.kind ?? "world";
   const isState = kind === "state";
+  const isCharacter = kind === "character";
 
   return (
     <div className="min-w-0 flex-1 overflow-y-auto px-6 py-5">
@@ -332,6 +348,34 @@ function Editor(props: EditorProps): JSX.Element {
               value={draft.depth ?? 0}
               onChange={(e) => setDraft({ ...draft, depth: Number(e.target.value) || 0 })}
               className="w-24 rounded border border-line bg-ink-800 px-3 py-1.5 text-sm text-fg focus:border-dim focus:outline-none"
+            />
+          </Field>
+        )}
+
+        {isCharacter && (
+          <Field
+            label="用户扮演的就是他"
+            hint="**用户扮演的角色是一般角色的子类**：它就是个角色，只是多回答一个「用户是谁」。一份设定里至多一条。"
+          >
+            <button
+              onClick={() => setDraft({ ...draft, is_player: !draft.is_player })}
+              className={`btn ${draft.is_player ? "border-accent text-fg" : ""}`}
+            >
+              {draft.is_player ? "是" : "否"}
+            </button>
+          </Field>
+        )}
+
+        {isCharacter && (
+          <Field
+            label="语言习惯"
+            hint="他怎么说话。**只进 writer**——它不参与检索，参与每一个 token。"
+          >
+            <input
+              value={draft.voice ?? ""}
+              onChange={(e) => setDraft({ ...draft, voice: e.target.value })}
+              placeholder="说话绕，答非所问，很少给准话"
+              className="w-full rounded border border-line bg-ink-800 px-3 py-1.5 text-sm text-fg placeholder:text-dim/60 focus:border-dim focus:outline-none"
             />
           </Field>
         )}

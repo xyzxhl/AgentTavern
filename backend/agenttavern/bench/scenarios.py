@@ -68,9 +68,9 @@ def _noir_session() -> Session:
     return Session(
         meta=SessionMeta(
             title="回归·悬疑",
-            user_character="林昭",
+            # `user_character` 与 `character_voices` 都搬到角色条目上了（D159）。
+            # 别的场景仍用旧写法——`render_voices` 两边都读，正好覆盖到那一路。
             genre_tone="现代，悬疑，克制",
-            character_voices={"陈屿": "说话绕，答非所问，很少给准话"},
         ),
         control=ControlDimensions(prose_style="jishi", pov="third"),
         capabilities=Capabilities(trace=True),
@@ -82,6 +82,9 @@ NOIR_WORLDBOOK = [
     # 作为 seeds 迁移进 state——模型因此不必把设定抄过去（D90）。
     WorldbookEntry(
         name="林昭",
+        kind=EntryKind.CHARACTER,
+        # **用户扮演的角色是一般角色的子类**（D159）：它就是个角色，多一个标记。
+        is_player=True,
         mode=WorldbookMode.ALWAYS,
         content="三十岁出头，本地报社记者。做事谨慎，习惯先观察再开口。",
     ),
@@ -100,8 +103,11 @@ NOIR_WORLDBOOK = [
     ),
     WorldbookEntry(
         name="陈屿",
+        kind=EntryKind.CHARACTER,
         mode=WorldbookMode.ALWAYS,
         content="四十岁，旧货店老板。说话习惯绕开正题，用反问代替回答。",
+        # 语言习惯挂在角色身上，不再靠名字去 meta 那张字典里对（D159）。
+        voice="说话绕，答非所问，很少给准话",
     ),
     WorldbookEntry(
         name="陈屿·初始状态",

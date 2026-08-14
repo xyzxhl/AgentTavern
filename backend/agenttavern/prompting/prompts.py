@@ -37,16 +37,33 @@ from .assembler import Prompt, assemble, text
 
 
 def player_character(meta: SessionMeta, worldinfo: Sequence[WorldbookEntry] = ()) -> str:
-    """用户扮演的是谁。**worldbook 里的 `PLAYER` 条目优先**（D158）。
+    """用户扮演的是谁。**标了 `is_player` 的角色条目优先**（D158/D159）。
 
     此前只有 `SessionMeta.user_character` 一个名字，于是「用户扮演谁」和
     「这个人是什么样」分在两个地方——改了一处另一处不动，而 writer 两样都要。
     现在那条条目自己就带着正文，名字从它来；没有这条条目时退回 meta 里的名字。
     """
     for entry in worldinfo:
-        if entry.kind is EntryKind.PLAYER:
+        if entry.kind is EntryKind.CHARACTER and entry.is_player:
             return entry.name
     return meta.user_character
+
+
+def render_voices(meta: SessionMeta, worldinfo: Sequence[WorldbookEntry] = ()) -> str:
+    """角色语言习惯。**只进 writer**——它不参与检索，参与每一个 token（D33）。
+
+    优先取角色条目自己的 `voice`（D159）：此前它挂在 `SessionMeta.character_voices`
+    这个 `名字 → 说话方式` 的字典里，于是「这个角色是谁」和「他怎么说话」分在
+    两个地方，靠名字对上——改个名字就悄悄断了，而断了不会报错，只是那个角色
+    忽然不再那样说话。
+
+    `meta` 里那份仍然读，但同名时**条目赢**：它离角色更近。
+    """
+    voices = dict(meta.character_voices)
+    for entry in worldinfo:
+        if entry.kind is EntryKind.CHARACTER and entry.voice:
+            voices[entry.name] = entry.voice
+    return "\n".join(f"- {name}：{how}" for name, how in voices.items())
 
 
 def _speaking(allowed: bool) -> str:
@@ -279,6 +296,7 @@ def writer_prompt(
     *,
     outline: str = "",
     upstream: str = "",
+    worldinfo: Sequence[WorldbookEntry] = (),
 ) -> Prompt:
     """装配 writer 收到的整串消息：**只有文风相关的东西 + 上文 + 细纲**。
 
@@ -288,9 +306,7 @@ def writer_prompt(
     return assemble(
         "writer",
         contexts={
-            "character_voices": "\n".join(
-                f"- {name}：{how}" for name, how in meta.character_voices.items()
-            ),
+            "character_voices": render_voices(meta, worldinfo),
             "upstream": upstream,
             "outline": outline,
         },

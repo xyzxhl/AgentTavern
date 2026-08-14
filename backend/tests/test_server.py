@@ -218,8 +218,19 @@ def test_a_round_trip_keeps_the_kinds_and_the_expansion_settings(client_for) -> 
     client = client_for(happy_llm())
     a = client.post("/sessions").json()["id"]
     for entry in (
-        {"name": "陈屿", "kind": "lore", "mode": "on_demand", "content": "旧货店老板。"},
-        {"name": "林昭", "kind": "player", "content": "记者。"},
+        {
+            "name": "旧货店",
+            "kind": "world",
+            "mode": "on_demand",
+            "content": "老城区一条窄巷尽头。",
+        },
+        {
+            "name": "林昭",
+            "kind": "character",
+            "is_player": True,
+            "content": "记者。",
+            "voice": "话少，先观察再开口",
+        },
         {
             "name": "起点",
             "kind": "state",
@@ -234,8 +245,11 @@ def test_a_round_trip_keeps_the_kinds_and_the_expansion_settings(client_for) -> 
     client.post(f"/sessions/{b}/worldbook/import", json=_bundle(client, a))
 
     landed = {e["name"]: e for e in client.get(f"/sessions/{b}/worldinfo").json()}
-    assert landed["陈屿"]["kind"] == "lore" and landed["陈屿"]["mode"] == "on_demand"
-    assert landed["林昭"]["kind"] == "player"
+    assert landed["旧货店"]["kind"] == "world" and landed["旧货店"]["mode"] == "on_demand"
+    # **用户扮演的角色是一般角色的子类**（D159）：它是 `character` + 一个标记，
+    # 不是第四种条目。语言习惯也要跟着过来。
+    assert landed["林昭"]["kind"] == "character" and landed["林昭"]["is_player"] is True
+    assert landed["林昭"]["voice"] == "话少，先观察再开口"
     assert landed["起点"]["kind"] == "state" and landed["起点"]["depth"] == 2
     # 初始状态跟着过来，而且这个会话还没开始，所以立刻生效。
     assert client.get(f"/sessions/{b}").json()["state"] == {"陈屿": {"在场": True}}

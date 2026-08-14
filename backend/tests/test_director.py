@@ -787,3 +787,51 @@ def test_the_tool_list_is_not_a_message() -> None:
     # `submit_outline` 是例外：它出现在「流程指导」那一句里，讲的是**什么时候调**，
     # 不是在列清单。
     assert "可用的工具" not in prompt
+
+
+# -- 角色设定（D159） -----------------------------------------------------------
+
+
+def test_the_player_is_a_character_not_a_fourth_kind() -> None:
+    """**用户扮演的角色是一般角色的子类**（D159）。
+
+    凡是对角色成立的（正文、语言习惯、可展开），对它一样成立；它只是多回答一个
+    「用户是谁」。做成独立的一类，就得在每一处 `CHARACTER` 分支旁边记得再写一个
+    `PLAYER`——那种「记得」迟早会漏。
+    """
+    from agenttavern.models import EntryKind, WorldbookEntry
+    from agenttavern.prompting.prompts import player_character, render_voices
+
+    book = [
+        WorldbookEntry(name="林昭", kind=EntryKind.CHARACTER, is_player=True, voice="话少，先观察"),
+        WorldbookEntry(name="陈屿", kind=EntryKind.CHARACTER, voice="说话绕，很少给准话"),
+        WorldbookEntry(name="旧货店", kind=EntryKind.WORLD, content="窄巷尽头。"),
+    ]
+    meta = SessionMeta()
+
+    assert player_character(meta, book) == "林昭"
+    # 用户扮演的那个也是角色，**语言习惯照样进 writer**——漏掉它的话，
+    # 用户的角色会是全场唯一一个不按设定说话的人。
+    voices = render_voices(meta, book)
+    assert "林昭：话少，先观察" in voices
+    assert "陈屿：说话绕，很少给准话" in voices
+    # 世界设定没有语言习惯这回事。
+    assert "旧货店" not in voices
+
+
+def test_an_entrys_voice_beats_the_one_in_meta() -> None:
+    """同名时**条目赢**：它离角色更近（D159）。
+
+    `SessionMeta.character_voices` 是 `名字 → 说话方式` 的字典，靠名字对上——
+    改个名字就悄悄断了，而断了不会报错，只是那个角色忽然不再那样说话。
+    旧写法仍然读，是为了不让既有会话一改就哑。
+    """
+    from agenttavern.models import EntryKind, WorldbookEntry
+    from agenttavern.prompting.prompts import render_voices
+
+    meta = SessionMeta(character_voices={"陈屿": "旧写法", "老王": "只在 meta 里"})
+    book = [WorldbookEntry(name="陈屿", kind=EntryKind.CHARACTER, voice="新写法")]
+
+    voices = render_voices(meta, book)
+    assert "陈屿：新写法" in voices and "旧写法" not in voices
+    assert "老王：只在 meta 里" in voices, "旧写法不该一改就哑"

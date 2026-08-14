@@ -225,14 +225,16 @@ export type SeenLeafId = string | null;
 export type Id3 = string;
 export type Name1 = string;
 /**
- * 条目分两类，外加一个特殊的（D158）。
+ * 条目分三类（D158 / D159）。
  *
- * 早先是一条条目**同时**装静态设定（`content`）和初始状态（`seeds`），共用一个
- * `mode`。拆开的理由是这两样东西的可见性天然不同步：一个角色的背景可能几百字、
- * 该按需展开，而他「在不在场」必须每轮都在眼前。共用一个开关时，只能迁就其中一个。
+ * 早先是一条条目**同时**装静态设定和初始状态、共用一个 `mode`。拆开的理由是
+ * 可见性天然不同步：一个角色的背景可能几百字、该按需展开，而他「在不在场」
+ * 必须每轮都在眼前——共用一个开关时只能迁就其中一个。
  */
-export type EntryKind = "lore" | "state" | "player";
+export type EntryKind = "world" | "character" | "state";
 export type Content1 = string;
+export type Voice = string;
+export type IsPlayer = boolean;
 export type WorldbookMode = "always" | "on_demand";
 export type Depth = number;
 export type Summary = string | null;
@@ -718,6 +720,8 @@ export interface WorldbookEntry {
   name: Name1;
   kind?: EntryKind;
   content?: Content1;
+  voice?: Voice;
+  is_player?: IsPlayer;
   values?: Values1;
   mode?: WorldbookMode;
   depth?: Depth;

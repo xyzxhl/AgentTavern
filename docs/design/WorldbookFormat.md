@@ -16,9 +16,10 @@
   "entries": [
     {
       "name": "陈屿",
-      "kind": "lore",
+      "kind": "character",
       "mode": "always",
-      "content": "四十岁，旧货店老板。说话习惯绕开正题，用反问代替回答。"
+      "content": "四十岁，旧货店老板。说话习惯绕开正题，用反问代替回答。",
+      "voice": "说话绕，答非所问，很少给准话"
     },
     {
       "name": "陈屿·初始状态",
@@ -29,15 +30,29 @@
     },
     {
       "name": "林昭",
-      "kind": "player",
+      "kind": "character",
+      "is_player": true,
       "mode": "always",
-      "content": "三十岁出头，本地报社记者。做事谨慎，习惯先观察再开口。"
+      "content": "三十岁出头，本地报社记者。做事谨慎，习惯先观察再开口。",
+      "voice": "话少，先观察再开口"
     }
   ]
 }
 ```
 
 `entries` 里的每一条就是一个 `WorldbookEntry`（见 `models/worldbook.py`）。
+
+**三类条目**（D159）：
+
+| `kind` | 装什么 | 额外字段 |
+|---|---|---|
+| `world` | 一段不受限制的文本：地方、组织、规矩、历史 | —— |
+| `character` | 正文 + **语言习惯**（`voice`，只进 writer） | `voice` / `is_player` |
+| `state` | 一棵嵌套的键值树，这局故事第一帧的状态 | `values` / `depth` |
+
+**用户扮演的角色不是第四类**，它是 `character` 加一个 `is_player`——凡是对角色
+成立的（正文、语言习惯、可展开）对它一样成立，做成独立的一类就得在每一处角色
+分支旁边记得再写一遍，而那种「记得」迟早会漏。
 
 ## 2. 三条约定
 
