@@ -200,6 +200,28 @@ class Question(BaseModel):
     options: list[str]
 
 
+class Delta(BaseModel):
+    """流式分片（D160）：**正文或思考的一小段**，边生成边推。
+
+    **它是旁路，不是权威**——权威仍然是 `RunFinished` 带回来的那个节点。分片
+    可能因为断线而丢，前端据此显示的东西必须能被最终结果整个替换掉，不能拿
+    分片拼出来的字符串当真值存下来。
+
+    **工具调用不走这里**：它们的参数是逐字拼出来的 JSON，半截 JSON 对界面毫无
+    用处，只会逼前端去猜；等完整了随 trace 一次性给。
+    """
+
+    type: Literal["delta"] = "delta"
+    run_id: str
+    actor: str
+    """哪个 agent 在写。前端据此决定这段字往哪儿放——正文区还是过程区。"""
+
+    kind: Literal["content", "reasoning"]
+    """`content` 是要写出来的东西，`reasoning` 是它的思考段。"""
+
+    text: str
+
+
 class RunFinished(BaseModel):
     type: Literal["run_finished"] = "run_finished"
     node: Node
@@ -287,6 +309,7 @@ class ServerError(BaseModel):
 
 ServerMessage = (
     RunStarted
+    | Delta
     | Trace
     | Question
     | RunFinished

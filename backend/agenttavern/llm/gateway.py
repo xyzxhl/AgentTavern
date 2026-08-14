@@ -8,11 +8,13 @@
 只用 chat completions 这一个面意味着任何兼容端点都能接：OpenAI、OpenRouter、
 DeepSeek、本地 llama.cpp / vLLM。配置见 ``.env``。
 
-**非流式**（D7：流式让步于 agent 设计）。
+**默认流式**（D160）。D7「流式让步于 agent 设计」反对的是为流式改结构；
+作为输出通道加回来不动任何结构——上层拿到的 `ModelResponse` 两种路径完全一样。
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -20,6 +22,13 @@ from openai import APIError, AsyncOpenAI
 
 from ..config import Settings
 from .types import LLMError, Message, ModelResponse, ToolCall, ToolSpec, Usage
+
+OnDelta = Callable[[str, str], None]
+"""``(kind, text)``——``kind`` 是 ``"content"`` 或 ``"reasoning"``。
+
+**按调用传，不挂在 gateway 上**（D160）：一个 gateway 被所有 session 共用，
+挂实例字段等于让并发的两轮互相串台。
+"""
 
 
 class LLMGateway:
@@ -53,6 +62,7 @@ class LLMGateway:
         max_tokens: int | None = None,
         thinking: bool | None = None,
         user_id: str | None = None,
+        on_delta: OnDelta | None = None,
     ) -> ModelResponse:
         """一次非流式补全。
 
@@ -96,15 +106,91 @@ class LLMGateway:
         if extra:
             payload["extra_body"] = extra
 
+        if on_delta is not None:
+            payload["stream"] = True
+            payload["stream_options"] = {"include_usage": True}
+
         try:
-            response = await self._client.chat.completions.create(**payload)
+            if on_delta is None:
+                response = await self._client.chat.completions.create(**payload)
+                return _parse(response)
+            return await self._consume(payload, on_delta)
         except APIError as exc:
             # SDK 已按其策略重试过；到这里就是最终失败。包成本项目的错误类型，
             # 让上层不必认识 SDK 的异常层次。
             status = getattr(exc, "status_code", None)
             raise LLMError(str(exc), status=status) from exc
 
-        return _parse(response)
+    async def _consume(self, payload: dict[str, Any], on_delta: OnDelta) -> ModelResponse:
+        """把流式分片攒回一个完整的 `ModelResponse`，边攒边把文字推出去。
+
+        **上层拿到的东西和非流式完全一样**——这是流式不扭曲结构的关键（D160）：
+        agent 那侧不知道自己是不是在流，工具循环、契约、重放全都不用改。
+        流式只是多了一条**旁路**：正文与思考的分片顺手推给 UI。
+
+        **工具调用不推分片。** 它们的 `arguments` 是逐字拼出来的 JSON，半截
+        JSON 对界面毫无用处，只会逼前端去猜；等它完整了再一次性给。
+        """
+        content: list[str] = []
+        reasoning: list[str] = []
+        calls: dict[int, dict[str, str]] = {}
+        finish_reason = ""
+        usage = Usage()
+
+        stream = await self._client.chat.completions.create(**payload)
+        async for chunk in stream:
+            if chunk.usage is not None:
+                usage = _usage_of(chunk.usage)
+            if not chunk.choices:
+                continue
+            choice = chunk.choices[0]
+            if choice.finish_reason:
+                finish_reason = choice.finish_reason
+
+            delta = choice.delta
+            if delta is None:
+                continue
+
+            think = getattr(delta, "reasoning_content", None)
+            if think:
+                reasoning.append(think)
+                on_delta("reasoning", think)
+            if delta.content:
+                content.append(delta.content)
+                on_delta("content", delta.content)
+
+            for raw in delta.tool_calls or []:
+                slot = calls.setdefault(raw.index, {"id": "", "name": "", "arguments": ""})
+                if raw.id:
+                    slot["id"] = raw.id
+                if raw.function and raw.function.name:
+                    slot["name"] = raw.function.name
+                if raw.function and raw.function.arguments:
+                    slot["arguments"] += raw.function.arguments
+
+        return ModelResponse(
+            content="".join(content),
+            reasoning_content="".join(reasoning) or None,
+            tool_calls=[
+                ToolCall.from_raw(
+                    call_id=slot["id"], name=slot["name"], arguments_raw=slot["arguments"] or "{}"
+                )
+                for _, slot in sorted(calls.items())
+            ],
+            finish_reason=finish_reason,
+            usage=usage,
+        )
+
+
+def _usage_of(raw: Any) -> Usage:
+    extra = getattr(raw, "model_extra", None) or {}
+    return Usage(
+        tokens_in=raw.prompt_tokens or 0,
+        tokens_out=raw.completion_tokens or 0,
+        # 不在 OpenAI 的 schema 里，同 reasoning_content 走 `model_extra`。
+        cache_hit=int(extra.get("prompt_cache_hit_tokens") or 0),
+        cache_miss=int(extra.get("prompt_cache_miss_tokens") or 0),
+    )
 
 
 def _parse(response: Any) -> ModelResponse:
@@ -125,16 +211,7 @@ def _parse(response: Any) -> ModelResponse:
         for raw in (message.tool_calls or [])
     ]
 
-    usage = Usage()
-    if response.usage is not None:
-        extra = getattr(response.usage, "model_extra", None) or {}
-        usage = Usage(
-            tokens_in=response.usage.prompt_tokens or 0,
-            tokens_out=response.usage.completion_tokens or 0,
-            # 也不在 OpenAI 的 schema 里，同 reasoning_content 走 `model_extra`。
-            cache_hit=int(extra.get("prompt_cache_hit_tokens") or 0),
-            cache_miss=int(extra.get("prompt_cache_miss_tokens") or 0),
-        )
+    usage = _usage_of(response.usage) if response.usage is not None else Usage()
 
     return ModelResponse(
         content=message.content or "",

@@ -8,7 +8,7 @@ from conftest import GOAL_MARK, ScriptedLLM, text, tool, tools
 from fastapi.testclient import TestClient
 
 from agenttavern.config import Settings
-from agenttavern.models import Goal, Session, SessionMeta
+from agenttavern.models import Capabilities, Goal, Session, SessionMeta
 from agenttavern.server import create_app
 
 
@@ -836,6 +836,138 @@ def test_a_run_announces_that_it_started(client_for) -> None:
     assert [m["type"] for m in messages].index("run_started") < [m["type"] for m in messages].index(
         "trace"
     )
+
+
+# -- 流式（D160） --------------------------------------------------------------
+
+
+def test_prose_arrives_in_pieces_while_it_is_written(client_for) -> None:
+    """**正文边写边推**（D160）。
+
+    这是流式最值得的地方：一次调用、纯文本、而且是用户真正在等的东西。
+    """
+    llm = ScriptedLLM(
+        tool("submit_outline", outline="她推开门。"),
+        text("门轴响了。"),
+        state=one_state(),
+    )
+    client = client_for(llm)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "我推开门"}))
+        messages = collect(ws, "run_finished")
+
+    deltas = [m for m in messages if m["type"] == "delta"]
+    prose = [m for m in deltas if m["actor"] == "writer" and m["kind"] == "content"]
+    assert len(prose) > 1, "得是好几片，不是一整块"
+    assert "".join(m["text"] for m in prose) == "门轴响了。"
+    # **分片必须带 run_id**：前端要把它归到正确的那一轮名下。
+    assert {m["run_id"] for m in prose} == {messages[-1]["node"]["id"]}
+
+
+def test_the_final_node_is_still_the_authority(client_for) -> None:
+    """**分片是旁路，不是权威。**
+
+    它可能因为断线而丢，所以前端据此显示的东西必须能被最终结果整个替换掉。
+    这条钉的是：不管流式推了什么，`run_finished` 带回来的仍然是完整正文。
+    """
+    llm = ScriptedLLM(
+        tool("submit_outline", outline="她推开门。"),
+        text("门轴响了。"),
+        state=one_state(),
+    )
+    client = client_for(llm)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "我推开门"}))
+        finished = collect(ws, "run_finished")[-1]
+
+    assert finished["node"]["prose"] == "门轴响了。"
+
+
+def test_tool_calls_do_not_stream(client_for) -> None:
+    """**工具调用不推分片**（D160）。
+
+    它们的 `arguments` 是逐字拼出来的 JSON，半截 JSON 对界面毫无用处，只会逼
+    前端去猜。等完整了随 trace 一次性给——而细纲正是走 `submit_outline` 的参数。
+    """
+    llm = ScriptedLLM(
+        tool("submit_outline", outline="她推开门。"),
+        text("门轴响了。"),
+        state=one_state(),
+    )
+    client = client_for(llm)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "我推开门"}))
+        messages = collect(ws, "run_finished")
+
+    everything = "".join(m["text"] for m in messages if m["type"] == "delta")
+    assert "她推开门。" not in everything, "细纲走的是工具参数，不该出现在分片里"
+    assert messages[-1]["node"]["outline"] == "她推开门。"
+
+
+def test_deltas_say_who_wrote_them(client_for) -> None:
+    """**`actor` 不是装饰，是必需的**（D160）。
+
+    `content` 分片**两个 agent 都在发**：director 推演途中会写几句自言自语
+    （"我先把这一轮推演清楚"），writer 写的才是正文。不按来源分开攒，界面上
+    就会把 director 的开场白当成故事的第一句显示出来——实跑时正是这样：
+    攒出 1084 字，而节点正文只有 782 字。
+    """
+    llm = ScriptedLLM(
+        # director 先空手回一句（会被催），再提交细纲——那句话是它的自言自语。
+        text("我先想想。"),
+        tool("submit_outline", outline="她推开门。"),
+        text("门轴响了。"),
+        state=one_state(),
+    )
+    client = client_for(llm)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "我推开门"}))
+        messages = collect(ws, "run_finished")
+
+    deltas = [m for m in messages if m["type"] == "delta"]
+    by_actor: dict[str, str] = {}
+    for m in deltas:
+        if m["kind"] == "content":
+            by_actor[m["actor"]] = by_actor.get(m["actor"], "") + m["text"]
+
+    assert by_actor["writer"] == "门轴响了。"
+    assert by_actor["director"] == "我先想想。"
+    # 全部 content 拼起来**不等于**正文——这正是必须按来源分开的理由。
+    assert "".join(v for v in by_actor.values()) != messages[-1]["node"]["prose"]
+
+
+def test_streaming_can_be_switched_off(client_for) -> None:
+    """**可开关**。关掉则一轮写完才整段出现，产出完全一样。"""
+    llm = ScriptedLLM(
+        tool("submit_outline", outline="她推开门。"),
+        text("门轴响了。"),
+        state=one_state(),
+    )
+    client = client_for(llm)
+    session = Session(capabilities=Capabilities(stream=False))
+    client.post("/sessions", json=session.model_dump(mode="json"))
+
+    with client.websocket_connect(f"/sessions/{session.id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "我推开门"}))
+        messages = collect(ws, "run_finished")
+
+    assert not [m for m in messages if m["type"] == "delta"]
+    assert messages[-1]["node"]["prose"] == "门轴响了。", "关掉流式不影响产出"
+    # 请求那侧也确实没要流。
+    assert all(not r.get("stream") for r in llm.requests)
 
 
 # -- 开发者模式（D156） --------------------------------------------------------

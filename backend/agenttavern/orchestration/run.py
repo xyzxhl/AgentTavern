@@ -35,7 +35,7 @@ from ..models import (
     new_id,
 )
 from ..storage import SessionRepository
-from ..tools import AskUser, Inbox, RunContext, ToolRegistry
+from ..tools import AskUser, Inbox, RunContext, RunDelta, ToolRegistry
 from ..tracing import OnEvent, Tracer
 from .checks import sampling_flags
 
@@ -61,6 +61,7 @@ async def execute_run(
     on_trace: OnEvent | None = None,
     inbox: Inbox | None = None,
     developer: bool = False,
+    on_delta: RunDelta | None = None,
 ) -> RunOutcome:
     # **故事一开始就把初始状态定下来**（D158）：之后再改 worldbook 的初始状态
     # 条目，只影响新会话，不再回头改写既有的每一轮。第二轮起这里是空操作。
@@ -108,6 +109,7 @@ async def execute_run(
         parent_id=parent_id,
         ask_user=ask_user,
         inbox=inbox,
+        on_delta=on_delta,
         # state 阶段被打断时，已经写下的那几笔是**已经完成的动作**，不必重来（D118）。
         staged_delta=draft.staged_delta if draft and stage is RunStage.STATE else StateDelta(),
     )

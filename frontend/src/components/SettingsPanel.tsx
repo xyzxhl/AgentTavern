@@ -6,6 +6,10 @@ import { useSession } from "../store";
 
 /** 四类配置里的两类（D38 / D78）。**它们性质不同，混成一张表是概念膨胀的来源。** */
 const CAP_LABEL: Record<string, [string, string]> = {
+  stream: [
+    "边写边显示",
+    "关掉则一轮写完才整段出现，产出完全一样。**这是这组里唯一一条关于交付而不是关于能力的**。",
+  ],
   state: ["结构化状态", "关掉则 state_manager 整个不跑，读写工具都不注册。"],
   state_query: [
     "状态按需展开",

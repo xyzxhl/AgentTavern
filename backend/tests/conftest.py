@@ -62,39 +62,38 @@ class ScriptedLLM:
         self._auto_state = auto_state
         self.requests: list[dict[str, Any]] = []
 
-    def _reply(self, message: dict[str, Any]) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [{"message": message, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 10, "completion_tokens": 1},
-            },
-        )
+    def _reply(self, message: dict[str, Any], *, streaming: bool = False) -> httpx.Response:
+        body = {
+            "choices": [{"message": message, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 1},
+        }
+        return _sse(body) if streaming else httpx.Response(200, json=body)
 
     def _handle(self, request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
         self.requests.append(payload)
         messages = payload["messages"]
+        # **流式默认是开的**（D160），所以脚本必须两种都会应答——否则整套测试
+        # 走的都是非流式那条路，而产品跑的是另一条。
+        streaming = bool(payload.get("stream"))
 
         if self._auto_close and FOLLOWUP_MARK in messages[-1].get("content", ""):
-            return self._reply(text(self._auto_close))
+            return self._reply(text(self._auto_close), streaming=streaming)
 
         if self._auto_state and STATE_MARK in messages[0].get("content", ""):
             # 已经写过一次（上一条是工具结果）就收口——**出口是"不再调用工具"**。
             if self._states and messages[-1].get("role") != "tool":
-                return self._reply(tool("state_write", **self._states.pop(0)))
-            return self._reply(text("无变化。"))
+                return self._reply(tool("state_write", **self._states.pop(0)), streaming=streaming)
+            return self._reply(text("无变化。"), streaming=streaming)
 
         # 脚本用尽后重复最后一条：单 run 的测试只关心前几步，不必把结尾写全。
         # 需要跨多个 run 的测试必须把每一轮的回复都排好。
         reply = self._replies.pop(0) if len(self._replies) > 1 else self._replies[0]
-        return httpx.Response(
-            200,
-            json={
-                "choices": [{"message": reply, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 10, "completion_tokens": 4},
-            },
-        )
+        body = {
+            "choices": [{"message": reply, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 4},
+        }
+        return _sse(body) if streaming else httpx.Response(200, json=body)
 
     def gateway(self) -> LLMGateway:
         client = httpx.AsyncClient(transport=httpx.MockTransport(self._handle))
@@ -106,6 +105,52 @@ class ScriptedLLM:
 
     def messages_of(self, index: int) -> list[dict[str, Any]]:
         return self.requests[index]["messages"]
+
+
+def _sse(body: dict[str, Any]) -> httpx.Response:
+    """把一个整块响应拆成 SSE 分片。
+
+    **正文按字拆**，好让"边写边推"这件事在测试里真的发生；工具调用整块给——
+    产品那侧也不推工具分片（半截 JSON 对界面没用），拆了反而测的不是同一件事。
+    """
+    message = body["choices"][0]["message"]
+    chunks: list[dict[str, Any]] = []
+
+    if message.get("tool_calls"):
+        chunks.append(
+            {
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": i,
+                                    "id": c["id"],
+                                    "type": "function",
+                                    "function": {
+                                        "name": c["function"]["name"],
+                                        "arguments": c["function"]["arguments"],
+                                    },
+                                }
+                                for i, c in enumerate(message["tool_calls"])
+                            ]
+                        },
+                        "finish_reason": None,
+                    }
+                ]
+            }
+        )
+    for piece in message.get("content") or "":
+        chunks.append(
+            {"choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}]}
+        )
+
+    chunks.append({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})
+    chunks.append({"choices": [], "usage": body["usage"]})
+
+    body_text = "".join("data: " + json.dumps(c) + "\n\n" for c in chunks) + "data: [DONE]\n\n"
+    return httpx.Response(200, text=body_text, headers={"content-type": "text/event-stream"})
 
 
 def text(content: str) -> dict[str, Any]:

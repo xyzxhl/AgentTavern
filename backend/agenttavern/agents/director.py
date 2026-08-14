@@ -178,7 +178,15 @@ async def run_director(
                 _push(messages, text("director", "converge"))
 
             response = await _operation(
-                ctx, ctx.gateway.complete(messages, tools=specs, user_id=session.id)
+                ctx,
+                ctx.gateway.complete(
+                    messages,
+                    tools=specs,
+                    user_id=session.id,
+                    # 推演阶段流的是**思考段**——正文还没开始写，这里的 `content`
+                    # 多半只是几句自言自语，而思考段才是"它在想什么"。
+                    on_delta=ctx.stream_to(Actor.DIRECTOR),
+                ),
             )
             if response is None:
                 # 掐在等模型回复的那一刻。这次调用什么都没产出，消息序还是齐的，

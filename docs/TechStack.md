@@ -36,7 +36,8 @@ SSE 三条都不满足。不用 socket.io——不需要它的房间与 fallback
 
 只用 **chat completions 这一个面**意味着任何兼容端点都能接：OpenAI、OpenRouter、DeepSeek、本地 llama.cpp / vLLM。配置走 `.env`（`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`），换 provider 不动代码。本地端点常常不校验 key，而 SDK 要求非空，因此空值时填占位串。
 
-**非流式**（D7）。`complete()` 接受 `model` 覆盖参数——四个 agent 将来可能用不同模型。
+**流式可开关**（D160，`Capabilities.stream`，默认开）。`complete()` 两条路返回同一种 `ModelResponse`。
+它还接受 `model` 覆盖参数——四个 agent 将来可能用不同模型。
 
 **仍保留一层自己的类型**，理由只有一个但很实在：**工具参数解析失败不抛异常**。OpenAI 格式里 `arguments` 是 JSON 字符串，模型时常输出不合法 JSON。这属于**模型可恢复的错误**，应作为结构化 tool result 回给它重试，而不是让整个 run 崩掉——所以 `ToolCall` 同时保留 `arguments_raw` 与 `parse_error`，这个区分 SDK 的类型表达不了。
 

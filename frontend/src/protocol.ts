@@ -61,6 +61,7 @@ export type Type9 = "goal_control";
 export type Action = "pause" | "resume" | "abandon";
 export type ServerMessage =
   | RunStarted
+  | Delta
   | Trace
   | Question
   | RunFinished
@@ -75,8 +76,13 @@ export type ServerMessage =
   | ServerError;
 export type Type10 = "run_started";
 export type RunId = string;
-export type Type11 = "trace";
+export type Type11 = "delta";
 export type RunId1 = string;
+export type Actor = string;
+export type Kind = "content" | "reasoning";
+export type Text2 = string;
+export type Type12 = "trace";
+export type RunId2 = string;
 export type Seq = number;
 export type At = string;
 export type TraceEventType =
@@ -97,21 +103,21 @@ export type TraceEventType =
   | "goal_evaluated"
   | "user_edit"
   | "user_interjected";
-export type Actor = "orchestrator" | "director" | "writer" | "goal_manager" | "state_manager" | "user";
+export type Actor1 = "orchestrator" | "director" | "writer" | "goal_manager" | "state_manager" | "user";
 export type Label = string;
 export type TokensIn = number | null;
 export type TokensOut = number | null;
 export type CacheHit = number | null;
-export type Type12 = "question";
+export type Type13 = "question";
 export type QuestionId1 = string;
 export type Question1 = string;
 export type Options = string[];
-export type Type13 = "run_finished";
+export type Type14 = "run_finished";
 export type Id = string;
 export type ParentId = string | null;
 export type CreatedAt = string;
 export type RunStatus = "complete" | "failed";
-export type Text2 = string;
+export type Text3 = string;
 /**
  * 这条输入是谁给的（D148）。
  *
@@ -166,27 +172,27 @@ export type SegmentSpan = number;
 export type Prose1 = string;
 export type DeviationReport = string | null;
 export type Notes = string[];
-export type Type14 = "run_failed";
+export type Type15 = "run_failed";
 export type Reason = string;
-export type Type15 = "run_interrupted";
+export type Type16 = "run_interrupted";
 export type Resumable = boolean;
-export type Type16 = "state";
+export type Type17 = "state";
 export type LeafId = string | null;
-export type Type17 = "queue";
+export type Type18 = "queue";
 export type Pending = string[];
-export type Type18 = "usage";
+export type Type19 = "usage";
 export type TokensIn1 = number;
 export type TokensOut1 = number;
-export type Type19 = "branches";
+export type Type20 = "branches";
 export type NodeId3 = string;
 export type Siblings = string[];
 export type ActiveIndex = number;
-export type Type20 = "goal_finished";
+export type Type21 = "goal_finished";
 export type Outcome = string;
 export type Reason1 = string;
-export type Type21 = "goal_paused";
+export type Type22 = "goal_paused";
 export type Reason2 = string;
-export type Type22 = "error";
+export type Type23 = "error";
 export type Message1 = string;
 export type Id2 = string;
 export type CreatedAt1 = string;
@@ -207,6 +213,7 @@ export type UpstreamRuns = number;
 export type StateRecentRuns = number;
 export type SummarizeMode = "manual" | "auto";
 export type AskQuestion = boolean;
+export type Stream = boolean;
 export type Trace1 = boolean;
 export type InitialState = {
   [k: string]: unknown;
@@ -390,6 +397,23 @@ export interface RunStarted {
   run_id: RunId;
 }
 /**
+ * 流式分片（D160）：**正文或思考的一小段**，边生成边推。
+ *
+ * **它是旁路，不是权威**——权威仍然是 `RunFinished` 带回来的那个节点。分片
+ * 可能因为断线而丢，前端据此显示的东西必须能被最终结果整个替换掉，不能拿
+ * 分片拼出来的字符串当真值存下来。
+ *
+ * **工具调用不走这里**：它们的参数是逐字拼出来的 JSON，半截 JSON 对界面毫无
+ * 用处，只会逼前端去猜；等完整了随 trace 一次性给。
+ */
+export interface Delta {
+  type?: Type11;
+  run_id: RunId1;
+  actor: Actor;
+  kind: Kind;
+  text: Text2;
+}
+/**
  * 一条 trace 事件的投影。
  *
  * 这里递出完整事件，**由客户端决定显示什么**——筛选规则与渲染模板属 UI 层，
@@ -397,18 +421,18 @@ export interface RunStarted {
  * "呈现 agent 工作过程"这一体验就落在它上面。
  */
 export interface Trace {
-  type?: Type11;
+  type?: Type12;
   event: TraceEvent;
 }
 /**
  * 一条 trace 记录。落盘为 ``trace/<run_id>.jsonl`` 的一行。
  */
 export interface TraceEvent {
-  run_id: RunId1;
+  run_id: RunId2;
   seq: Seq;
   at?: At;
   type: TraceEventType;
-  actor: Actor;
+  actor: Actor1;
   label: Label;
   payload?: Payload;
   tokens_in?: TokensIn;
@@ -422,13 +446,13 @@ export interface Payload {
  * director 停下来问用户。**不设超时**（D66）——等待期间逻辑上什么都没发生。
  */
 export interface Question {
-  type?: Type12;
+  type?: Type13;
   question_id: QuestionId1;
   question: Question1;
   options: Options;
 }
 export interface RunFinished {
-  type?: Type13;
+  type?: Type14;
   node: Node;
   notes?: Notes;
 }
@@ -461,7 +485,7 @@ export interface Node {
  * 信息，而推开门看到什么本应影响要不要叫。
  */
 export interface UserInput {
-  text: Text2;
+  text: Text3;
   source?: InputSource;
   submitted_at?: SubmittedAt;
 }
@@ -520,7 +544,7 @@ export interface Remove {
   [k: string]: unknown;
 }
 export interface RunFailed {
-  type?: Type14;
+  type?: Type15;
   reason: Reason;
 }
 /**
@@ -531,14 +555,14 @@ export interface RunFailed {
  * 结果下一句话被接进了同一段推演，那是最难查的一类困惑。
  */
 export interface RunInterrupted {
-  type?: Type15;
+  type?: Type16;
   resumable?: Resumable;
 }
 /**
  * 当前路径上的完整状态。**派生数据**——权威是各节点的增量（D48）。
  */
 export interface StateSnapshot {
-  type?: Type16;
+  type?: Type17;
   values: Values;
   leaf_id?: LeafId;
 }
@@ -549,19 +573,19 @@ export interface Values {
  * 队列可见性：用户应能看到待处理的输入并撤销尚未消费的部分。
  */
 export interface QueueStatus {
-  type?: Type17;
+  type?: Type18;
   pending: Pending;
 }
 /**
  * 成本可见性：**实时显示消耗，由用户手动打断**，不做自动预算拦截。
  */
 export interface UsageUpdate {
-  type?: Type18;
+  type?: Type19;
   tokens_in: TokensIn1;
   tokens_out: TokensOut1;
 }
 export interface Branches {
-  type?: Type19;
+  type?: Type20;
   node_id: NodeId3;
   siblings: Siblings;
   active_index: ActiveIndex;
@@ -573,7 +597,7 @@ export interface Branches {
  * 一个是达成了，一个是这个目标已经不可能达成了，用户的下一步动作完全不同。
  */
 export interface GoalFinished {
-  type?: Type20;
+  type?: Type21;
   outcome: Outcome;
   reason?: Reason1;
 }
@@ -585,11 +609,11 @@ export interface GoalFinished {
  * 对话原样留着，不用重新判一遍。
  */
 export interface GoalPaused {
-  type?: Type21;
+  type?: Type22;
   reason: Reason2;
 }
 export interface ServerError {
-  type?: Type22;
+  type?: Type23;
   message: Message1;
 }
 export interface Session {
@@ -665,6 +689,7 @@ export interface Capabilities {
   state_recent_runs?: StateRecentRuns;
   summarize?: SummarizeMode;
   ask_question?: AskQuestion;
+  stream?: Stream;
   trace?: Trace1;
 }
 /**

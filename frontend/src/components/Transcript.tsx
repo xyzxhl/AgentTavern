@@ -16,14 +16,16 @@ export function Transcript(): JSX.Element {
   const path = useSession((s) => s.path);
   const traces = useSession((s) => s.traces);
   const live = useSession((s) => s.live);
+  const streaming = useSession((s) => s.streaming);
   const phase = useSession((s) => s.phase);
   const bottom = useRef<HTMLDivElement>(null);
 
   const liveSteps = live ? (traces[live.runId] ?? []) : [];
+  const flowing = live ? streaming[live.runId] : undefined;
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [path.length, liveSteps.length, phase]);
+  }, [path.length, liveSteps.length, flowing?.prose.length, phase]);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -43,7 +45,15 @@ export function Transcript(): JSX.Element {
         ))}
 
         {/* 正在跑的那一轮：还没有节点，但输入和过程都已经有了。 */}
-        {live && <Turn said={live.input} events={liveSteps} running />}
+        {live && (
+          <Turn
+            said={live.input}
+            events={liveSteps}
+            running
+            streamed={flowing?.prose}
+            thinking={flowing?.process}
+          />
+        )}
 
         <div ref={bottom} />
       </div>
@@ -57,12 +67,17 @@ function Turn({
   events,
   node,
   running,
+  streamed,
+  thinking,
 }: {
   said?: string;
   simulated?: boolean;
   events: import("../protocol").TraceEvent[];
   node?: Node;
   running?: boolean;
+  /** 流式攒出来的正文。**只在这一轮还没落地时用**——节点一到就让位（D160）。 */
+  streamed?: string;
+  thinking?: string;
 }): JSX.Element {
   return (
     <article className="mb-8">
@@ -80,7 +95,16 @@ function Turn({
         </div>
       )}
 
-      <Process events={events} running={!!running} />
+      <Process events={events} running={!!running} thinking={thinking} />
+
+      {/* 还在写：把攒出来的字直接摆出来。**不做 Markdown**——半截语法
+          （没闭合的 `**`、写了一半的列表）渲染出来会跳来跳去。 */}
+      {!node && streamed && (
+        <p className="whitespace-pre-wrap font-prose text-[15px] leading-[1.9] text-fg">
+          {streamed}
+          <span className="ml-0.5 inline-block h-4 w-[2px] animate-pulse bg-accent align-text-bottom" />
+        </p>
+      )}
 
       {node &&
         (node.prose ? (

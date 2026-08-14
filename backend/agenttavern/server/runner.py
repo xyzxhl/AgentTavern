@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Literal, cast
 
 from ..agents import advance_goal, sync_conversation
 from ..llm import LLMGateway, Usage
@@ -32,6 +33,7 @@ from ..storage import SessionRepository
 from ..tools import Inbox
 from ..tracing import Tracer
 from .protocol import (
+    Delta,
     GoalFinished,
     GoalPaused,
     Question,
@@ -47,6 +49,9 @@ from .protocol import (
 )
 
 Broadcast = Callable[[ServerMessage], Awaitable[None]]
+
+DeltaKind = Literal["content", "reasoning"]
+_DELTA_KINDS = ("content", "reasoning")
 
 
 @dataclass
@@ -93,6 +98,11 @@ class SessionRunner:
         """当前 run 的插话信箱。**一个 run 一个**——上一轮没人认领的话不该漏到下一轮。"""
 
         self._loop_task: asyncio.Task[None] | None = None
+
+        self._run_id: str = ""
+        """当前这一轮的 id。**流式分片要带上它**——前端靠它把字归到正确的一轮
+        名下（D160）。id 是在 `execute_run` 内部生成的，外面只能从 trace 里接住。
+        """
 
         # 所有出站消息走**同一条队列**，由单个 sender 顺序送出。
         # trace 是从同步回调里产生的，若各自 create_task 发送就会乱序——
@@ -279,6 +289,8 @@ class SessionRunner:
                 on_trace=self._on_trace,
                 inbox=self._inbox,
                 developer=self._developer,
+                # 分片带上 run_id：前端要把它归到正确的那一轮名下（D160）。
+                on_delta=self._emit_delta,
             )
         except asyncio.CancelledError:
             raise
@@ -384,6 +396,14 @@ class SessionRunner:
         if spent is not None:
             self._emit(GoalPaused(reason=spent))
 
+    def _emit_delta(self, actor: str, kind: str, text: str) -> None:
+        """把一段分片推出去。**能力关掉时根本走不到这里**——`ctx.stream_to`
+        返回 `None`，那一路直接退回非流式（D160）。
+        """
+        if kind not in _DELTA_KINDS:
+            return
+        self._emit(Delta(run_id=self._run_id, actor=actor, kind=cast(DeltaKind, kind), text=text))
+
     def _on_trace(self, event: TraceEvent) -> None:
         """每条 trace 都推给 UI，**顺带把 `RunStarted` 补出来**。
 
@@ -396,6 +416,7 @@ class SessionRunner:
         # `run_started` 时清掉上一轮的过程记录——而这一轮的第一条已经先到了，
         # 于是它当场被自己的开场白抹掉。
         if event.type is TraceEventType.RUN_STARTED:
+            self._run_id = event.run_id
             self._emit(RunStarted(run_id=event.run_id))
         self._emit(Trace(event=event))
 

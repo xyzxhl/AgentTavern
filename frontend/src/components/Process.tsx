@@ -27,15 +27,18 @@ const PLUMBING = new Set(["context_assembled", "run_started", "run_finished", "m
 export function Process({
   events,
   running,
+  thinking,
 }: {
   events: TraceEvent[];
   running: boolean;
+  /** 流式攒出来的思考段（D160）。**它是过程，不是产出**，所以摆在这里。 */
+  thinking?: string;
 }): JSX.Element | null {
   // 跑着的时候摊开，跑完自动收起——但用户手动开过就听用户的。
   const [opened, setOpened] = useState<boolean | null>(null);
   const open = opened ?? running;
 
-  if (events.length === 0) return null;
+  if (events.length === 0 && !thinking) return null;
 
   const steps = events.filter((e) => !PLUMBING.has(e.type));
   const latest = steps.at(-1) ?? events.at(-1);
@@ -68,6 +71,12 @@ export function Process({
           <Step key={`${event.run_id}-${event.seq}-${i}`} event={event} />
         ))}
       </ol>
+
+      {thinking && (
+        <div className="mt-1.5 border-l border-line pl-3">
+          <p className="whitespace-pre-wrap text-xs leading-relaxed text-dim/70">{thinking}</p>
+        </div>
+      )}
     </div>
   );
 }

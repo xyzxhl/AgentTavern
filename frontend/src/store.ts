@@ -31,6 +31,17 @@ export interface SessionState {
   /** 正在跑的那一轮：还没有节点，但已经有 run_id 和用户说的那句话。 */
   live: { runId: string; input: string } | null;
 
+  /** 流式攒出来的字：`run_id` → `{ 正文, 过程 }`（D160）。
+   *
+   * **按来源分开，不按 kind 分**：`content` 分片两个 agent 都在发——director
+   * 那些是推演途中的自言自语，writer 的才是正文。混在一起攒，界面上就会把
+   * 「我先把这一轮推演清楚」当成故事的第一句显示出来。
+   *
+   * **它是旁路，不是权威**——分片可能因为断线而丢，所以这里攒的东西只用来
+   * 「边写边看」，一等到 `run_finished` 就让位给节点里的正文，不当真值留着。
+   */
+  streaming: Record<string, { prose: string; process: string }>;
+
   /** 刚发出去、还没等到 `run_started` 的那句话。**只为把它归到正确的一轮名下。**
    * 服务端要到 `run_finished` 才把输入回给我们，而过程要在那之前就显示出来。 */
   pendingInput: string;
@@ -70,6 +81,26 @@ export const useSession = create<SessionState>((set, get) => {
         }));
         break;
 
+      case "delta": {
+        const at = message.run_id;
+        // **只有 writer 写的 `content` 是正文。** 别的都是过程：director 的
+        // 思考段、它推演途中的自言自语、writer 自己的思考段。
+        const isProse = message.actor === "writer" && message.kind === "content";
+        set((s) => {
+          const now = s.streaming[at] ?? { prose: "", process: "" };
+          return {
+            streaming: {
+              ...s.streaming,
+              [at]: {
+                prose: now.prose + (isProse ? message.text : ""),
+                process: now.process + (isProse ? "" : message.text),
+              },
+            },
+          };
+        });
+        break;
+      }
+
       case "trace":
         set((s) => ({
           traces: {
@@ -91,6 +122,8 @@ export const useSession = create<SessionState>((set, get) => {
           phase: "idle",
           question: null,
           live: null,
+          // **攒出来的字到此为止**：节点里的正文才是权威，留着两份只会不一致。
+          streaming: without(s.streaming, message.node.id ?? ""),
           // 同一个 id 就替换（重生成会落新节点，切分支会整条换掉）。
           path: upsert(s.path, message.node),
         }));
@@ -157,6 +190,7 @@ export const useSession = create<SessionState>((set, get) => {
     phase: "idle",
     traces: {},
     live: null,
+    streaming: {},
     pendingInput: "",
     question: null,
     queue: [],
@@ -188,6 +222,7 @@ export const useSession = create<SessionState>((set, get) => {
         phase: "idle",
         traces: {},
         live: null,
+        streaming: {},
         pendingInput: "",
         question: null,
         queue: [],
@@ -222,6 +257,11 @@ export const useSession = create<SessionState>((set, get) => {
     dismissNotice: () => set({ notice: null }),
   };
 });
+
+function without<T>(map: Record<string, T>, key: string): Record<string, T> {
+  const { [key]: _gone, ...rest } = map;
+  return rest;
+}
 
 function upsert(path: Node[], node: Node): Node[] {
   const at = path.findIndex((n) => n.id === node.id);

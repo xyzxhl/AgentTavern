@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
-from ..llm import LLMGateway
-from ..models import Capabilities, Session, StateDelta, WorldState
+from ..llm import LLMGateway, OnDelta
+from ..models import Actor, Capabilities, Session, StateDelta, WorldState
 from ..storage import SessionRepository
 from .inbox import Inbox
 
@@ -18,6 +18,11 @@ director 的上下文不会过期，从中断点续跑即可（suspend/resume，
 在实现上它就是 ``await`` 一个由 WS 层解决的 future，因此 loop 不需要任何
 特殊的挂起状态机。
 """
+
+
+RunDelta = Callable[[str, str, str], None]
+"""``(actor, kind, text)``。比 `OnDelta` 多一个来源——**分片本身不带来源**，
+而前端要靠它决定这段字往正文区还是过程区放（D160）。"""
 
 
 @dataclass
@@ -32,6 +37,13 @@ class RunContext:
 
     ask_user: AskUser | None = None
 
+    on_delta: RunDelta | None = None
+    """流式分片的出口（D160）。``None`` = 这一轮不流式。
+
+    **它按 agent 换一层包装**（见 `stream_to`）：分片本身不带来源，而前端要靠
+    来源决定这段字往正文区还是过程区放。
+    """
+
     inbox: Inbox | None = None
     """跑到一半插进来的用户输入（F3b / D119）。``None`` 表示这一 run 不接受插话。
 
@@ -41,6 +53,17 @@ class RunContext:
     @property
     def capabilities(self) -> Capabilities:
         return self.session.capabilities
+
+    def stream_to(self, actor: Actor) -> OnDelta | None:
+        """给某个 agent 的分片出口。能力关掉或没有出口时返回 ``None``。
+
+        **返回 `None` 时调用方走非流式那条路**——上层不必写两份逻辑，把它原样
+        传给 `complete(on_delta=...)` 即可。
+        """
+        if not self.capabilities.stream or self.on_delta is None:
+            return None
+        sink = self.on_delta
+        return lambda kind, text: sink(actor.value, kind, text)
 
     staged_delta: StateDelta = field(default_factory=StateDelta)
     """``state_write`` 写入这里，run 完整结束时才落盘（D56）。

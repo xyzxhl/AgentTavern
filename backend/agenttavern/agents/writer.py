@@ -52,7 +52,11 @@ async def run_writer(ctx: RunContext, tracer: Tracer, outline: str) -> WriterRes
         {"outline_chars": len(outline), "upstream_chars": len(upstream)},
     )
 
-    response = await ctx.gateway.complete(messages, user_id=ctx.session.id)
+    # **正文是流式最值得的地方**（D160）：它是一次调用、纯文本、而且是用户真正
+    # 在等的东西。`stream_to` 在能力关掉时返回 None，那条路就退回非流式。
+    response = await ctx.gateway.complete(
+        messages, user_id=ctx.session.id, on_delta=ctx.stream_to(Actor.WRITER)
+    )
     tracer.exchange(Actor.WRITER, messages, response)
     prose, deviation = _split_deviation(response.content)
 
