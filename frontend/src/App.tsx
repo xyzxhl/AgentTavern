@@ -2,6 +2,7 @@ import { useEffect } from "react";
 
 import { Composer } from "./components/Composer";
 import { Notice } from "./components/Notice";
+import { QuestionPrompt } from "./components/QuestionPrompt";
 import { SessionList } from "./components/SessionList";
 import { Sidebar } from "./components/Sidebar";
 import { Transcript } from "./components/Transcript";
@@ -46,6 +47,7 @@ export function App(): JSX.Element {
         {sessionId ? (
           <>
             <Transcript />
+            <QuestionPrompt />
             <Composer />
           </>
         ) : (
