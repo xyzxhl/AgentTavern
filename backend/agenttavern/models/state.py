@@ -42,19 +42,32 @@
 D21 的三层结构因此塌成两层：**自由 KV（即全部）+ 模板库（session 级声明，尚未做）**。
 这不违反 D20：模型做的是"记一个键值对"（数据层），不是"设计一个数据结构"（元层）。
 
-## 键的约定
+## 结构就是 JSON 的结构（D157）
 
-键是自由字符串。以 `.` 分隔可表达从属，仅用于**渲染时分组**，系统不赋予它语义::
+从属关系**用嵌套表达**，不再用点分键名::
 
-    时间                 "第三日 傍晚"
-    时间.距上轮          "三小时后"
-    地点                 "康德酒店 302 房"
-    林.在场              true
-    林.性格              "谨慎，话少"
-    林.知情              ["照片的存在"]
+    {
+      "时间": {"当前": "第三日 傍晚", "距上轮": "三小时后"},
+      "地点": "康德酒店 302 房",
+      "林": {"在场": true, "性格": "谨慎，话少", "知情": ["照片的存在"]}
+    }
 
-已知代价是键名漂移（"心情"/"情绪"/"mood" 各写一次）。缓解手段是把已有键列表
-回给模型让它复用——这才是 schema 自描述机制的主要价值。
+早先是一层平铺 + `林.在场` 这种键名，点号"仅用于渲染时分组，系统不赋予它语义"。
+那个约定有三处不划算：
+
+- **它是一套要教的私有语法。** 模型得学会点号在这里代表什么，而 JSON 自带的
+  嵌套它本来就会。
+- **分组只在渲染时发生，存储仍是平的**，于是"某个角色名下有哪些东西"这件事
+  代码得现算，且键里出现真正的点号就会算错。
+- **按层级控制展开做不了。** 平铺结构里没有"层"，只能按值的字符数藏——
+  而字符数和"这一块要不要给"没有关系。嵌套之后深度是现成的（`render_state`
+  的 `depth`）。
+
+**寻址一律用路径数组**（``["林", "知情"]``），不用点分字符串：点号刚被取消了
+结构含义，再拿它当寻址语法等于把刚拆掉的歧义装回去，而且键里本来就可能有点。
+
+已知代价仍是键名漂移（"心情"/"情绪"/"mood" 各写一次）。缓解手段不变：把已有的
+结构回给模型让它复用。
 """
 
 from __future__ import annotations
@@ -65,6 +78,121 @@ from pydantic import BaseModel, Field
 
 JsonValue = Any
 
+Tree = dict[str, JsonValue]
+"""嵌套的状态树。叶子是任意 JSON 值，中间层一律是 ``dict``。"""
+
+Path = list[str]
+"""定位一处状态的路径，一段一个键（``["林", "知情"]``）。"""
+
+
+def label_path(path: Path) -> str:
+    """路径的人类可读写法（``林 › 知情``）。
+
+    **只用于给人看**——trace 标签、采样标记、错误提示。寻址一律用数组（D157）：
+    这里用的分隔符不是语法，换成别的字符也不影响任何行为。
+    """
+    return " › ".join(path)
+
+
+def walk(tree: Tree, path: Path) -> JsonValue:
+    """按路径取值。路上任何一段不存在或不是字典就返回 ``None``。"""
+    node: JsonValue = tree
+    for segment in path:
+        if not isinstance(node, dict) or segment not in node:
+            return None
+        node = node[segment]
+    return node
+
+
+def paths_of(tree: Tree, prefix: Path | None = None) -> list[Path]:
+    """全部**叶子**路径，深度优先、字典序。
+
+    回给模型让它复用已有的写法——防键名漂移靠的一直是这个（D74）。
+    """
+    out: list[Path] = []
+    for key in sorted(tree):
+        here = [*(prefix or []), key]
+        value = tree[key]
+        # 空字典也算叶子：它是"这里有个东西但暂时没内容"，不该消失。
+        if isinstance(value, dict) and value:
+            out.extend(paths_of(value, here))
+        else:
+            out.append(here)
+    return out
+
+
+def _merge_into(target: Tree, patch: Tree) -> None:
+    """把 ``patch`` 深合并进 ``target``。**就地修改。**
+
+    - 两边都是字典 → 递归下去，只动提到的那几个键。
+    - 叶子 → 覆盖。
+    - ``None`` → **删掉这个键**（连同它下面的整棵子树）。
+
+    深合并是这套写法的关键：改一个角色的一项属性不必重发整个角色，
+    而整体重发正是清单被拍平的老路（D96）。
+    """
+    for key, value in patch.items():
+        if value is None:
+            target.pop(key, None)
+        elif isinstance(value, dict) and isinstance(target.get(key), dict):
+            _merge_into(target[key], value)
+        elif isinstance(value, dict):
+            target[key] = _clone(value)
+        else:
+            target[key] = list(value) if isinstance(value, list) else value
+
+
+def _clone(tree: Tree) -> Tree:
+    out: Tree = {}
+    for key, value in tree.items():
+        if isinstance(value, dict):
+            out[key] = _clone(value)
+        elif isinstance(value, list):
+            out[key] = list(value)
+        else:
+            out[key] = value
+    return out
+
+
+def _leaf_paths(patch: Tree, prefix: Path | None = None) -> list[tuple[Path, JsonValue]]:
+    """``append`` / ``remove`` 的补丁里，每个**非字典叶子**及其路径。
+
+    它们的叶子必须是列表——那两个动作只对清单成立。
+    """
+    out: list[tuple[Path, JsonValue]] = []
+    for key in sorted(patch):
+        here = [*(prefix or []), key]
+        value = patch[key]
+        if isinstance(value, dict):
+            out.extend(_leaf_paths(value, here))
+        else:
+            out.append((here, value))
+    return out
+
+
+def _as_list(items: JsonValue) -> list[JsonValue]:
+    """``append`` / ``remove`` 的叶子。写成单个值也认——模型时常这么写，
+    为此退回一个错误不值得。
+    """
+    return list(items) if isinstance(items, list) else [items]
+
+
+def _ensure(tree: Tree, path: Path) -> tuple[Tree, str] | None:
+    """走到 ``path`` 的父节点，沿途缺的字典补上。最后一段不是键就返回 ``None``。"""
+    if not path:
+        return None
+    node = tree
+    for segment in path[:-1]:
+        nxt = node.get(segment)
+        if not isinstance(nxt, dict):
+            # 中间挡着一个非字典值：不静默覆盖它，这一笔跳过。
+            if nxt is not None:
+                return None
+            nxt = {}
+            node[segment] = nxt
+        node = nxt
+    return node, path[-1]
+
 
 class StateDelta(BaseModel):
     """一个 run 的状态变化。**权威数据**——当前状态是沿路径重放增量的结果（D48）。
@@ -73,17 +201,22 @@ class StateDelta(BaseModel):
     分叉在几百个 run 后才爆，且爆时查不出源头，还会让分支重建出错。
     """
 
-    set: dict[str, JsonValue] = Field(default_factory=dict)
-    """覆盖写。值为 ``None`` 表示删除该键。"""
+    set: Tree = Field(default_factory=dict)
+    """覆盖写，**深合并**（D157）：只动补丁里提到的那几个键，别的原样留着。
+    叶子为 ``None`` 表示删掉那个键（连同它下面的整棵子树）。
 
-    append: dict[str, list[JsonValue]] = Field(default_factory=dict)
-    """追加到列表型的值（如知情、经历过的事）。去重。
+    深合并是这套写法的关键——改一个角色的一项属性不必重发整个角色，
+    而整体重发正是清单被拍平的老路（D96）。
+    """
+
+    append: Tree = Field(default_factory=dict)
+    """追加到清单型的值（如知情、经历过的事）。去重。**叶子必须是列表。**
 
     与 ``set`` 分开是因为几种写法都真实存在：关系、位置这类是覆盖，
     清单是增删。这不是对内容的假设，只是不同的写入语义。
     """
 
-    remove: dict[str, list[JsonValue]] = Field(default_factory=dict)
+    remove: Tree = Field(default_factory=dict)
     """从列表型的值里拿掉指定项。不存在的项静默忽略。
 
     **``append`` 的逆运算，补于 D96。** 原先只有增没有减，清单就只能只增不减；
@@ -104,20 +237,26 @@ class StateDelta(BaseModel):
         ``state_write`` 可在 loop 中多次调用（D56），中途的多次写入需要累积成
         一份增量落到节点上——节点与 run 一一对应（D51），一个 run 只有一份增量。
         """
-        merged_append = {k: list(v) for k, v in self.append.items()}
-        for key, items in other.append.items():
-            target = merged_append.setdefault(key, [])
-            target.extend(i for i in items if i not in target)
+        merged_set = _clone(self.set)
+        _merge_into(merged_set, other.set)
 
-        merged_remove = {k: list(v) for k, v in self.remove.items()}
-        for key, items in other.remove.items():
-            target = merged_remove.setdefault(key, [])
-            target.extend(i for i in items if i not in target)
+        def union(mine: Tree, theirs: Tree) -> Tree:
+            out = _clone(mine)
+            for path, items in _leaf_paths(theirs):
+                spot = _ensure(out, path)
+                if spot is None:
+                    continue
+                parent, leaf = spot
+                current = parent.get(leaf)
+                target = list(current) if isinstance(current, list) else []
+                target.extend(i for i in _as_list(items) if i not in target)
+                parent[leaf] = target
+            return out
 
         return StateDelta(
-            set={**self.set, **other.set},
-            append=merged_append,
-            remove=merged_remove,
+            set=merged_set,
+            append=union(self.append, other.append),
+            remove=union(self.remove, other.remove),
         )
 
 
@@ -126,60 +265,54 @@ class WorldState(BaseModel):
     却被重建覆盖，是最糟的体验。用户要改当前状态，实质是改最新节点的增量。
     """
 
-    values: dict[str, JsonValue] = Field(default_factory=dict)
+    values: Tree = Field(default_factory=dict)
 
     def apply(self, delta: StateDelta) -> WorldState:
         """套用一个增量，返回新状态。不修改自身。
 
-        顺序是 set → remove → append：先整体覆盖，再对清单增删。
+        顺序是 set → remove → append：先覆盖，再对清单增删。
         remove 在 append 之前，因此"换掉一项"可以在同一次写入里表达
         （remove 旧的 + append 新的），不必整体重写。
         """
-        values = {k: (list(v) if isinstance(v, list) else v) for k, v in self.values.items()}
+        values = _clone(self.values)
+        _merge_into(values, delta.set)
 
-        for key, value in delta.set.items():
-            if value is None:
-                values.pop(key, None)
-            else:
-                values[key] = value
-
-        for key, items in delta.remove.items():
-            current = values.get(key)
+        for path, items in _leaf_paths(delta.remove):
+            spot = _ensure(values, path)
+            if spot is None:
+                continue
+            parent, leaf = spot
+            current = parent.get(leaf)
+            drop = _as_list(items)
             if isinstance(current, list):
-                values[key] = [i for i in current if i not in items]
-            elif current is not None and current in items:
-                # 单值也允许被 remove 掉——否则模型得记住这个键当初是不是列表。
-                values.pop(key, None)
+                parent[leaf] = [i for i in current if i not in drop]
+            elif current is not None and current in drop:
+                # 单值也允许被 remove 掉——否则模型得记住这个键当初是不是清单。
+                parent.pop(leaf, None)
 
-        for key, items in delta.append.items():
-            current = values.get(key)
+        for path, items in _leaf_paths(delta.append):
+            spot = _ensure(values, path)
+            if spot is None:
+                continue
+            parent, leaf = spot
+            current = parent.get(leaf)
             target = (
                 list(current)
                 if isinstance(current, list)
                 else ([] if current is None else [current])
             )
-            target.extend(i for i in items if i not in target)
-            values[key] = target
+            target.extend(i for i in _as_list(items) if i not in target)
+            parent[leaf] = target
 
         return WorldState(values=values)
 
-    def keys(self) -> list[str]:
-        """已用过的全部键。回给模型复用，防止键名漂移。"""
-        return sorted(self.values)
+    def paths(self) -> list[Path]:
+        """已用过的全部叶子路径。回给模型复用，防止键名漂移。"""
+        return paths_of(self.values)
 
-    def grouped(self) -> dict[str, dict[str, JsonValue]]:
-        """按第一段前缀分组，仅用于渲染。系统不赋予 ``.`` 任何语义。
-
-        无前缀的键归到 ``""`` 组。
-        """
-        groups: dict[str, dict[str, JsonValue]] = {}
-        for key in sorted(self.values):
-            head, _, tail = key.partition(".")
-            if tail:
-                groups.setdefault(head, {})[tail] = self.values[key]
-            else:
-                groups.setdefault("", {})[head] = self.values[key]
-        return groups
+    def at(self, path: Path) -> JsonValue:
+        """按路径取一处状态；路上断了就是 ``None``。"""
+        return walk(self.values, path)
 
 
 def replay(deltas: list[StateDelta]) -> WorldState:

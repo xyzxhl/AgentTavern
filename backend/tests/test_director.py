@@ -179,7 +179,7 @@ async def test_recoverable_tool_error_does_not_kill_run(tmp_path: Path) -> None:
 async def test_trace_carries_readable_labels(tmp_path: Path) -> None:
     """D25：trace 必须带人类可读语义标签，UI 才渲染得出"确认了她现在在哪"。"""
     llm = ScriptedLLM(
-        tool("state_query", keys=["地点"]),
+        tool("state_query", paths=[["地点"]]),
         tool("submit_outline", outline="她推开门。"),
     )
     ctx, tracer, reg = make_ctx(tmp_path, llm)

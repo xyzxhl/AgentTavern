@@ -107,36 +107,45 @@ async def test_an_empty_write_is_legal(reg, ctx) -> None:
 
 async def test_state_writes_accumulate_into_one_delta(reg, ctx) -> None:
     """可多次调用，累积成一份增量——节点与 run 一一对应，一个 run 只有一份增量。"""
-    await call(reg, ctx, "state_write", set={"地点": "门口"}, append={"林.知情": ["有人来了"]})
-    await call(reg, ctx, "state_write", set={"地点": "客厅"}, append={"林.知情": ["是陈"]})
+    await call(reg, ctx, "state_write", set={"地点": "门口"}, append={"林": {"知情": ["有人来了"]}})
+    await call(reg, ctx, "state_write", set={"地点": "客厅"}, append={"林": {"知情": ["是陈"]}})
 
     assert ctx.state_write_count == 2
     assert ctx.staged_delta.set["地点"] == "客厅"
-    assert ctx.staged_delta.append["林.知情"] == ["有人来了", "是陈"]
+    assert ctx.staged_delta.append["林"]["知情"] == ["有人来了", "是陈"]
 
 
 async def test_unmentioned_keys_survive(reg, ctx) -> None:
     """离场再出场天然成立：只改提到的键，其余保持原状。不需要"角色实体"这类预设。"""
-    await call(reg, ctx, "state_write", set={"陈.在场": True}, append={"陈.知情": ["照片"]})
-    await call(reg, ctx, "state_write", set={"陈.在场": False})
+    await call(
+        reg, ctx, "state_write", set={"陈": {"在场": True}}, append={"陈": {"知情": ["照片"]}}
+    )
+    await call(reg, ctx, "state_write", set={"陈": {"在场": False}})
 
     after = ctx.current_state().values
-    assert after["陈.在场"] is False
-    assert after["陈.知情"] == ["照片"]
+    assert after["陈"]["在场"] is False
+    # **深合并**：只动提到的那一项，同一个角色名下别的原样留着（D157）。
+    assert after["陈"]["知情"] == ["照片"]
 
-    await call(reg, ctx, "state_write", set={"陈.在场": True})
-    assert ctx.current_state().values["陈.在场"] is True
+    await call(reg, ctx, "state_write", set={"陈": {"在场": True}})
+    assert ctx.current_state().values["陈"]["在场"] is True
 
 
 async def test_any_shape_of_key_is_accepted(reg, ctx) -> None:
-    """时间、地点、角色属性的粒度与形态都取决于故事，存储层不预设任何维度。"""
+    """时间、地点、角色属性的粒度与形态都取决于故事，存储层不预设任何维度。
+
+    从属关系用嵌套，深浅由模型自己定（D157）：这里「地点」有一层，
+    「林与陈」也有一层，而「时间」就是个裸值——三种都合法。
+    """
     await call(
         reg,
         ctx,
         "state_write",
-        set={"时间": "下午一点", "地点.场合": "婚礼进行中", "林与陈.关系": "疏远"},
+        set={"时间": "下午一点", "地点": {"场合": "婚礼进行中"}, "林与陈": {"关系": "疏远"}},
     )
-    result = await call(reg, ctx, "state_query", keys=["时间", "地点.场合", "林与陈.关系"])
+    result = await call(
+        reg, ctx, "state_query", paths=[["时间"], ["地点", "场合"], ["林与陈", "关系"]]
+    )
     assert "下午一点" in result.content
     assert "婚礼进行中" in result.content
 
@@ -170,21 +179,32 @@ async def test_invalid_params_are_recoverable(reg, ctx) -> None:
     assert result.is_error
 
 
-async def test_unknown_state_key_returns_available_keys(reg, ctx) -> None:
-    """未知键回给模型可用键列表，顺带起到防键名漂移的作用。"""
-    await call(reg, ctx, "state_write", set={"林与陈.关系": "疏远"})
-    result = await call(reg, ctx, "state_query", keys=["心情"])
+async def test_unknown_state_path_returns_what_is_available(reg, ctx) -> None:
+    """查不到就把现有结构回给模型，顺带起到防键名漂移的作用。"""
+    await call(reg, ctx, "state_write", set={"林与陈": {"关系": "疏远"}})
+    result = await call(reg, ctx, "state_query", paths=[["心情"]])
     assert result.is_error
-    assert "林与陈.关系" in result.content
+    assert "林与陈 › 关系" in result.content
 
 
 # -- 查询 -------------------------------------------------------------------
 
 
 async def test_state_query_reads_staged_value(reg, ctx) -> None:
-    await call(reg, ctx, "state_write", append={"林.知情": ["照片的存在"]})
-    result = await call(reg, ctx, "state_query", keys=["林.知情"])
+    await call(reg, ctx, "state_write", append={"林": {"知情": ["照片的存在"]}})
+    result = await call(reg, ctx, "state_query", paths=[["林", "知情"]])
     assert "照片的存在" in result.content
+
+
+async def test_querying_a_branch_gives_the_whole_subtree(reg, ctx) -> None:
+    """路径可以停在中间层——**取一整棵子树**（D157）。
+
+    展开层级把深处折成了「N 项」，模型看到的就是那一层的位置，
+    所以它必须能照着那个位置直接要下去。
+    """
+    await call(reg, ctx, "state_write", set={"林": {"在场": True, "知情": ["照片"]}})
+    result = await call(reg, ctx, "state_query", paths=[["林"]])
+    assert "在场" in result.content and "照片" in result.content
 
 
 # -- history / worldinfo ----------------------------------------------------

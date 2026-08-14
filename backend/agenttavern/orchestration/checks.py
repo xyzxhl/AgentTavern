@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from ..config import LIMITS
 from ..models import ExpansionDensity, StateDelta
+from ..models.state import label_path as _label
+from ..models.state import paths_of, walk
 
 _DENSITY_MIN_CHARS = {
     ExpansionDensity.SPARSE: 80,
@@ -47,36 +49,38 @@ state 的用处是**让模型在很多轮之后不写出矛盾**，因此每个�
 
 
 def _bloated_keys(values: dict[str, object]) -> list[str]:
-    """挑出形状可疑的键：值过长，或值里串了多件事。"""
+    """挑出形状可疑的位置：值过长，或值里串了多件事。**走叶子路径**（D157）。"""
     suspect = []
-    for key, value in values.items():
+    for path in paths_of(values):
+        value = walk(values, path)
         if not isinstance(value, str):
             continue
         if len(value) > STATE_VALUE_MAX_CHARS or value.count("；") >= 2:
-            suspect.append(key)
+            suspect.append(_label(path))
     return suspect
 
 
 def _shadowed_keys(before: dict[str, object], written: dict[str, object]) -> list[str]:
-    """挑出与已有键**只差一个前缀**的新键。
+    """挑出与已有位置**只差一层归属**的新位置。
 
-    实测：``沈砚.冷却`` 已存在，模型另起了一个裸键 ``冷却``——那一轮 state 里
-    两个冷却键并存且值不同。它下一轮自己发现并删掉了，但中间那一轮是脏的，
+    实测：``沈砚 › 冷却`` 已存在，模型另起了一个顶层的 ``冷却``——那一轮 state 里
+    两个冷却并存且值不同。它下一轮自己发现并删掉了，但中间那一轮是脏的，
     而**没有任何检查报得出来**：值的形状没变、没有超长、也不算漏记。
 
-    只报"一个裸键 vs 一个带前缀的同名键"这一种。``林昭.知情`` 与 ``陈屿.知情``
-    共享词尾却都是对的——**两边都带前缀就不是歧义**，那是正常的分组。
+    只报"一个顶层裸键 vs 一个挂在谁名下的同名键"这一种。``林昭 › 知情`` 与
+    ``陈屿 › 知情`` 末段相同却都是对的——**两边都有归属就不是歧义**。
+
+    嵌套之后这条判据比点分键名时更硬：以前"有没有前缀"要靠字符串里找点号，
+    键名里真带个点就会误判；现在它就是路径长度。
     """
-    keys = set(before) | set(written)
+    paths = paths_of(before) + paths_of(written)
     suspect = []
-    for key in written:
-        tail = key.rpartition(".")[2]
-        bare = "." not in key
-        for other in keys:
-            if other == key or other.rpartition(".")[2] != tail:
+    for path in paths_of(written):
+        for other in paths:
+            if other == path or other[-1] != path[-1]:
                 continue
-            if bare != ("." not in other):
-                suspect.append(f"{key} / {other}")
+            if (len(path) == 1) != (len(other) == 1):
+                suspect.append(f"{_label(path)} / {_label(other)}")
                 break
     return suspect
 
@@ -96,18 +100,20 @@ def _kind(value: object) -> str:
 def _reshaped_keys(before: dict[str, object], after: dict[str, object]) -> list[str]:
     """挑出被写成另一种形状的键。
 
-    实测：种子给的是 `"沈砚.灵石": 3` 和 `["青锋剑", "止血符 ×2", …]`，模型写回
+    实测：初始状态给的是 `沈砚 › 灵石 = 3` 和 `["青锋剑", "止血符 ×2", …]`，模型写回
     `"1"` 和 `"青锋剑、止血符 ×4、…"`——数字变文字、清单被拍平成一句话。
     清单一旦拍平就再也没法单独增删其中一项，**且不可逆**。
 
     只比对类型，不比对内容。形状变化有时是合理的（`受伤: false` → `受伤: "左肩"`），
     所以这是采样标记而非约束。
     """
-    return [
-        key
-        for key, value in after.items()
-        if key in before and value is not None and _kind(before[key]) != _kind(value)
-    ]
+    suspect = []
+    for path in paths_of(after):
+        was, now = walk(before, path), walk(after, path)
+        # 路径在旧状态里根本不存在（`was is None`）就不算改形状，是新增。
+        if was is not None and now is not None and _kind(was) != _kind(now):
+            suspect.append(_label(path))
+    return suspect
 
 
 def sampling_flags(
@@ -129,7 +135,9 @@ def sampling_flags(
         flags.append(f"状态值被写成了另一种形状（数字/清单/文字）：{'、'.join(reshaped)}")
 
     if shadowed := _shadowed_keys(state_before or {}, delta.set):
-        flags.append(f"新键与已有键只差一个前缀，可能是同一件事的两个写法：{'、'.join(shadowed)}")
+        flags.append(
+            f"新位置与已有位置只差一层归属，可能是同一件事的两个写法：{'、'.join(shadowed)}"
+        )
 
     if outline and prose and len(prose) < len(outline) * EXPANSION_MIN_RATIO:
         flags.append(

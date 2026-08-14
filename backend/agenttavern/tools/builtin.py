@@ -20,6 +20,8 @@ from pydantic import BaseModel, Field
 
 from ..config import LIMITS
 from ..models import ModelAuthority, Node, StateDelta
+from ..models.state import label_path as _label
+from ..models.state import paths_of
 from .base import Tool, ToolOutcome, ToolResult, error
 from .context import RunContext
 
@@ -56,27 +58,36 @@ async def _submit_outline(ctx: RunContext, params: SubmitOutlineParams) -> ToolR
 
 
 class StateQueryParams(BaseModel):
-    keys: list[str] = Field(description="要查的键。上下文里已列出全部可用的键。")
+    paths: list[list[str]] = Field(
+        description='要展开的位置，每个是一条路径，一段一个键（如 `["林", "知情"]`）。'
+    )
 
 
 async def _state_query(ctx: RunContext, params: StateQueryParams) -> ToolResult:
     state = ctx.current_state()
-    found = {k: state.values[k] for k in params.keys if k in state.values}
-    missing = [k for k in params.keys if k not in state.values]
+    found: dict[str, Any] = {}
+    missing: list[str] = []
+    for path in params.paths:
+        value = state.at(path)
+        if value is None:
+            missing.append(_label(path))
+        else:
+            found[_label(path)] = value
 
     if not found:
-        # 未知键是模型可恢复的错误——把可用的键回给它，顺便起到防键名漂移的作用。
+        # 未知路径是模型可恢复的错误——把现有结构回给它，顺便压键名漂移。
+        available = "、".join(_label(p) for p in state.paths()) or "（无）"
         return error(
-            f"没有这些键：{'、'.join(missing)}。当前可用：{'、'.join(state.keys()) or '（无）'}",
+            f"没有这些位置：{'、'.join(missing)}。当前有：{available}",
             label=f"查 {'、'.join(missing)} 未命中",
         )
 
     content = json.dumps(found, ensure_ascii=False)
     if missing:
-        content += f"\n（不存在的键：{'、'.join(missing)}）"
+        content += f"\n（不存在的位置：{'、'.join(missing)}）"
     return ToolResult(
         content=content,
-        label=f"查了 {'、'.join(params.keys)}",
+        label=f"查了 {'、'.join(found)}",
         payload={"found": list(found), "missing": missing},
     )
 
@@ -84,15 +95,16 @@ async def _state_query(ctx: RunContext, params: StateQueryParams) -> ToolResult:
 class StateWriteParams(BaseModel):
     set: dict[str, Any] = Field(
         default_factory=dict,
-        description="覆盖写：键 -> 新值。值为 null 表示删除该键。键可自由命名，"
-        "`.` 表示从属（`林.性格`）。",
+        description="覆盖写，**深合并**：只动你提到的那几个键，同层别的原样留着。"
+        '从属关系用嵌套表达（`{"林": {"性格": "谨慎"}}`）。值为 null 表示删掉该键。',
     )
-    append: dict[str, list[Any]] = Field(
-        default_factory=dict, description="往清单里追加条目：键 -> 条目。自动去重。"
-    )
-    remove: dict[str, list[Any]] = Field(
+    append: dict[str, Any] = Field(
         default_factory=dict,
-        description="从清单里拿掉条目：键 -> 条目。不存在的忽略。"
+        description="往清单里追加：结构同 set，叶子是要加的条目。自动去重。",
+    )
+    remove: dict[str, Any] = Field(
+        default_factory=dict,
+        description="从清单里拿掉：结构同 set，叶子是要去掉的条目。不存在的忽略。"
         "**改清单里的某一项就 remove 旧的再 append 新的**，别用 set 整体重写。",
     )
 
@@ -108,7 +120,11 @@ async def _state_write(ctx: RunContext, params: StateWriteParams) -> ToolResult:
     if delta.is_empty():
         return ToolResult(content="已记录：本轮无状态变化。", label="确认本轮无状态变化")
 
-    touched = list(params.set) + list(params.append) + list(params.remove)
+    # 标签给人看，所以列的是**叶子路径**而不是顶层键——顶层往往只是个角色名，
+    # 十次更新九次都写着同一个字。
+    touched = [_label(p) for p in paths_of(delta.set)]
+    touched += [_label(p) for p in paths_of(delta.append)]
+    touched += [_label(p) for p in paths_of(delta.remove)]
     return ToolResult(
         content="状态增量已记录。",
         label=f"更新了 {'、'.join(touched)}",
@@ -433,8 +449,8 @@ def state_query_tool() -> Tool[Any]:
     """
     return _tool(
         "state_query",
-        "读取当前世界状态里指定的键。上下文中已给出全部键名与体量小的值，"
-        "这里用于展开体量大的那些。",
+        "按路径展开世界状态。上下文里已给出结构，深过展开层级的子树与体量大的值"
+        "只给了个数/字数，这里用来把它们取出来。",
         StateQueryParams,
         _state_query,
     )

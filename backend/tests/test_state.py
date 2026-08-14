@@ -56,7 +56,7 @@ def test_arbitrary_character_attributes() -> None:
 def test_story_without_knowledge_tracking_is_fine() -> None:
     """不是所有故事都要维护知情——不写就是没有，不需要空字段占位。"""
     state = replay([StateDelta(set={"气氛": "紧绷"})])
-    assert state.keys() == ["气氛"]
+    assert state.paths() == [["气氛"]]
 
 
 # -- 写入语义 ----------------------------------------------------------------
@@ -182,9 +182,44 @@ def test_merge_accumulates_like_replay() -> None:
 # -- 渲染分组 ----------------------------------------------------------------
 
 
-def test_grouped_splits_on_first_dot_only() -> None:
-    """`.` 仅用于渲染分组，系统不赋予它语义。"""
-    state = replay([StateDelta(set={"时间": "傍晚", "林.性格": "谨慎", "林.在场": True})])
-    groups = state.grouped()
-    assert groups[""] == {"时间": "傍晚"}
-    assert groups["林"] == {"性格": "谨慎", "在场": True}
+def test_structure_is_the_json_structure() -> None:
+    """从属关系**用嵌套表达**，不再用点分键名（D157）。
+
+    早先是一层平铺 + `林.性格` 这种键，点号"仅用于渲染时分组"。换掉的理由里
+    最硬的一条是：平铺结构里没有"层"，按层级控制展开根本做不了。
+    """
+    state = replay([StateDelta(set={"时间": "傍晚", "林": {"性格": "谨慎", "在场": True}})])
+
+    assert state.values == {"时间": "傍晚", "林": {"性格": "谨慎", "在场": True}}
+    assert state.paths() == [["时间"], ["林", "在场"], ["林", "性格"]]
+    assert state.at(["林", "性格"]) == "谨慎"
+    # 路上断了就是 None，不抛。
+    assert state.at(["林", "没这个"]) is None
+    assert state.at(["时间", "当前"]) is None
+
+
+def test_a_set_merges_deeply_instead_of_replacing_the_whole_branch() -> None:
+    """**深合并**（D157）：改一项不必重发整个角色。
+
+    整体重发正是清单被拍平的老路（D96）——模型为了改一个属性重写整个对象，
+    顺手把旁边那个清单写成了一句话。
+    """
+    state = replay([StateDelta(set={"林": {"在场": True, "知情": ["照片"]}})])
+    state = state.apply(StateDelta(set={"林": {"性格": "谨慎"}}))
+
+    assert state.values["林"] == {"在场": True, "知情": ["照片"], "性格": "谨慎"}
+
+
+def test_a_null_leaf_deletes_that_subtree() -> None:
+    state = replay([StateDelta(set={"林": {"在场": True, "性格": "谨慎"}, "地点": "客厅"})])
+    state = state.apply(StateDelta(set={"林": {"性格": None}, "地点": None}))
+
+    assert state.values == {"林": {"在场": True}}
+
+
+def test_append_and_remove_address_nested_lists() -> None:
+    state = replay([StateDelta(set={"林": {"知情": ["照片"]}})])
+    state = state.apply(StateDelta(append={"林": {"知情": ["西山的坟"]}}))
+    state = state.apply(StateDelta(remove={"林": {"知情": ["照片"]}}))
+
+    assert state.values["林"]["知情"] == ["西山的坟"]

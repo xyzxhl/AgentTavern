@@ -29,7 +29,7 @@ def happy_llm(prose: str = "门轴发出一声长长的呻吟。") -> ScriptedLL
     return ScriptedLLM(
         tool("submit_outline", outline="她推开门，屋里坐着陈。"),
         text(prose),
-        state=dict(set={"地点": "客厅", "林.在场": True, "陈.在场": True}),
+        state=dict(set={"地点": "客厅", "林": {"在场": True}, "陈": {"在场": True}}),
     )
 
 
@@ -568,14 +568,14 @@ async def test_backfill_failure_does_not_fail_the_run(tmp_path: Path) -> None:
 
 
 async def test_a_bare_key_shadowing_a_namespaced_one_is_flagged(tmp_path: Path) -> None:
-    """实测：``沈砚.冷却`` 已存在，模型另起了一个裸键 ``冷却``。
+    """实测：``沈砚 › 冷却`` 已存在，模型另起了一个顶层的 ``冷却``。
 
     那一轮 state 里两个冷却键并存且值不同。模型下一轮自己发现并删掉了，
     但中间那一轮是脏的，而**当时没有任何检查报得出来**——值的形状没变、
     没有超长、也不算漏记。提示词里那句"新建键前先看有没有已在说同一件事的键"
     没能拦住它。
     """
-    entry = WorldbookEntry(name="沈砚", content="散修。", seeds={"沈砚.冷却": "御剑斩剩3回合"})
+    entry = WorldbookEntry(name="沈砚", content="散修。", seeds={"沈砚": {"冷却": "御剑斩剩3回合"}})
     llm = ScriptedLLM(
         tool("submit_outline", outline="他又催了一次剑。"),
         text("剑没有起来。" * 10),
@@ -585,18 +585,18 @@ async def test_a_bare_key_shadowing_a_namespaced_one_is_flagged(tmp_path: Path) 
     repo.save_worldbook_entry(entry)
 
     outcome = await execute_run(repo, session, gw, reg, user_input=UserInput(text="再来一记"))
-    flag = next(n for n in outcome.notes if "只差一个前缀" in n)
-    assert "冷却" in flag and "沈砚.冷却" in flag
+    flag = next(n for n in outcome.notes if "只差一层归属" in n)
+    assert "冷却" in flag and "沈砚 › 冷却" in flag
 
 
 async def test_sibling_keys_under_different_owners_are_not_flagged(tmp_path: Path) -> None:
-    """``林昭.知情`` 与 ``陈屿.知情`` 共享词尾却都是对的——**两边都带前缀就不是歧义**，
-    那正是 `.` 分组要表达的东西。误报这种会让标记立刻失去价值。"""
-    entry = WorldbookEntry(name="林昭", content="记者。", seeds={"林昭.知情": ["照片"]})
+    """``林昭 › 知情`` 与 ``陈屿 › 知情`` 末段相同却都是对的——**两边都有归属
+    就不是歧义**。误报这种会让标记立刻失去价值。"""
+    entry = WorldbookEntry(name="林昭", content="记者。", seeds={"林昭": {"知情": ["照片"]}})
     llm = ScriptedLLM(
         tool("submit_outline", outline="他记住了她。"),
         text("他看着她走出去。" * 8),
-        state=dict(append={"陈屿.知情": ["她来过"]}),
+        state=dict(append={"陈屿": {"知情": ["她来过"]}}),
     )
     repo, session, gw, reg = setup(tmp_path, llm)
     repo.save_worldbook_entry(entry)

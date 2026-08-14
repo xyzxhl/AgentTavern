@@ -50,22 +50,46 @@ STATE_INLINE_LIMIT = LIMITS.context.state_inline_limit
 
 
 HIDDEN = "（{chars} 字，用 state_query 展开）"
-"""长值的占位。**它是字符串，所以只能顶替字符串值**——见 `_hide_long`。"""
+"""长字符串的占位。**它自己是字符串，所以只能顶替字符串值**——见 `_hide_long`。"""
+
+DEEPER = "（{count} 项，用 state_query 展开）"
+"""超过展开层级的子树的占位（D157）。"""
 
 
 def _hide_long(value: object) -> object:
     """体量大的值只给体量，由模型按需 `state_query` 展开。
 
-    **只对字符串生效。** 清单和字典即使很长也原样给出：顶替掉它们会把形状也
-    一起顶替成一个字符串，而形状正是这里最要紧的东西（D96）——模型照着写回，
-    清单就塌了。长清单该做的是拆键，不是藏起来。
+    **只对字符串生效。** 清单即使很长也原样给出：顶替掉它会把形状一起顶替成
+    一个字符串，而形状正是这里最要紧的东西（D96）——模型照着写回，清单就塌了。
+    长清单该做的是拆一层嵌套，不是藏起来。
     """
     if isinstance(value, str) and len(value) > STATE_INLINE_LIMIT:
         return HIDDEN.format(chars=len(value))
     return value
 
 
-def render_state(state: WorldState, *, expandable: bool = True) -> str:
+def _fold(tree: dict[str, object], depth: int) -> dict[str, object]:
+    """按**层级**折叠（D157）：深过 ``depth`` 的子树只给条数。
+
+    这是点分键名换成真嵌套之后才做得成的事——平铺结构里没有"层"，
+    当时只能按字符数藏，而字符数和"这一块要不要给"没有关系。
+
+    ``depth<=0`` 表示不折叠。折叠只发生在**字典**上：清单是一个值，
+    折它等于改形状。
+    """
+    out: dict[str, object] = {}
+    for key, value in tree.items():
+        if isinstance(value, dict) and value:
+            if depth == 1:
+                out[key] = DEEPER.format(count=len(value))
+            else:
+                out[key] = _fold(value, depth - 1)
+        else:
+            out[key] = _hide_long(value)
+    return out
+
+
+def render_state(state: WorldState, *, expandable: bool = True, depth: int = 0) -> str:
     """状态默认包：**JSON**，全量键名 + 体量大的字符串只给体量。
 
     ## 为什么是 JSON
@@ -80,20 +104,20 @@ def render_state(state: WorldState, *, expandable: bool = True) -> str:
     自带区分，不需要任何额外标记，而且**和 `state_write` 的参数是同一套写法**——
     模型读到什么形状就写回什么形状，中间没有一次翻译。
 
-    代价是 `.` 分组的视觉层次没了（`grouped()` 只剩 UI 在用）。换来的是形状不再
-    需要靠提示词维护。
+    **层次靠嵌套，不靠点分键名**（D157）：`depth` 决定给到第几层，更深的只给条数，
+    模型按需 `state_query` 展开。`depth<=0` 表示全给。
 
-    **不预设任何维度。** 键由模型自由命名，系统不赋予 `.` 任何语义，时间、地点、
-    角色属性的粒度与形态都取决于故事，定不了固定 schema（见 models/state.py）。
+    **不预设任何维度。** 键由模型自由命名，时间、地点、角色属性的粒度与形态都
+    取决于故事，定不了固定 schema（见 models/state.py）。
 
     **这里只渲染键值，一句提示词都不带**——那些话是提示词，写在 YAML 里。
     """
     if not state.values:
         return "（尚无记录）"
 
-    values = state.values
+    values: dict[str, object] = dict(state.values)
     if expandable:
-        values = {k: _hide_long(v) for k, v in values.items()}
+        values = _fold(values, depth)
     return json.dumps(values, ensure_ascii=False, indent=2, sort_keys=True)
 
 

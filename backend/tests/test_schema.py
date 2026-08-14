@@ -45,7 +45,12 @@ def test_shared_models_are_defined_once() -> None:
         assert shared in defs, f"{shared} 应当作为共享定义出现"
 
     # 顶层只有两个入口，别的都靠 $ref 指过去。
-    assert set(export_schema()["properties"]) == {"ClientMessage", "ServerMessage", "Session", "WorldbookEntry"}
+    assert set(export_schema()["properties"]) == {
+        "ClientMessage",
+        "ServerMessage",
+        "Session",
+        "WorldbookEntry",
+    }
 
 
 def test_the_two_unions_are_named_definitions_not_inline() -> None:

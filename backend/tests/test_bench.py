@@ -10,6 +10,7 @@ from agenttavern.bench.report import attribution_table, render
 from agenttavern.bench.scenarios import Scenario
 from agenttavern.config import Settings
 from agenttavern.models import Capabilities, InputSource, StateDelta
+from agenttavern.models.state import paths_of, walk
 from agenttavern.prompting import choice
 
 
@@ -29,15 +30,18 @@ def test_scenarios_are_deliberately_opposite() -> None:
     """
     noir, data = SCENARIOS["noir"], SCENARIOS["data"]
 
-    # noir 的种子里没有可增减的量；data 有清单、数字和冷却
-    noir_seeds = {k: v for e in noir.worldbook for k, v in e.seeds.items()}
-    data_seeds = {k: v for e in data.worldbook for k, v in e.seeds.items()}
+    # noir 的初始状态里没有可增减的量；data 有清单、数字和冷却。
+    # **看的是叶子**——初始状态是嵌套的，顶层往往只是个角色名（D157）。
+    def leaves(scenario) -> list[object]:
+        out = []
+        for entry in scenario.worldbook:
+            for path in paths_of(entry.seeds):
+                out.append(walk(entry.seeds, path))
+        return out
 
-    assert not any(
-        isinstance(v, int | float) and not isinstance(v, bool) for v in noir_seeds.values()
-    )
-    assert any(isinstance(v, int) and not isinstance(v, bool) for v in data_seeds.values())
-    assert any(isinstance(v, list) for v in data_seeds.values())
+    assert not any(isinstance(v, int | float) and not isinstance(v, bool) for v in leaves(noir))
+    assert any(isinstance(v, int) and not isinstance(v, bool) for v in leaves(data))
+    assert any(isinstance(v, list) for v in leaves(data))
 
 
 def test_every_scenario_has_a_recorded_input_sequence() -> None:
@@ -176,7 +180,7 @@ async def test_turns_are_chained_so_state_accumulates(tmp_path: Path) -> None:
         text("门开了。"),
         tool("submit_outline", outline="她看着他。"),
         text("她看着他。灯很暗。"),
-        state=[dict(set={"地点": "客厅"}), dict(append={"林昭.知情": ["陈撒谎了"]})],
+        state=[dict(set={"地点": "客厅"}), dict(append={"林昭": {"知情": ["陈撒谎了"]}})],
     )
     settings = Settings(data_dir=tmp_path, llm_model="test")
 
@@ -188,7 +192,7 @@ async def test_turns_are_chained_so_state_accumulates(tmp_path: Path) -> None:
     ]
     # 第二轮开始时的状态里应当已有第一轮写入的键，以及 worldbook 种子
     assert result.turns[1].state_before["地点"] == "客厅"
-    assert "陈屿.在场" in result.turns[1].state_before
+    assert result.turns[1].state_before["陈屿"]["在场"] is True
 
 
 def test_variant_only_touches_session_level_config() -> None:
