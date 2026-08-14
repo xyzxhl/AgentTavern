@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from ..models import ControlOverride, Node, TraceEvent
+from ..models import ControlOverride, Node, SubGoal, TraceEvent
 
 # --------------------------------------------------------------------------
 # 客户端 → 服务端
@@ -290,6 +290,25 @@ class GoalFinished(BaseModel):
     reason: str = ""
 
 
+class GoalProgress(BaseModel):
+    """goal 又推了一轮之后的进度（D161）。
+
+    **不推整个 `GoalRun`**：它带着 goal_manager 那份跨 run 的长对话，一轮就上
+    十万字，而界面一个字都用不上。这里只给要显示的东西。
+
+    **为什么需要这条消息**：进度只写在盘上的 `goal_run` 里，WS 那侧此前只有
+    「结束」和「暂停」两条——也就是说 goal 跑着的那几轮，界面上什么都不会变，
+    直到它突然结束。而中间状态一条条被划掉，恰恰是用户最想看的东西。
+    """
+
+    type: Literal["goal_progress"] = "goal_progress"
+    subgoals: list[SubGoal] = Field(default_factory=list)
+    spent_runs: int = 0
+    spent_tokens: int = 0
+    max_runs: int = 0
+    max_total_tokens: int = 0
+
+
 class GoalPaused(BaseModel):
     """goal 停下了，**但没有结束**（D148）。
 
@@ -320,6 +339,7 @@ ServerMessage = (
     | UsageUpdate
     | Branches
     | GoalFinished
+    | GoalProgress
     | GoalPaused
     | ServerError
 )

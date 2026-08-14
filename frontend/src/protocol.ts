@@ -72,6 +72,7 @@ export type ServerMessage =
   | UsageUpdate
   | Branches
   | GoalFinished
+  | GoalProgress
   | GoalPaused
   | ServerError;
 export type Type10 = "run_started";
@@ -190,9 +191,17 @@ export type ActiveIndex = number;
 export type Type21 = "goal_finished";
 export type Outcome = string;
 export type Reason1 = string;
-export type Type22 = "goal_paused";
+export type Type22 = "goal_progress";
+export type Description1 = string;
+export type Done = boolean;
+export type Subgoals = SubGoal[];
+export type SpentRuns = number;
+export type SpentTokens = number;
+export type MaxRuns2 = number;
+export type MaxTotalTokens2 = number;
+export type Type23 = "goal_paused";
 export type Reason2 = string;
-export type Type23 = "error";
+export type Type24 = "error";
 export type Message1 = string;
 export type Id2 = string;
 export type CreatedAt1 = string;
@@ -200,9 +209,9 @@ export type Title = string;
 export type ContentScale = string;
 export type GenreTone = string;
 export type UserCharacter = string;
-export type Description1 = string;
-export type MaxRuns2 = number;
-export type MaxTotalTokens2 = number;
+export type Description2 = string;
+export type MaxRuns3 = number;
+export type MaxTotalTokens3 = number;
 export type TimeDriven = boolean;
 export type Nudge = boolean;
 export type State = boolean;
@@ -220,11 +229,9 @@ export type InitialState = {
 } | null;
 export type ActiveLeafId = string | null;
 export type Conversation = Message[];
-export type Description2 = string;
-export type Done = boolean;
-export type Subgoals = SubGoal[];
-export type SpentRuns = number;
-export type SpentTokens = number;
+export type Subgoals1 = SubGoal[];
+export type SpentRuns1 = number;
+export type SpentTokens1 = number;
 export type Paused = boolean;
 export type PausedReason = string;
 export type StartedAtLeafId = string | null;
@@ -602,6 +609,35 @@ export interface GoalFinished {
   reason?: Reason1;
 }
 /**
+ * goal 又推了一轮之后的进度（D161）。
+ *
+ * **不推整个 `GoalRun`**：它带着 goal_manager 那份跨 run 的长对话，一轮就上
+ * 十万字，而界面一个字都用不上。这里只给要显示的东西。
+ *
+ * **为什么需要这条消息**：进度只写在盘上的 `goal_run` 里，WS 那侧此前只有
+ * 「结束」和「暂停」两条——也就是说 goal 跑着的那几轮，界面上什么都不会变，
+ * 直到它突然结束。而中间状态一条条被划掉，恰恰是用户最想看的东西。
+ */
+export interface GoalProgress {
+  type?: Type22;
+  subgoals?: Subgoals;
+  spent_runs?: SpentRuns;
+  spent_tokens?: SpentTokens;
+  max_runs?: MaxRuns2;
+  max_total_tokens?: MaxTotalTokens2;
+}
+/**
+ * 一个**中间状态**。goal_manager 给出来的，不是用户写的。
+ *
+ * **它描述状态，不是步骤**，而且彼此之间**没有先后依赖**（D150）：可以被跳过、
+ * 以不同顺序实现、同时实现，也可能因剧情变化而不再必要。所以这个列表是一组，
+ * 不是一条链——序号只用来指代，不表示顺序。
+ */
+export interface SubGoal {
+  description: Description1;
+  done?: Done;
+}
+/**
  * goal 停下了，**但没有结束**（D148）。
  *
  * 和 `GoalFinished` 分开是因为用户的下一步完全不同：结束了就是结束了，
@@ -609,11 +645,11 @@ export interface GoalFinished {
  * 对话原样留着，不用重新判一遍。
  */
 export interface GoalPaused {
-  type?: Type22;
+  type?: Type23;
   reason: Reason2;
 }
 export interface ServerError {
-  type?: Type23;
+  type?: Type24;
   message: Message1;
 }
 export interface Session {
@@ -659,9 +695,9 @@ export interface CharacterVoices {
  * 代码读取比对不是独立验证（D30）。
  */
 export interface Goal {
-  description: Description1;
-  max_runs?: MaxRuns2;
-  max_total_tokens?: MaxTotalTokens2;
+  description: Description2;
+  max_runs?: MaxRuns3;
+  max_total_tokens?: MaxTotalTokens3;
 }
 /**
  * 模式：改变触发源的东西。目前只有一项。
@@ -705,8 +741,8 @@ export interface Capabilities {
 export interface GoalRun {
   conversation?: Conversation;
   plan?: GoalPlan | null;
-  spent_runs?: SpentRuns;
-  spent_tokens?: SpentTokens;
+  spent_runs?: SpentRuns1;
+  spent_tokens?: SpentTokens1;
   paused?: Paused;
   paused_reason?: PausedReason;
   started_at_leaf_id?: StartedAtLeafId;
@@ -727,18 +763,7 @@ export interface GoalRun {
  * 为了分支隔离；goal 跑着的时候不允许切分支（D148），那个理由不成立了。
  */
 export interface GoalPlan {
-  subgoals?: Subgoals;
-}
-/**
- * 一个**中间状态**。goal_manager 给出来的，不是用户写的。
- *
- * **它描述状态，不是步骤**，而且彼此之间**没有先后依赖**（D150）：可以被跳过、
- * 以不同顺序实现、同时实现，也可能因剧情变化而不再必要。所以这个列表是一组，
- * 不是一条链——序号只用来指代，不表示顺序。
- */
-export interface SubGoal {
-  description: Description2;
-  done?: Done;
+  subgoals?: Subgoals1;
 }
 export interface WorldbookEntry {
   id?: Id3;

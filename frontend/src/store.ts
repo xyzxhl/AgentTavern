@@ -4,7 +4,15 @@
 import { create } from "zustand";
 
 import { SessionSocket, api, type ServerMeta } from "./api";
-import type { ClientMessage, Node, Question, ServerMessage, Session, TraceEvent } from "./protocol";
+import type {
+  ClientMessage,
+  GoalProgress,
+  Node,
+  Question,
+  ServerMessage,
+  Session,
+  TraceEvent,
+} from "./protocol";
 
 export type RunPhase = "idle" | "running" | "asking";
 
@@ -52,6 +60,13 @@ export interface SessionState {
   notice: string | null;
   /** 上一轮被打断且**存成了草稿**——下一条输入会接着它跑，不是从头重来。 */
   resumable: boolean;
+
+  /** goal 的实时进度（D161）。`null` = 还没跑过一轮，或者没有 goal。
+   *
+   * **它是投影，不是权威**——权威在 `session.goal_run`。这里只为了让中间状态
+   * 被划掉的那一刻界面就能动，不必等 goal 结束。
+   */
+  goal: GoalProgress | null;
 
   connect: (sessionId: string) => Promise<void>;
   disconnect: () => void;
@@ -166,12 +181,23 @@ export const useSession = create<SessionState>((set, get) => {
       case "branches":
         break;
 
+      case "goal_progress":
+        set({ goal: message });
+        break;
+
       case "goal_finished":
-        set({ notice: `目标${message.outcome === "done" ? "达成" : "失败"}：${message.reason}` });
+        // goal 结束时服务端把 `meta.goal` 一并清掉了（不留历史 goal），
+        // 所以这里也要把进度清干净，否则面板会挂着一份没有主人的进度。
+        set({
+          goal: null,
+          notice: `目标${message.outcome === "done" ? "达成" : "失败"}：${message.reason}`,
+        });
+        void get().refreshState();
         break;
 
       case "goal_paused":
         set({ notice: `目标已暂停：${message.reason}` });
+        void get().refreshState();
         break;
 
       case "error":
@@ -197,6 +223,7 @@ export const useSession = create<SessionState>((set, get) => {
     usage: { tokensIn: 0, tokensOut: 0 },
     notice: null,
     resumable: false,
+    goal: null,
 
     async bootstrap() {
       const [meta, sessionIds] = await Promise.all([api.meta(), api.listSessions()]);
@@ -227,6 +254,7 @@ export const useSession = create<SessionState>((set, get) => {
         question: null,
         queue: [],
         notice: null,
+        goal: null,
       });
 
       socket = new SessionSocket(sessionId, apply, (reason) => set({ notice: reason }));

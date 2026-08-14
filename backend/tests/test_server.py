@@ -592,6 +592,39 @@ def test_goal_drives_another_run_with_a_simulated_input(client_for) -> None:
     assert run["spent_runs"] >= 1, "预算计数必须落盘——它以前在内存里，重启就归零"
 
 
+def test_progress_is_pushed_every_turn_not_only_at_the_end(client_for) -> None:
+    """**中间状态被一条条划掉，是用户最想看的东西**（D161）。
+
+    它此前只写在盘上的 `goal_run` 里，而 WS 那侧只有「结束」和「暂停」——
+    也就是说 goal 跑着的那几轮，界面上什么都不会变，直到它突然结束。
+    """
+    llm = ScriptedLLM(
+        *one_run(outline="第一轮。", prose="正文一。"),
+        tools(
+            ("plan", {"subgoals": ["他先松口", "两人摊开说"]}),
+            ("check", {"reached": [1]}),
+            ("steer", {"next_input": "再走一步。"}),
+        ),
+        text("先推到这里。"),
+    )
+    client = client_for(llm)
+    session = Session(meta=SessionMeta(goal=Goal(description="写到摊牌", max_runs=1)))
+    client.post("/sessions", json=session.model_dump(mode="json"))
+
+    with client.websocket_connect(f"/sessions/{session.id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "开始"}))
+        collect(ws, "run_finished")
+        progress = collect(ws, "goal_progress")[-1]
+
+    assert [s["description"] for s in progress["subgoals"]] == ["他先松口", "两人摊开说"]
+    assert [s["done"] for s in progress["subgoals"]] == [True, False]
+    assert progress["spent_runs"] == 1
+    assert progress["max_runs"] == 1, "预算也要给——不给的话界面显示不出「还剩多少」"
+    # **不带那份长对话**：它一轮就上十万字，而界面一个字都用不上。
+    assert "conversation" not in progress
+
+
 def test_a_finished_goal_says_which_way_it_ended(client_for) -> None:
     """两种终态都交回控制权，**但用户必须知道是哪一种**（D141/D148）。"""
     llm = ScriptedLLM(

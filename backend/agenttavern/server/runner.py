@@ -36,6 +36,7 @@ from .protocol import (
     Delta,
     GoalFinished,
     GoalPaused,
+    GoalProgress,
     Question,
     QueueStatus,
     RunFailed,
@@ -393,6 +394,17 @@ class SessionRunner:
             run.paused, run.paused_reason = True, spent
 
         self._save_goal_run(run)
+        # **每一轮都推一次进度**（D161）：中间状态被一条条划掉是用户最想看的东西，
+        # 而它此前只写在盘上，界面要等到 goal 结束才会动。
+        self._emit(
+            GoalProgress(
+                subgoals=run.plan.subgoals if run.plan else [],
+                spent_runs=run.spent_runs,
+                spent_tokens=run.spent_tokens,
+                max_runs=goal.max_runs,
+                max_total_tokens=goal.max_total_tokens,
+            )
+        )
         if spent is not None:
             self._emit(GoalPaused(reason=spent))
 
