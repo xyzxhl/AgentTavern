@@ -1,3 +1,4 @@
+from .bundle import WorldbookBundle
 from .control import (
     Capabilities,
     ControlDimensions,
@@ -49,6 +50,7 @@ __all__ = [
     "TraceEventType",
     "UserInput",
     "EntryKind",
+    "WorldbookBundle",
     "WorldbookEntry",
     "WorldbookMode",
     "WorldState",

@@ -128,6 +128,119 @@ def test_deleting_a_state_entry_before_the_story_starts_takes_effect(client_for)
     assert client.delete(f"/sessions/{session_id}/worldinfo/wi_1").status_code == 404
 
 
+# -- worldbook 导入导出（格式见 docs/design/WorldbookFormat.md） -----------------
+
+
+def _bundle(client, session_id: str) -> dict:
+    return client.get(f"/sessions/{session_id}/worldbook/export").json()
+
+
+def test_export_drops_the_id_and_the_cached_summary(client_for) -> None:
+    """**导出的是「有哪些设定」，不是「它们在谁的硬盘上排第几」。**
+
+    - `id` 是这份存储里的地址，不是条目的身份。带着它导入要么撞上已有条目静默
+      覆盖，要么两份文件里的同名 id 指向完全不同的东西。
+    - `summary` 是懒惰生成的缓存（D69），跟着 `content` 走。`content` 一旦被人
+      改过旧摘要就是错的，而导入方无从判断改没改——**缓存不该跨机器传播**。
+    """
+    client = client_for(happy_llm())
+    session_id = client.post("/sessions").json()["id"]
+    client.put(
+        f"/sessions/{session_id}/worldinfo",
+        json={"id": "wi_1", "name": "陈屿", "content": "旧货店老板。", "summary": "老板"},
+    )
+
+    bundle = _bundle(client, session_id)
+    assert bundle["format"] == "agenttavern.worldbook"
+    assert bundle["version"] == 1
+    assert bundle["entries"][0]["name"] == "陈屿"
+    assert bundle["entries"][0]["id"] == ""
+    assert bundle["entries"][0]["summary"] is None
+
+
+def test_import_reassigns_ids_so_nothing_is_silently_overwritten(client_for) -> None:
+    """同一份文件导两次，应当得到两批条目，而不是第二次把第一次盖掉。"""
+    client = client_for(happy_llm())
+    session_id = client.post("/sessions").json()["id"]
+    bundle = {
+        "format": "agenttavern.worldbook",
+        "version": 1,
+        "entries": [{"id": "wi_x", "name": "陈屿", "content": "旧货店老板。"}],
+    }
+
+    for _ in range(2):
+        client.post(f"/sessions/{session_id}/worldbook/import", json=bundle)
+
+    entries = client.get(f"/sessions/{session_id}/worldinfo").json()
+    assert len(entries) == 2
+    assert len({e["id"] for e in entries}) == 2, "id 必须重新分配"
+    assert all(e["id"] != "wi_x" for e in entries)
+
+
+def test_import_can_replace_instead_of_append(client_for) -> None:
+    client = client_for(happy_llm())
+    session_id = client.post("/sessions").json()["id"]
+    client.put(f"/sessions/{session_id}/worldinfo", json={"name": "旧的"})
+
+    body = client.post(
+        f"/sessions/{session_id}/worldbook/import?replace=true",
+        json={
+            "format": "agenttavern.worldbook",
+            "version": 1,
+            "entries": [{"name": "新的"}],
+        },
+    ).json()
+
+    assert body == {"imported": 1, "removed": 1, "frozen": False}
+    assert [e["name"] for e in client.get(f"/sessions/{session_id}/worldinfo").json()] == ["新的"]
+
+
+def test_an_unknown_format_is_refused_instead_of_read_best_effort(client_for) -> None:
+    """**不做尽力而为的解析。**
+
+    读一份半懂的格式会把坏数据导进来，用户以为成了，几轮之后才发现不对，
+    而那时已经分不清是导入丢的还是模型写坏的。
+    """
+    client = client_for(happy_llm())
+    session_id = client.post("/sessions").json()["id"]
+
+    for bad in (
+        {"format": "sillytavern.lorebook", "version": 1, "entries": [{"name": "x"}]},
+        {"format": "agenttavern.worldbook", "version": 99, "entries": [{"name": "x"}]},
+        {"format": "agenttavern.worldbook", "version": 1, "entries": []},
+    ):
+        assert client.post(f"/sessions/{session_id}/worldbook/import", json=bad).status_code == 400
+    assert client.get(f"/sessions/{session_id}/worldinfo").json() == []
+
+
+def test_a_round_trip_keeps_the_kinds_and_the_expansion_settings(client_for) -> None:
+    """三类条目、可展开开关、展开层级都要原样过一遍（D158）。"""
+    client = client_for(happy_llm())
+    a = client.post("/sessions").json()["id"]
+    for entry in (
+        {"name": "陈屿", "kind": "lore", "mode": "on_demand", "content": "旧货店老板。"},
+        {"name": "林昭", "kind": "player", "content": "记者。"},
+        {
+            "name": "起点",
+            "kind": "state",
+            "mode": "on_demand",
+            "depth": 2,
+            "values": {"陈屿": {"在场": True}},
+        },
+    ):
+        client.put(f"/sessions/{a}/worldinfo", json=entry)
+
+    b = client.post("/sessions").json()["id"]
+    client.post(f"/sessions/{b}/worldbook/import", json=_bundle(client, a))
+
+    landed = {e["name"]: e for e in client.get(f"/sessions/{b}/worldinfo").json()}
+    assert landed["陈屿"]["kind"] == "lore" and landed["陈屿"]["mode"] == "on_demand"
+    assert landed["林昭"]["kind"] == "player"
+    assert landed["起点"]["kind"] == "state" and landed["起点"]["depth"] == 2
+    # 初始状态跟着过来，而且这个会话还没开始，所以立刻生效。
+    assert client.get(f"/sessions/{b}").json()["state"] == {"陈屿": {"在场": True}}
+
+
 # -- WebSocket：一个完整 run --------------------------------------------------
 
 

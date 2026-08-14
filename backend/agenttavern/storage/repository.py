@@ -196,6 +196,13 @@ class SessionRepository:
         path.unlink()
         return True
 
+    def clear_worldbook(self) -> int:
+        """删掉全部条目，返回删了几条。**导入时的「替换」用它。**"""
+        entries = self.worldbook()
+        for entry in entries:
+            self.worldbook_path(entry.id).unlink(missing_ok=True)
+        return len(entries)
+
     def worldbook(self) -> list[WorldbookEntry]:
         """**全部**条目，不做预筛选（D62/D63）。索引覆盖全集是准入标准。"""
         if not self.worldbook_dir.exists():

@@ -19,7 +19,9 @@ from ..models import (
     Session,
     SessionMeta,
     SessionModes,
+    WorldbookBundle,
     WorldbookEntry,
+    new_id,
 )
 from ..orchestration import close_segment
 from ..storage import SessionRepository, Store
@@ -183,9 +185,42 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
         repo_of(session_id).save_worldbook_entry(entry)
         return entry
 
+    @app.get("/sessions/{session_id}/worldbook/export")
+    def export_worldbook(session_id: str) -> WorldbookBundle:
+        """导出成一份可以拷走的文件。格式见 docs/design/WorldbookFormat.md。"""
+        repo = repo_of(session_id)
+        return WorldbookBundle.of(repo.worldbook(), name=repo.load_session().meta.title)
+
+    @app.post("/sessions/{session_id}/worldbook/import")
+    def import_worldbook(
+        session_id: str, bundle: WorldbookBundle, replace: bool = False
+    ) -> dict[str, Any]:
+        """导入。``replace=True`` 先清空，否则追加。
+
+        **id 一律重新分配**——文件里的 id 是别人存储里的地址，不是条目的身份。
+        带着它导入要么撞上已有条目静默覆盖，要么两份文件里的同名 id 指向完全
+        不同的东西。
+
+        **不改已经冻结的初始状态**（D158）：故事一旦开始，起点就定死了，导入
+        只影响"以后新建的会话"。还没开始时导入会立刻改变当前状态——那时没有
+        任何一轮依赖它，改了是对的。
+        """
+        if (bad := bundle.check()) is not None:
+            raise HTTPException(400, bad)
+
+        repo = repo_of(session_id)
+        removed = repo.clear_worldbook() if replace else 0
+        for entry in bundle.entries:
+            repo.save_worldbook_entry(entry.model_copy(update={"id": new_id("wi")}))
+        return {
+            "imported": len(bundle.entries),
+            "removed": removed,
+            "frozen": repo.load_session().initial_state is not None,
+        }
+
     @app.delete("/sessions/{session_id}/worldinfo/{entry_id}")
     def delete_worldinfo(session_id: str, entry_id: str) -> dict[str, Any]:
-        """删一条设定。**它的种子会一并从所有分支的起点消失**（见仓库层注释）。"""
+        """删一条设定。故事开始之后删初始状态条目不影响既有的每一轮（D158）。"""
         if not repo_of(session_id).delete_worldbook_entry(entry_id):
             raise HTTPException(404, f"设定条目不存在：{entry_id}")
         return {"deleted": entry_id}

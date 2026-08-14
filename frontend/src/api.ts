@@ -1,6 +1,13 @@
 // REST 与 WebSocket 的薄封装。**只做传输，不做状态**——状态在 store.ts。
 
-import type { ClientMessage, Node, ServerMessage, Session, WorldbookEntry } from "./protocol";
+import type {
+  ClientMessage,
+  Node,
+  ServerMessage,
+  Session,
+  WorldbookBundle,
+  WorldbookEntry,
+} from "./protocol";
 
 export interface ServerMeta {
   developer: boolean;
@@ -24,10 +31,11 @@ export const api = {
   getSession: (id: string) =>
     json<{ session: Session; path: Node[]; state: Record<string, unknown> }>(`/sessions/${id}`),
 
-  // -- worldbook：session 的起点（D90）--------------------------------------
+  // -- worldbook：session 的起点（D90 / D158）---------------------------------
   //
-  // 条目的 `content` 进 worldinfo（静态设定），`seeds` 进初始 state（会变的
-  // 部分）。**初始 state 是现算的**，所以改这里会影响每一个分支。
+  // 条目分两类：`lore` 的 `content` 进 worldinfo（静态设定），`state` 的 `values`
+  // 进初始状态（会变的部分）。**初始状态在故事开始时冻结**——开始之前改立刻生效，
+  // 之后改只影响以后新建的会话。
   listWorldbook: (id: string) => json<WorldbookEntry[]>(`/sessions/${id}/worldinfo`),
   saveWorldbookEntry: (id: string, entry: WorldbookEntry) =>
     json<WorldbookEntry>(`/sessions/${id}/worldinfo`, {
@@ -36,6 +44,14 @@ export const api = {
     }),
   deleteWorldbookEntry: (id: string, entryId: string) =>
     json<{ deleted: string }>(`/sessions/${id}/worldinfo/${entryId}`, { method: "DELETE" }),
+
+  // 导入导出。格式与三条约定见 docs/design/WorldbookFormat.md。
+  exportWorldbook: (id: string) => json<WorldbookBundle>(`/sessions/${id}/worldbook/export`),
+  importWorldbook: (id: string, bundle: WorldbookBundle, replace: boolean) =>
+    json<{ imported: number; removed: number; frozen: boolean }>(
+      `/sessions/${id}/worldbook/import?replace=${replace}`,
+      { method: "POST", body: JSON.stringify(bundle) },
+    ),
 };
 
 /**

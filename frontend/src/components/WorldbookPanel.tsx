@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { api } from "../api";
-import type { EntryKind, WorldbookEntry } from "../protocol";
+import type { EntryKind, WorldbookBundle, WorldbookEntry } from "../protocol";
 import { useSession } from "../store";
 import { JsonEditor } from "./JsonEditor";
 
@@ -40,6 +40,7 @@ export function WorldbookPanel({ onClose }: { onClose: () => void }): JSX.Elemen
   const [valuesText, setValuesText] = useState("{}");
   const [valuesError, setValuesError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const file = useRef<HTMLInputElement>(null);
 
   async function reload(): Promise<void> {
     if (!sessionId) return;
@@ -121,6 +122,58 @@ export function WorldbookPanel({ onClose }: { onClose: () => void }): JSX.Elemen
     }
   }
 
+  /** 导出成一个文件。**浏览器里"下载"就是造一个 a 标签点它**，没有别的路。 */
+  async function exportFile(): Promise<void> {
+    if (!sessionId) return;
+    const bundle = await api.exportWorldbook(sessionId);
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${bundle.name || "worldbook"}.worldbook.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function importFile(picked: File): Promise<void> {
+    if (!sessionId) return;
+    // **替换是破坏性的，问一句**；追加不必问，多几条设定删掉就是。
+    const replace = confirm(
+      [
+        `导入「${picked.name}」`,
+        "",
+        "确定 = 替换：先清空现有设定再导入。",
+        "取消 = 追加：现有设定全留着。",
+      ].join("\n"),
+    );
+    setBusy(true);
+    try {
+      const bundle = JSON.parse(await picked.text()) as WorldbookBundle;
+      const done = await api.importWorldbook(sessionId, bundle, replace);
+      await reload();
+      await refreshState();
+      setDraft(null);
+      setSelected(null);
+      alert(
+        [
+          `导入了 ${done.imported} 条` +
+            (done.removed ? `，替换掉 ${done.removed} 条` : "") +
+            "。",
+          // 冻结之后导入初始状态不会改写既有的每一轮，用户必须知道（D158）。
+          done.frozen ? "故事已开始、起点已冻结：初始状态只影响以后新建的会话。" : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      );
+    } catch (err) {
+      alert(`导入失败：${(err as Error).message}`);
+    } finally {
+      setBusy(false);
+      if (file.current) file.current.value = "";
+    }
+  }
+
   return (
     <div className="absolute inset-0 z-10 flex flex-col bg-ink-900">
       <header className="flex items-center gap-2 border-b border-line px-5 py-2.5">
@@ -135,6 +188,23 @@ export function WorldbookPanel({ onClose }: { onClose: () => void }): JSX.Elemen
             + {KIND_LABEL[kind]}
           </button>
         ))}
+        <span className="mx-1 h-4 w-px bg-line" />
+        <button className="btn" onClick={() => void exportFile()} disabled={!entries.length}>
+          导出
+        </button>
+        <button className="btn" onClick={() => file.current?.click()} disabled={busy}>
+          导入
+        </button>
+        <input
+          ref={file}
+          type="file"
+          accept=".json,application/json"
+          className="hidden"
+          onChange={(e) => {
+            const picked = e.target.files?.[0];
+            if (picked) void importFile(picked);
+          }}
+        />
         <button className="btn" onClick={onClose}>
           关闭
         </button>

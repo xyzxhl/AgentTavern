@@ -35,8 +35,8 @@ export interface SessionState {
   disconnect: () => void;
   bootstrap: () => Promise<void>;
   newSession: () => Promise<void>;
-  /** 把状态从服务端拉回来对齐。**改了 worldbook 的种子之后必须调**——
-   * 初始 state 是现算的，改种子会向后影响每一轮，而 WS 那侧不会为此推消息。 */
+  /** 把状态从服务端拉回来对齐。**改了 worldbook 的初始状态条目之后必须调**——
+   * 故事开始之前它是现算的，改了会立刻改变当前 state，而 WS 那侧不会为此推消息。 */
   refreshState: () => Promise<void>;
   send: (message: ClientMessage) => void;
   dismissNotice: () => void;

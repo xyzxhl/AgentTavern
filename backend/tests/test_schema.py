@@ -50,6 +50,7 @@ def test_shared_models_are_defined_once() -> None:
         "ServerMessage",
         "Session",
         "WorldbookEntry",
+        "WorldbookBundle",
     }
 
 
@@ -61,7 +62,7 @@ def test_the_two_unions_are_named_definitions_not_inline() -> None:
     最需要标注的类型。
     """
     schema = export_schema()
-    for name in ("ClientMessage", "ServerMessage", "Session", "WorldbookEntry"):
+    for name in ("ClientMessage", "ServerMessage", "Session", "WorldbookEntry", "WorldbookBundle"):
         assert name in schema["$defs"], f"{name} 应当是具名定义"
         assert schema["properties"][name] == {"$ref": f"#/$defs/{name}"}
 

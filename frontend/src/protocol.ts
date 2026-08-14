@@ -236,12 +236,18 @@ export type Content1 = string;
 export type WorldbookMode = "always" | "on_demand";
 export type Depth = number;
 export type Summary = string | null;
+export type Format = string;
+export type Version = number;
+export type Name2 = string;
+export type Note = string;
+export type Entries = WorldbookEntry[];
 
 export interface AgentTavern {
   ClientMessage: ClientMessage;
   ServerMessage: ServerMessage;
   Session: Session;
   WorldbookEntry: WorldbookEntry;
+  WorldbookBundle: WorldbookBundle;
 }
 /**
  * 提交一条用户输入，**开新的一轮**（F3a「推进」）。
@@ -719,4 +725,14 @@ export interface WorldbookEntry {
 }
 export interface Values1 {
   [k: string]: unknown;
+}
+/**
+ * 一份可以拷走的 worldbook。
+ */
+export interface WorldbookBundle {
+  format?: Format;
+  version?: Version;
+  name?: Name2;
+  note?: Note;
+  entries?: Entries;
 }
