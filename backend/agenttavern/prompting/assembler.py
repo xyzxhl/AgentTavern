@@ -84,6 +84,16 @@ def text(name: str, key: str) -> str:
     raise TypeError(f"{name}.yaml 的 `{key}` 不是字符串（可能是想用 choice）")
 
 
+def choices_of(name: str, key: str) -> list[str]:
+    """一组「选一」里有哪些档。**给设置面板用**。
+
+    档位定义在 YAML 里，所以这里现读——前端写死一份的话，用户加一档文风就得
+    等谁想起来同步，而漏同步的症状是"新档位存在但选不到"（同 D149 的理由）。
+    """
+    group = load(name).get(key)
+    return list(group) if isinstance(group, dict) else []
+
+
 def choice(name: str, key: str, option: str) -> str:
     """取一组「选一」里的某一项。**二级标题就是选项名。**
 

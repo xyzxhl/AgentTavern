@@ -909,6 +909,20 @@ def test_the_frontend_can_tell_which_mode_the_service_started_in(client_for) -> 
     assert client_for(happy_llm(), developer=True).get("/meta").json()["developer"] is True
 
 
+def test_meta_lists_the_control_options_read_from_the_prompts(client_for) -> None:
+    """**档位从提示词 YAML 现读**，前端不写死一份。
+
+    写死的话，用户在 `writer.yaml` 里加一档文风，设置面板里就得等谁想起来同步；
+    漏同步的症状是「新档位存在但选不到」——和 D149 把装配约定收进一处是同一条理由。
+    """
+    from agenttavern.prompting import choices_of
+
+    options = client_for(happy_llm()).get("/meta").json()["options"]
+    assert options["prose_style"] == choices_of("writer", "prose_style")
+    assert options["pov"] == choices_of("writer", "pov")
+    assert "wangwen" in options["prose_style"] and "third" in options["pov"]
+
+
 def test_no_goal_means_no_autocontinue(client_for) -> None:
     llm = ScriptedLLM(*one_run(), *one_run(outline="第二轮。"))
     client = client_for(llm)

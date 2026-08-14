@@ -24,6 +24,7 @@ from ..models import (
     new_id,
 )
 from ..orchestration import close_segment
+from ..prompting import choices_of
 from ..storage import SessionRepository, Store
 from ..tracing import Tracer
 from .protocol import (
@@ -95,7 +96,16 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
 
         模式在启动服务时就定了，不是运行时开关——所以这里只读，没有对应的写接口。
         """
-        return {"developer": resolved.developer, "model": resolved.llm_model}
+        return {
+            "developer": resolved.developer,
+            "model": resolved.llm_model,
+            # **档位从 YAML 现读**，不在前端写死一份（同 D149 的理由）：用户加一档
+            # 文风，设置面板里就该多一个选项，而不是等谁想起来同步。
+            "options": {
+                "prose_style": choices_of("writer", "prose_style"),
+                "pov": choices_of("writer", "pov"),
+            },
+        }
 
     # -- session ------------------------------------------------------------
 

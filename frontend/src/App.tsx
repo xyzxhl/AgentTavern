@@ -4,6 +4,7 @@ import { Composer } from "./components/Composer";
 import { Notice } from "./components/Notice";
 import { QuestionPrompt } from "./components/QuestionPrompt";
 import { SessionList } from "./components/SessionList";
+import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar";
 import { Transcript } from "./components/Transcript";
 import { WorldbookPanel } from "./components/WorldbookPanel";
@@ -23,6 +24,7 @@ export function App(): JSX.Element {
   const model = useSession((s) => s.meta?.model);
   const developer = useSession((s) => s.meta?.developer ?? false);
   const [worldbook, setWorldbook] = useState(false);
+  const [settings, setSettings] = useState(false);
 
   useEffect(() => {
     void bootstrap();
@@ -44,9 +46,14 @@ export function App(): JSX.Element {
           )}
           <div className="flex-1" />
           {sessionId && (
-            <button className="btn" onClick={() => setWorldbook(true)}>
-              设定
-            </button>
+            <>
+              <button className="btn" onClick={() => setWorldbook(true)}>
+                设定
+              </button>
+              <button className="btn" onClick={() => setSettings(true)}>
+                配置
+              </button>
+            </>
           )}
         </header>
 
@@ -65,6 +72,7 @@ export function App(): JSX.Element {
         )}
 
         {worldbook && sessionId && <WorldbookPanel onClose={() => setWorldbook(false)} />}
+        {settings && sessionId && <SettingsPanel onClose={() => setSettings(false)} />}
       </main>
 
       <Sidebar />

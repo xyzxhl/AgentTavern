@@ -12,6 +12,8 @@ import type {
 export interface ServerMeta {
   developer: boolean;
   model: string;
+  /** 各控制维度有哪些档。**从提示词 YAML 现读**，前端不写死一份。 */
+  options: { prose_style: string[]; pov: string[] };
 }
 
 async function json<T>(input: string, init?: RequestInit): Promise<T> {
@@ -28,6 +30,8 @@ export const api = {
   listSessions: () => json<string[]>("/sessions"),
   createSession: (session?: Partial<Session>) =>
     json<Session>("/sessions", { method: "POST", body: JSON.stringify(session ?? null) }),
+  patchSession: (id: string, patch: Record<string, unknown>) =>
+    json<Session>(`/sessions/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   getSession: (id: string) =>
     json<{ session: Session; path: Node[]; state: Record<string, unknown> }>(`/sessions/${id}`),
 

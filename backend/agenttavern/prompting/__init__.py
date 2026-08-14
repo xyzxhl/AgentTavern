@@ -9,7 +9,7 @@
 每份 YAML 的头部，四份各一遍，改一处就有三处过时。
 """
 
-from .assembler import Prompt, assemble, choice, fill, load, text, titled
+from .assembler import Prompt, assemble, choice, choices_of, fill, load, text, titled
 from .prompts import (
     STATE_INLINE_LIMIT,
     director_prompt,
@@ -26,6 +26,7 @@ __all__ = [
     "Prompt",
     "assemble",
     "choice",
+    "choices_of",
     "director_prompt",
     "fill",
     "load",
