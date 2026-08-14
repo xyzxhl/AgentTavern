@@ -19,10 +19,21 @@ export interface SessionState {
   state: Record<string, unknown>;
 
   phase: RunPhase;
-  /** 这一轮已经发生的 trace。**每开一轮清空**——它讲的是"这一轮在做什么"。 */
-  trace: TraceEvent[];
-  /** 跨轮累积，开发者面板按 run 分组回看。 */
-  allTrace: TraceEvent[];
+
+  /** trace **按 run 分组**：`run_id` → 这一轮的全部事件。
+   *
+   * 过程是正文流的一部分（每一轮自己的"它做了什么"），不是一块全局日志——
+   * 所以不能只留"当前这一轮"。**`run_id` 就是 `node.id`**（run = node），
+   * 于是渲染某一轮时直接拿它的 id 来查。
+   */
+  traces: Record<string, TraceEvent[]>;
+
+  /** 正在跑的那一轮：还没有节点，但已经有 run_id 和用户说的那句话。 */
+  live: { runId: string; input: string } | null;
+
+  /** 刚发出去、还没等到 `run_started` 的那句话。**只为把它归到正确的一轮名下。**
+   * 服务端要到 `run_finished` 才把输入回给我们，而过程要在那之前就显示出来。 */
+  pendingInput: string;
 
   question: Question | null;
   queue: string[];
@@ -49,13 +60,22 @@ export const useSession = create<SessionState>((set, get) => {
   function apply(message: ServerMessage): void {
     switch (message.type) {
       case "run_started":
-        set({ phase: "running", trace: [], notice: null, resumable: false });
+        set((s) => ({
+          phase: "running",
+          notice: null,
+          resumable: false,
+          // 刚提交的那句话归到这一轮名下。自动续跑时没人打字，留空。
+          live: { runId: message.run_id, input: s.pendingInput },
+          pendingInput: "",
+        }));
         break;
 
       case "trace":
         set((s) => ({
-          trace: [...s.trace, message.event],
-          allTrace: [...s.allTrace, message.event],
+          traces: {
+            ...s.traces,
+            [message.event.run_id]: [...(s.traces[message.event.run_id] ?? []), message.event],
+          },
         }));
         break;
 
@@ -65,16 +85,19 @@ export const useSession = create<SessionState>((set, get) => {
         break;
 
       case "run_finished":
+        // 节点落地，那一轮的过程随节点一起收起——`traces` 按 run_id 存着，
+        // 而 `run_id` 就是 `node.id`，所以这里什么都不用搬。
         set((s) => ({
           phase: "idle",
           question: null,
+          live: null,
           // 同一个 id 就替换（重生成会落新节点，切分支会整条换掉）。
           path: upsert(s.path, message.node),
         }));
         break;
 
       case "run_failed":
-        set({ phase: "idle", notice: `这一轮失败了：${message.reason}` });
+        set({ phase: "idle", live: null, notice: `这一轮失败了：${message.reason}` });
         break;
 
       case "run_interrupted":
@@ -82,6 +105,7 @@ export const useSession = create<SessionState>((set, get) => {
         // 被接进了同一段推演——那是最难查的一类困惑，必须当场说清楚。
         set({
           phase: "idle",
+          live: null,
           resumable: message.resumable ?? false,
           notice: message.resumable
             ? "已打断。推演存成了草稿，下一条输入会接着它跑；想从头来请重新生成。"
@@ -131,8 +155,9 @@ export const useSession = create<SessionState>((set, get) => {
     path: [],
     state: {},
     phase: "idle",
-    trace: [],
-    allTrace: [],
+    traces: {},
+    live: null,
+    pendingInput: "",
     question: null,
     queue: [],
     usage: { tokensIn: 0, tokensOut: 0 },
@@ -161,8 +186,9 @@ export const useSession = create<SessionState>((set, get) => {
         path: detail.path,
         state: detail.state,
         phase: "idle",
-        trace: [],
-        allTrace: [],
+        traces: {},
+        live: null,
+        pendingInput: "",
         question: null,
         queue: [],
         notice: null,
@@ -185,7 +211,12 @@ export const useSession = create<SessionState>((set, get) => {
     },
 
     send(message) {
-      if (!socket?.send(message)) set({ notice: "还没连上，这条没发出去。" });
+      if (!socket?.send(message)) {
+        set({ notice: "还没连上，这条没发出去。" });
+        return;
+      }
+      // 只有 `submit` 会开新的一轮；插话落在正在跑的那一轮里，不另起。
+      if (message.type === "submit") set({ pendingInput: message.text });
     },
 
     dismissNotice: () => set({ notice: null }),

@@ -1,30 +1,19 @@
-import { useState } from "react";
-
 import { StatePanel } from "./StatePanel";
-import { TracePanel } from "./TracePanel";
 
-type Tab = "state" | "trace";
-
-/** 侧栏放**过程**：世界状态与 agent 在做什么。正文那侧只放要读的东西。 */
+/**
+ * 侧栏只剩**世界状态**。
+ *
+ * 过程搬进正文流了：它是每一轮自己的一部分（输入 → 过程 → 正文），放在右边
+ * 等于要求读者一边读正文一边扭头。状态不一样——它是**跨轮的当前快照**，
+ * 不属于任何一轮，所以留在这里。
+ */
 export function Sidebar(): JSX.Element {
-  const [tab, setTab] = useState<Tab>("trace");
-
   return (
-    <aside className="flex w-80 shrink-0 flex-col border-l border-line bg-ink-800">
-      <div className="flex border-b border-line">
-        {(["trace", "state"] as const).map((key) => (
-          <button
-            key={key}
-            onClick={() => setTab(key)}
-            className={`flex-1 px-3 py-2 text-[11px] uppercase tracking-wider transition-colors ${
-              tab === key ? "border-b border-accent text-fg" : "text-dim hover:text-fg"
-            }`}
-          >
-            {key === "trace" ? "过程" : "状态"}
-          </button>
-        ))}
+    <aside className="flex w-72 shrink-0 flex-col border-l border-line bg-ink-800">
+      <div className="border-b border-line">
+        <span className="panel-title block">世界状态</span>
       </div>
-      {tab === "trace" ? <TracePanel /> : <StatePanel />}
+      <StatePanel />
     </aside>
   );
 }
