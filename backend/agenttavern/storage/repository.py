@@ -167,6 +167,21 @@ class SessionRepository:
     def load_worldbook_entry(self, entry_id: str) -> WorldbookEntry | None:
         return read_model_or_none(self.worldbook_path(entry_id), WorldbookEntry)
 
+    def delete_worldbook_entry(self, entry_id: str) -> bool:
+        """删掉一条设定。不存在返回 ``False``。
+
+        **它的种子会一并消失**，而种子是 `initial_state()` 的一部分——也就是
+        所有分支的共同起点。所以删一条带种子的设定，等于把那几个键从**每一轮**
+        的状态里抽掉（同改角色卡，D90）。调用方该让用户知道这件事。
+
+        已经写进各轮增量的键不受影响：那些是路径上的事实，不是起点。
+        """
+        path = self.worldbook_path(entry_id)
+        if not path.exists():
+            return False
+        path.unlink()
+        return True
+
     def worldbook(self) -> list[WorldbookEntry]:
         """**全部**条目，不做预筛选（D62/D63）。索引覆盖全集是准入标准。"""
         if not self.worldbook_dir.exists():

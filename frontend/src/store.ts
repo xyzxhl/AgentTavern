@@ -35,6 +35,9 @@ export interface SessionState {
   disconnect: () => void;
   bootstrap: () => Promise<void>;
   newSession: () => Promise<void>;
+  /** 把状态从服务端拉回来对齐。**改了 worldbook 的种子之后必须调**——
+   * 初始 state 是现算的，改种子会向后影响每一轮，而 WS 那侧不会为此推消息。 */
+  refreshState: () => Promise<void>;
   send: (message: ClientMessage) => void;
   dismissNotice: () => void;
 }
@@ -167,6 +170,13 @@ export const useSession = create<SessionState>((set, get) => {
 
       socket = new SessionSocket(sessionId, apply, (reason) => set({ notice: reason }));
       socket.open();
+    },
+
+    async refreshState() {
+      const id = get().sessionId;
+      if (!id) return;
+      const detail = await api.getSession(id);
+      set({ session: detail.session, state: detail.state, path: detail.path });
     },
 
     disconnect() {

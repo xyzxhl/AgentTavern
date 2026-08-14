@@ -100,6 +100,34 @@ def test_worldinfo_roundtrip(client_for) -> None:
     assert entries[0]["name"] == "教团"
 
 
+def test_deleting_a_worldbook_entry_takes_its_seeds_out_of_every_branch(client_for) -> None:
+    """**种子是所有分支的共同起点**（D90），删条目就等于把那几个键从每一轮抽掉。
+
+    `initial_state()` 是**现算的**，不是建 session 时快照下来的——所以改设定会
+    向后生效。这和改角色卡的效果一致，是对的，但它足够意外，UI 必须说明。
+    """
+    client = client_for(happy_llm())
+    session_id = client.post("/sessions").json()["id"]
+
+    client.put(
+        f"/sessions/{session_id}/worldinfo",
+        json={
+            "id": "wi_1",
+            "name": "陈屿",
+            "content": "旧货店老板。",
+            "seeds": {"陈屿.在场": True},
+        },
+    )
+    assert client.get(f"/sessions/{session_id}").json()["state"] == {"陈屿.在场": True}
+
+    assert client.delete(f"/sessions/{session_id}/worldinfo/wi_1").json() == {"deleted": "wi_1"}
+    assert client.get(f"/sessions/{session_id}/worldinfo").json() == []
+    assert client.get(f"/sessions/{session_id}").json()["state"] == {}
+
+    # 删不存在的要报错，不能静默成功——否则前端会以为删掉了。
+    assert client.delete(f"/sessions/{session_id}/worldinfo/wi_1").status_code == 404
+
+
 # -- WebSocket：一个完整 run --------------------------------------------------
 
 

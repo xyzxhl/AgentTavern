@@ -183,6 +183,13 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
         repo_of(session_id).save_worldbook_entry(entry)
         return entry
 
+    @app.delete("/sessions/{session_id}/worldinfo/{entry_id}")
+    def delete_worldinfo(session_id: str, entry_id: str) -> dict[str, Any]:
+        """删一条设定。**它的种子会一并从所有分支的起点消失**（见仓库层注释）。"""
+        if not repo_of(session_id).delete_worldbook_entry(entry_id):
+            raise HTTPException(404, f"设定条目不存在：{entry_id}")
+        return {"deleted": entry_id}
+
     # -- WebSocket ----------------------------------------------------------
 
     @app.websocket("/sessions/{session_id}/ws")

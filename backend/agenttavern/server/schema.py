@@ -22,7 +22,7 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
-from ..models import Session
+from ..models import Session, WorldbookEntry
 from .protocol import ClientMessage, ServerMessage
 
 TITLE = "AgentTavern 协议"
@@ -35,18 +35,21 @@ def export_schema() -> dict[str, Any]:
     到处都用，分开导会生成两套同名不同源的 TS 类型，赋值时报"类型不兼容"，
     而它们本来就是同一个东西。
 
-    `Session` 走的是 REST 不是 WS，但它同样是前后端契约的一部分——会话列表、
-    元指令编辑、能力开关都读它。
+    `Session` 与 `WorldbookEntry` 走的是 REST 不是 WS，但它们同样是前后端契约的
+    一部分——会话列表、元指令编辑、能力开关、设定管理都读它们。
     """
     client = TypeAdapter(ClientMessage).json_schema(ref_template="#/$defs/{model}")
     server = TypeAdapter(ServerMessage).json_schema(ref_template="#/$defs/{model}")
     session = TypeAdapter(Session).json_schema(ref_template="#/$defs/{model}")
+    worldbook = TypeAdapter(WorldbookEntry).json_schema(ref_template="#/$defs/{model}")
 
     defs: dict[str, Any] = {}
     defs.update(client.pop("$defs", {}))
     defs.update(server.pop("$defs", {}))
     defs.update(session.pop("$defs", {}))
+    defs.update(worldbook.pop("$defs", {}))
     defs["Session"] = session
+    defs["WorldbookEntry"] = worldbook
 
     # **两个联合本身也进 `$defs`**，根对象只 `$ref` 过去。生成器按 `$defs` 的键
     # 命名类型；写成根的内联属性的话，它们会变成 `Protocol["ClientMessage"]`
@@ -62,8 +65,9 @@ def export_schema() -> dict[str, Any]:
             "ClientMessage": {"$ref": "#/$defs/ClientMessage"},
             "ServerMessage": {"$ref": "#/$defs/ServerMessage"},
             "Session": {"$ref": "#/$defs/Session"},
+            "WorldbookEntry": {"$ref": "#/$defs/WorldbookEntry"},
         },
-        "required": ["ClientMessage", "ServerMessage", "Session"],
+        "required": ["ClientMessage", "ServerMessage", "Session", "WorldbookEntry"],
         "additionalProperties": False,
         "$defs": defs,
     }

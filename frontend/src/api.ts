@@ -1,6 +1,6 @@
 // REST 与 WebSocket 的薄封装。**只做传输，不做状态**——状态在 store.ts。
 
-import type { ClientMessage, Node, ServerMessage, Session } from "./protocol";
+import type { ClientMessage, Node, ServerMessage, Session, WorldbookEntry } from "./protocol";
 
 export interface ServerMeta {
   developer: boolean;
@@ -23,6 +23,19 @@ export const api = {
     json<Session>("/sessions", { method: "POST", body: JSON.stringify(session ?? null) }),
   getSession: (id: string) =>
     json<{ session: Session; path: Node[]; state: Record<string, unknown> }>(`/sessions/${id}`),
+
+  // -- worldbook：session 的起点（D90）--------------------------------------
+  //
+  // 条目的 `content` 进 worldinfo（静态设定），`seeds` 进初始 state（会变的
+  // 部分）。**初始 state 是现算的**，所以改这里会影响每一个分支。
+  listWorldbook: (id: string) => json<WorldbookEntry[]>(`/sessions/${id}/worldinfo`),
+  saveWorldbookEntry: (id: string, entry: WorldbookEntry) =>
+    json<WorldbookEntry>(`/sessions/${id}/worldinfo`, {
+      method: "PUT",
+      body: JSON.stringify(entry),
+    }),
+  deleteWorldbookEntry: (id: string, entryId: string) =>
+    json<{ deleted: string }>(`/sessions/${id}/worldinfo/${entryId}`, { method: "DELETE" }),
 };
 
 /**

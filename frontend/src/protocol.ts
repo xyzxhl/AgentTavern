@@ -219,11 +219,17 @@ export type Paused = boolean;
 export type PausedReason = string;
 export type StartedAtLeafId = string | null;
 export type SeenLeafId = string | null;
+export type Id3 = string;
+export type Name1 = string;
+export type Content1 = string;
+export type WorldbookMode = "always" | "on_demand";
+export type Summary = string | null;
 
 export interface AgentTavern {
   ClientMessage: ClientMessage;
   ServerMessage: ServerMessage;
   Session: Session;
+  WorldbookEntry: WorldbookEntry;
 }
 /**
  * 提交一条用户输入，**开新的一轮**（F3a「推进」）。
@@ -687,4 +693,15 @@ export interface GoalPlan {
 export interface SubGoal {
   description: Description2;
   done?: Done;
+}
+export interface WorldbookEntry {
+  id?: Id3;
+  name: Name1;
+  content?: Content1;
+  mode?: WorldbookMode;
+  seeds?: Seeds;
+  summary?: Summary;
+}
+export interface Seeds {
+  [k: string]: unknown;
 }

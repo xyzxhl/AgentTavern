@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { Composer } from "./components/Composer";
 import { Notice } from "./components/Notice";
@@ -6,6 +6,7 @@ import { QuestionPrompt } from "./components/QuestionPrompt";
 import { SessionList } from "./components/SessionList";
 import { Sidebar } from "./components/Sidebar";
 import { Transcript } from "./components/Transcript";
+import { WorldbookPanel } from "./components/WorldbookPanel";
 import { useSession } from "./store";
 
 /**
@@ -21,6 +22,7 @@ export function App(): JSX.Element {
   const title = useSession((s) => s.session?.meta?.title);
   const model = useSession((s) => s.meta?.model);
   const developer = useSession((s) => s.meta?.developer ?? false);
+  const [worldbook, setWorldbook] = useState(false);
 
   useEffect(() => {
     void bootstrap();
@@ -31,7 +33,7 @@ export function App(): JSX.Element {
     <div className="flex h-full">
       <SessionList />
 
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main className="relative flex min-w-0 flex-1 flex-col">
         <header className="flex items-center gap-3 border-b border-line px-5 py-2.5">
           <span className="text-sm text-fg">{title || "未命名"}</span>
           <span className="font-mono text-[11px] text-dim">{model}</span>
@@ -39,6 +41,12 @@ export function App(): JSX.Element {
             <span className="rounded border border-accent/40 px-1.5 py-0.5 font-mono text-[10px] text-accent">
               开发者模式
             </span>
+          )}
+          <div className="flex-1" />
+          {sessionId && (
+            <button className="btn" onClick={() => setWorldbook(true)}>
+              设定
+            </button>
           )}
         </header>
 
@@ -55,6 +63,8 @@ export function App(): JSX.Element {
             左侧新建一个会话开始
           </div>
         )}
+
+        {worldbook && sessionId && <WorldbookPanel onClose={() => setWorldbook(false)} />}
       </main>
 
       <Sidebar />

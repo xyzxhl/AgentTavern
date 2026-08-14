@@ -45,7 +45,7 @@ def test_shared_models_are_defined_once() -> None:
         assert shared in defs, f"{shared} 应当作为共享定义出现"
 
     # 顶层只有两个入口，别的都靠 $ref 指过去。
-    assert set(export_schema()["properties"]) == {"ClientMessage", "ServerMessage", "Session"}
+    assert set(export_schema()["properties"]) == {"ClientMessage", "ServerMessage", "Session", "WorldbookEntry"}
 
 
 def test_the_two_unions_are_named_definitions_not_inline() -> None:
@@ -56,7 +56,7 @@ def test_the_two_unions_are_named_definitions_not_inline() -> None:
     最需要标注的类型。
     """
     schema = export_schema()
-    for name in ("ClientMessage", "ServerMessage", "Session"):
+    for name in ("ClientMessage", "ServerMessage", "Session", "WorldbookEntry"):
         assert name in schema["$defs"], f"{name} 应当是具名定义"
         assert schema["properties"][name] == {"$ref": f"#/$defs/{name}"}
 
