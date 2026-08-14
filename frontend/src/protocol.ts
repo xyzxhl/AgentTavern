@@ -208,6 +208,9 @@ export type StateRecentRuns = number;
 export type SummarizeMode = "manual" | "auto";
 export type AskQuestion = boolean;
 export type Trace1 = boolean;
+export type InitialState = {
+  [k: string]: unknown;
+} | null;
 export type ActiveLeafId = string | null;
 export type Conversation = Message[];
 export type Description2 = string;
@@ -221,8 +224,17 @@ export type StartedAtLeafId = string | null;
 export type SeenLeafId = string | null;
 export type Id3 = string;
 export type Name1 = string;
+/**
+ * 条目分两类，外加一个特殊的（D158）。
+ *
+ * 早先是一条条目**同时**装静态设定（`content`）和初始状态（`seeds`），共用一个
+ * `mode`。拆开的理由是这两样东西的可见性天然不同步：一个角色的背景可能几百字、
+ * 该按需展开，而他「在不在场」必须每轮都在眼前。共用一个开关时，只能迁就其中一个。
+ */
+export type EntryKind = "lore" | "state" | "player";
 export type Content1 = string;
 export type WorldbookMode = "always" | "on_demand";
+export type Depth = number;
 export type Summary = string | null;
 
 export interface AgentTavern {
@@ -494,10 +506,10 @@ export interface Set {
   [k: string]: unknown;
 }
 export interface Append {
-  [k: string]: unknown[];
+  [k: string]: unknown;
 }
 export interface Remove {
-  [k: string]: unknown[];
+  [k: string]: unknown;
 }
 export interface RunFailed {
   type?: Type14;
@@ -579,6 +591,7 @@ export interface Session {
   control?: ControlDimensions;
   modes?: SessionModes;
   capabilities?: Capabilities;
+  initial_state?: InitialState;
   active_leaf_id?: ActiveLeafId;
   goal_run?: GoalRun | null;
 }
@@ -697,11 +710,13 @@ export interface SubGoal {
 export interface WorldbookEntry {
   id?: Id3;
   name: Name1;
+  kind?: EntryKind;
   content?: Content1;
+  values?: Values1;
   mode?: WorldbookMode;
-  seeds?: Seeds;
+  depth?: Depth;
   summary?: Summary;
 }
-export interface Seeds {
+export interface Values1 {
   [k: string]: unknown;
 }

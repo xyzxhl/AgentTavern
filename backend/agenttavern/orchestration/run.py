@@ -62,6 +62,10 @@ async def execute_run(
     inbox: Inbox | None = None,
     developer: bool = False,
 ) -> RunOutcome:
+    # **故事一开始就把初始状态定下来**（D158）：之后再改 worldbook 的初始状态
+    # 条目，只影响新会话，不再回头改写既有的每一轮。第二轮起这里是空操作。
+    repo.freeze_initial_state()
+
     run_id = new_id("run")
     # **开发者模式强制落盘**（D156）：记了不落盘，下次就查不了了，而查问题
     # 恰恰总是事后。它与 `capabilities.trace` 是或的关系，不是覆盖。

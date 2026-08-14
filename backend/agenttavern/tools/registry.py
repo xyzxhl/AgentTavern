@@ -55,7 +55,7 @@ def build_tools(
     # 全部条目都是常驻注入、或按需展开被关掉时不注册——
     # 没有任何东西可展开，留着只是白占 prompt 体量。
     if capabilities.worldinfo_read and any(
-        e.mode is WorldbookMode.ON_DEMAND for e in worldinfo or []
+        e.mode is WorldbookMode.ON_DEMAND and e.is_lore for e in worldinfo or []
     ):
         tools += worldinfo_tools()
 

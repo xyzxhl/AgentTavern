@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -24,6 +25,19 @@ class Session(BaseModel):
 
     capabilities: Capabilities = Field(default_factory=Capabilities)
     """能力开关。关闭的能力其工具**不注册**——模型看不到。"""
+
+    initial_state: dict[str, Any] | None = None
+    """**冻结下来的初始状态**（D158）。``None`` = 故事还没开始，现算。
+
+    第一轮开始时由 `freeze_initial_state()` 定下来。之后再改 worldbook 的
+    `STATE` 条目就只影响新会话，不再回头改写既有的每一轮——那些轮次已经依赖
+    当时的事实写出去了。
+
+    早先它一直是现算的，说法是"改了影响所有分支，同改角色卡，是对的"。
+    **那个类比不成立**：改角色卡改的是设定，而这里改的是**已经发生过的剧情
+    所依赖的事实**——第五轮写着"她掏出钥匙"，而钥匙是初始状态给的；把它删掉，
+    那一轮就凭空多了一把不存在的钥匙，且没有任何地方会报错。
+    """
 
     active_leaf_id: str | None = None
     """活跃路径的叶节点。路径 = 根 → 此节点的一条链；state 沿该路径重放（D48）。"""

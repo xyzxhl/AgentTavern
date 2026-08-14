@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from ..models import (
     Capabilities,
     ControlDimensions,
+    EntryKind,
     Goal,
     ModelAuthority,
     Session,
@@ -83,7 +84,11 @@ NOIR_WORLDBOOK = [
         name="林昭",
         mode=WorldbookMode.ALWAYS,
         content="三十岁出头，本地报社记者。做事谨慎，习惯先观察再开口。",
-        seeds={
+    ),
+    WorldbookEntry(
+        name="林昭·初始状态",
+        kind=EntryKind.STATE,
+        values={
             "林昭": {
                 "在场": True,
                 "知情": ["三个月前收到匿名信，内含一张照片：陈屿与一个已死之人站在一起"],
@@ -97,7 +102,11 @@ NOIR_WORLDBOOK = [
         name="陈屿",
         mode=WorldbookMode.ALWAYS,
         content="四十岁，旧货店老板。说话习惯绕开正题，用反问代替回答。",
-        seeds={
+    ),
+    WorldbookEntry(
+        name="陈屿·初始状态",
+        kind=EntryKind.STATE,
+        values={
             "陈屿": {
                 "在场": True,
                 "知情": ["林昭手里有那张照片", "照片的来源"],
@@ -110,7 +119,11 @@ NOIR_WORLDBOOK = [
         content="老城区一条窄巷尽头。门口挂着褪色的蓝布帘，里面堆满旧钟表、搪瓷缸、"
         "成箱的旧杂志。柜台后有一扇通往里屋的门，常年锁着。店里常年有灰尘和机油味。"
         "陈屿在这里待了十二年，从没换过招牌。",
-        seeds={"地点": "陈屿的旧货店", "时间": "下午，快收摊"},
+    ),
+    WorldbookEntry(
+        name="旧货店·初始状态",
+        kind=EntryKind.STATE,
+        values={"地点": "陈屿的旧货店", "时间": "下午，快收摊"},
     ),
 ]
 
@@ -245,7 +258,11 @@ DATA_WORLDBOOK = [
         name="沈砚",
         mode=WorldbookMode.ALWAYS,
         content="炼气八层散修，二十四岁。用剑，也会几个符法。行事谨慎，宁可绕路不肯赊账。",
-        seeds={
+    ),
+    WorldbookEntry(
+        name="沈砚·初始状态",
+        kind=EntryKind.STATE,
+        values={
             "沈砚": {
                 "在场": True,
                 "境界": "炼气八层",
@@ -272,7 +289,11 @@ DATA_WORLDBOOK = [
         content="镇东头的小坊市，只有十几个摊位和一间挂着「聚宝」木牌的铺子。"
         "铺子收灵材、卖丹符，柜台执事姓孙。镇上唯一的客栈住一夜要两块灵石，"
         "坊市戌时关门。镇外二十里是黑风岭，近来常有妖兽下山。",
-        seeds={
+    ),
+    WorldbookEntry(
+        name="青石镇坊市·初始状态",
+        kind=EntryKind.STATE,
+        values={
             # 申时是 15–17 点，戌时是 19–21 点——中间隔着两个时辰，不是一个。
             # 首批归因 3/3 命中的正是这条：**回归集自己的设定前后矛盾**，
             # 模型忠实用了设定里的「戌时」，反倒被判成检索不足。
@@ -457,7 +478,11 @@ PULP_WORLDBOOK = [
         mode=WorldbookMode.ALWAYS,
         content="二十三岁，城中村送外卖。三个月前一场车祸后能"
         "「听见」三秒后的声音——够他躲开一拳，不够他躲开一颗子弹。没告诉过任何人。",
-        seeds={
+    ),
+    WorldbookEntry(
+        name="周野·初始状态",
+        kind=EntryKind.STATE,
+        values={
             "周野": {
                 "在场": True,
                 "能力": "预听三秒",
@@ -471,13 +496,21 @@ PULP_WORLDBOOK = [
         mode=WorldbookMode.ALWAYS,
         content="裕丰快递站站长。三十五岁，手里攥着站里所有人的排班和罚款。"
         "看不起送外卖的，尤其看不起欠钱的。",
-        seeds={"赵铖": {"在场": True}},
+    ),
+    WorldbookEntry(
+        name="赵铖·初始状态",
+        kind=EntryKind.STATE,
+        values={"赵铖": {"在场": True}},
     ),
     WorldbookEntry(
         name="小满",
         mode=WorldbookMode.ALWAYS,
         content="十九岁，同站点的骑手。周野的邻居，从小一起长大。藏不住话。",
-        seeds={"小满": {"在场": True, "知情": ["周野欠了八千"]}},
+    ),
+    WorldbookEntry(
+        name="小满·初始状态",
+        kind=EntryKind.STATE,
+        values={"小满": {"在场": True, "知情": ["周野欠了八千"]}},
     ),
     WorldbookEntry(
         name="裕丰快递站",
@@ -485,7 +518,11 @@ PULP_WORLDBOOK = [
         content="城中村口的临街铺面，卷帘门一半是坏的。里面堆着待分拣的包裹，"
         "一张掉漆的办公桌，桌上压着一块写满名字和数字的白板——那是罚款榜。"
         "站里二十来个骑手，大半住在后面那栋握手楼里。",
-        seeds={"地点": "裕丰快递站", "时间": "早上七点，早高峰前"},
+    ),
+    WorldbookEntry(
+        name="裕丰快递站·初始状态",
+        kind=EntryKind.STATE,
+        values={"地点": "裕丰快递站", "时间": "早上七点，早高峰前"},
     ),
 ]
 
@@ -535,7 +572,11 @@ GUFENG_WORLDBOOK = [
         name="沈玉茹",
         mode=WorldbookMode.ALWAYS,
         content="十七岁，新入宫的选侍，父亲是外放的六品小官。识字，会画，不谙宫里的规矩。",
-        seeds={
+    ),
+    WorldbookEntry(
+        name="沈玉茹·初始状态",
+        kind=EntryKind.STATE,
+        values={
             "沈玉茹": {
                 "在场": True,
                 "位分": "选侍",
@@ -547,14 +588,22 @@ GUFENG_WORLDBOOK = [
         name="崔嬷嬷",
         mode=WorldbookMode.ALWAYS,
         content="掌事嬷嬷，在宫里三十二年。管教新人，也替上头递话。从不说重话，也从不放过错处。",
-        seeds={"崔嬷嬷": {"在场": True, "知情": ["断簪是谁放的"]}},
+    ),
+    WorldbookEntry(
+        name="崔嬷嬷·初始状态",
+        kind=EntryKind.STATE,
+        values={"崔嬷嬷": {"在场": True, "知情": ["断簪是谁放的"]}},
     ),
     WorldbookEntry(
         name="拾翠殿",
         mode=WorldbookMode.ON_DEMAND,
         content="偏殿，住着四位新入宫的选侍。院里一口井，一棵老石榴。"
         "晨昏各一次点卯，迟到要记。宫规：选侍不得私出宫门，不得与外臣通信。",
-        seeds={"地点": "拾翠殿", "时间": "清晨，点卯前"},
+    ),
+    WorldbookEntry(
+        name="拾翠殿·初始状态",
+        kind=EntryKind.STATE,
+        values={"地点": "拾翠殿", "时间": "清晨，点卯前"},
     ),
 ]
 
@@ -600,7 +649,11 @@ XIHUAN_WORLDBOOK = [
         name="卡伦",
         mode=WorldbookMode.ALWAYS,
         content="三十岁，退役边境兵，如今替人跑腿收账。左手缺两指。不信神，但会照规矩画十字。",
-        seeds={
+    ),
+    WorldbookEntry(
+        name="卡伦·初始状态",
+        kind=EntryKind.STATE,
+        values={
             "卡伦": {
                 "在场": True,
                 "身上钱": "十一枚银币",
@@ -612,14 +665,22 @@ XIHUAN_WORLDBOOK = [
         name="教士艾德蒙",
         mode=WorldbookMode.ALWAYS,
         content="镇上唯一的教士，也是唯一能验魔物的人。收费从不明说，只说「随心奉献」。",
-        seeds={"艾德蒙": {"在场": True, "知情": ["木匣里是什么"]}},
+    ),
+    WorldbookEntry(
+        name="教士艾德蒙·初始状态",
+        kind=EntryKind.STATE,
+        values={"艾德蒙": {"在场": True, "知情": ["木匣里是什么"]}},
     ),
     WorldbookEntry(
         name="灰岩镇",
         mode=WorldbookMode.ON_DEMAND,
         content="边境上的矿镇，三百来口人。一条主街，一座石头教堂，一家挂着铁锚招牌的酒馆。"
         "镇上规矩：日落后关门，谁也不给开。验一次魔物的行价是三枚银币。",
-        seeds={"地点": "灰岩镇教堂", "时间": "午后，离日落还有三个时辰"},
+    ),
+    WorldbookEntry(
+        name="灰岩镇·初始状态",
+        kind=EntryKind.STATE,
+        values={"地点": "灰岩镇教堂", "时间": "午后，离日落还有三个时辰"},
     ),
 ]
 

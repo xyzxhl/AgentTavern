@@ -11,6 +11,7 @@ from agenttavern.config import Settings
 from agenttavern.llm import LLMGateway, ToolCall
 from agenttavern.models import (
     Capabilities,
+    EntryKind,
     Node,
     Session,
     StateDelta,
@@ -517,29 +518,61 @@ def test_state_write_says_what_to_record() -> None:
     assert "带倒计时的值每一轮都要重算" in desc
 
 
-def test_worldinfo_seeds_become_the_replay_base(tmp_path: Path) -> None:
-    """设定条目是混的：静态部分留在 worldinfo，会变的部分作为**种子**迁移进 state。
+def test_state_entries_become_the_replay_base(tmp_path: Path) -> None:
+    """条目分两类（D158）：静态的进 worldinfo，会变的作为**初始状态**进 state。
 
     这样模型不必把设定抄进 state——那种副本会在设定被改动后与之分叉。
     诱因消失了，比在提示词里禁止可靠。
     """
     repo = Store(tmp_path).create_session(Session())
+    repo.save_worldbook_entry(WorldbookEntry(name="林昭", content="记者，做事谨慎。"))
     repo.save_worldbook_entry(
         WorldbookEntry(
-            name="林昭",
-            content="记者，做事谨慎。",  # 静态，留在 worldinfo
-            seeds={"林昭.在场": False, "林昭.知情": ["匿名信里的照片"]},
+            name="林昭·初始状态",
+            kind=EntryKind.STATE,
+            values={"林昭": {"在场": False, "知情": ["匿名信里的照片"]}},
         )
     )
 
-    # 种子是一切分支共同的起点，空路径也能读到。
-    assert repo.state_at(None).values["林昭.在场"] is False
+    # 初始状态是一切分支共同的起点，空路径也能读到。
+    assert repo.state_at(None).values["林昭"]["在场"] is False
 
-    node = Node(state_delta=StateDelta(set={"林昭.在场": True}))
+    node = Node(state_delta=StateDelta(set={"林昭": {"在场": True}}))
     repo.save_node(node)
     after = repo.state_at(node.id).values
-    assert after["林昭.在场"] is True
-    assert after["林昭.知情"] == ["匿名信里的照片"]  # 未提及的种子保持原状
+    assert after["林昭"]["在场"] is True
+    # **深合并**：没提到的原样留着（D157）。
+    assert after["林昭"]["知情"] == ["匿名信里的照片"]
+
+
+def test_the_initial_state_freezes_once_the_story_starts(tmp_path: Path) -> None:
+    """**开始之后改初始状态，不再回头改写既有的每一轮**（D158）。
+
+    早先它一直是现算的，说法是"同改角色卡"。那个类比不成立：改角色卡改的是设定，
+    而这里改的是**已经发生过的剧情所依赖的事实**——某一轮写着"她掏出钥匙"，
+    而钥匙是初始状态给的；把它删掉，那一轮就凭空多了一把不存在的钥匙。
+    """
+    repo = Store(tmp_path).create_session(Session())
+
+    def put(values: dict[str, object]) -> None:
+        # **同一个 id** ——不固定的话每次都是新增一条，而不是改那一条。
+        repo.save_worldbook_entry(
+            WorldbookEntry(id="wi_start", name="起点", kind=EntryKind.STATE, values=values)
+        )
+
+    put({"钥匙": "在她口袋里"})
+
+    # 还没开始：改了立刻生效——故事没有过去，没有东西依赖它。
+    assert repo.state_at(None).values == {"钥匙": "在她口袋里"}
+    put({"钥匙": "在桌上"})
+    assert repo.state_at(None).values == {"钥匙": "在桌上"}
+
+    repo.freeze_initial_state()
+
+    # 开始之后：改了只影响以后新建的会话。
+    put({})
+    assert repo.state_at(None).values == {"钥匙": "在桌上"}
+    assert repo.compose_initial_state().values == {}, "模板本身确实变了"
 
 
 def test_tool_names_match_the_api_pattern() -> None:

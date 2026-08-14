@@ -10,6 +10,7 @@ from conftest import STATE_MARK, CancelWriter, ScriptedLLM, text, tool
 from agenttavern.models import (
     Capabilities,
     ControlOverride,
+    EntryKind,
     ExpansionDensity,
     InputHandling,
     RunStage,
@@ -398,19 +399,20 @@ async def test_collapsing_a_list_into_a_string_is_flagged(tmp_path: Path) -> Non
     entry = WorldbookEntry(
         name="沈砚",
         content="散修。",
-        seeds={"沈砚.随身": ["青锋剑", "止血符 ×2"], "沈砚.灵石": 3},
+        kind=EntryKind.STATE,
+        values={"沈砚": {"随身": ["青锋剑", "止血符 ×2"], "灵石": 3}},
     )
     llm = ScriptedLLM(
         tool("submit_outline", outline="他把灵石倒在柜台上。"),
         text("三块灵石滚落台面，叮叮响了几声。" * 6),
-        state=dict(set={"沈砚.随身": "青锋剑、止血符 ×4", "沈砚.灵石": "1"}),
+        state=dict(set={"沈砚": {"随身": "青锋剑、止血符 ×4", "灵石": "1"}}),
     )
     repo, session, gw, reg = setup(tmp_path, llm)
     repo.save_worldbook_entry(entry)
 
     outcome = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我买符"))
     flag = next(n for n in outcome.notes if "另一种形状" in n)
-    assert "沈砚.随身" in flag and "沈砚.灵石" in flag
+    assert "沈砚 › 随身" in flag and "沈砚 › 灵石" in flag
 
 
 def _script(runs: int, outline: str, *tail, closes: list[str] | None = None, followup: bool = True):
@@ -575,7 +577,11 @@ async def test_a_bare_key_shadowing_a_namespaced_one_is_flagged(tmp_path: Path) 
     没有超长、也不算漏记。提示词里那句"新建键前先看有没有已在说同一件事的键"
     没能拦住它。
     """
-    entry = WorldbookEntry(name="沈砚", content="散修。", seeds={"沈砚": {"冷却": "御剑斩剩3回合"}})
+    entry = WorldbookEntry(
+        name="沈砚·初始状态",
+        kind=EntryKind.STATE,
+        values={"沈砚": {"冷却": "御剑斩剩3回合"}},
+    )
     llm = ScriptedLLM(
         tool("submit_outline", outline="他又催了一次剑。"),
         text("剑没有起来。" * 10),
@@ -592,7 +598,11 @@ async def test_a_bare_key_shadowing_a_namespaced_one_is_flagged(tmp_path: Path) 
 async def test_sibling_keys_under_different_owners_are_not_flagged(tmp_path: Path) -> None:
     """``林昭 › 知情`` 与 ``陈屿 › 知情`` 末段相同却都是对的——**两边都有归属
     就不是歧义**。误报这种会让标记立刻失去价值。"""
-    entry = WorldbookEntry(name="林昭", content="记者。", seeds={"林昭": {"知情": ["照片"]}})
+    entry = WorldbookEntry(
+        name="林昭·初始状态",
+        kind=EntryKind.STATE,
+        values={"林昭": {"知情": ["照片"]}},
+    )
     llm = ScriptedLLM(
         tool("submit_outline", outline="他记住了她。"),
         text("他看着她走出去。" * 8),

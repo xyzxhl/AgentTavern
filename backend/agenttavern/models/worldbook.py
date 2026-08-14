@@ -23,28 +23,70 @@ class WorldbookMode(StrEnum):
     """只进索引，由模型按需展开（D63）。适合体量大、偶尔相关的条目。"""
 
 
+class EntryKind(StrEnum):
+    """条目分两类，外加一个特殊的（D158）。
+
+    早先是一条条目**同时**装静态设定（`content`）和初始状态（`seeds`），共用一个
+    `mode`。拆开的理由是这两样东西的可见性天然不同步：一个角色的背景可能几百字、
+    该按需展开，而他「在不在场」必须每轮都在眼前。共用一个开关时，只能迁就其中一个。
+    """
+
+    LORE = "lore"
+    """世界信息：一段正文。静态的东西——性格、背景、身份、地方长什么样。"""
+
+    STATE = "state"
+    """初始状态：一棵键值树。会变的东西——在哪、知道什么、和谁什么关系。"""
+
+    PLAYER = "player"
+    """**用户扮演的角色**（D158）。形态同 `LORE`，但它额外回答"用户是谁"。
+
+    一份 worldbook 里至多一条。它此前只是 `SessionMeta.user_character` 里的一个
+    名字，于是「用户扮演谁」和「这个人是什么样」分在两个地方，改了一处另一处不动。
+    """
+
+
 class WorldbookEntry(BaseModel):
     id: str = Field(default_factory=lambda: new_id("wi"))
     name: str
-    content: str = ""
 
-    mode: WorldbookMode = WorldbookMode.ALWAYS
-    """**若全部条目都是 ALWAYS，worldinfo 工具不注册**——没有任何东西可展开，
-    留着工具只是白占 prompt 体量。
+    kind: EntryKind = EntryKind.LORE
+
+    content: str = ""
+    """`LORE` / `PLAYER` 的正文。`STATE` 条目不用它。"""
+
+    values: dict[str, Any] = Field(default_factory=dict)
+    """`STATE` 条目的初始状态，一棵嵌套的键值树（D157）。
+
+    **它是「初始状态」，不再叫「种子」**（D158）：那个词暗示"发芽之后就与它无关"，
+    而实际语义恰恰相反——它就是这局故事第一帧的状态，是一切分支共同的起点。
+
+    为什么初始状态要和世界信息分开：设定条目常常是混的，角色的性格、背景是静态的
+    （不因剧情改变），而他现在在哪、知道什么是会变的。不分开的话，模型只能把后者
+    从设定正文里**抄**进 state——而副本会在设定被改动后与之分叉。
+    分开之后诱因就消失了：这些位置一开始就在 state 里，模型看得见，自然只会去
+    **改**它而不是新造一个。**移除诱因比禁止更可靠。**
+
+    附带好处：这些路径是命名锚点，能压住键名漂移。
     """
 
-    seeds: dict[str, Any] = Field(default_factory=dict)
-    """该条目附带的**初始 state**，session 开始时由代码迁移进 state。
+    mode: WorldbookMode = WorldbookMode.ALWAYS
+    """是否可展开。**两类条目都有**（D158）。
 
-    设定条目常常是混的：角色的性格、说话习惯、背景是**静态的**（属 worldinfo，
-    不因剧情改变）；而它现在在哪、和谁什么关系、知道什么，是**会变的**（属 state）。
-    没有这个字段时，模型只能把后者从设定里**抄**进 state——而副本会在设定被改动后
-    与之分叉。
+    `LORE`：`ALWAYS` 全文进上下文，`ON_DEMAND` 只进索引、由模型 `worldinfo_read`。
+    **若全部 `LORE` 条目都是 `ALWAYS`，worldinfo 工具不注册**——没有东西可展开，
+    留着工具只是白占体量。
 
-    有了种子，诱因本身就消失了：这些键一开始就在 state 默认包里，模型看得见，
-    自然只会去**改**它而不是新造一个。**移除诱因比禁止更可靠。**
+    `STATE`：`ALWAYS` 不折叠，`ON_DEMAND` 按 `depth` 折叠、深处由 `state_query` 展开。
+    """
 
-    附带好处：种子键是命名锚点，能压住键名漂移。
+    depth: int = 0
+    """`STATE` 条目的**展开层级**（D157/D158）：深过这一层的子树只给条数。
+
+    `0` 表示不折叠。只在 `mode` 是 `ON_DEMAND` 时才起作用——常驻的东西没有
+    "按需"可言。
+
+    它按条目设而不是全局设，因为同一份 worldbook 里深浅差别很大：一个角色的属性
+    树值得给到第二层，而一份地理志给到第一层就够。
     """
 
     summary: str | None = None
@@ -53,6 +95,11 @@ class WorldbookEntry(BaseModel):
     ``None`` 表示尚未生成——索引回退到"前 N 字 + 字数"，仍满足 D62：
     模型知道有这个东西存在、知道它的体量，只是精度低一点。
     """
+
+    @property
+    def is_lore(self) -> bool:
+        """进 worldinfo 的那两类。`PLAYER` 也是一段设定，只是多回答一个问题。"""
+        return self.kind in (EntryKind.LORE, EntryKind.PLAYER)
 
     def ref_hint(self) -> str:
         return self.id

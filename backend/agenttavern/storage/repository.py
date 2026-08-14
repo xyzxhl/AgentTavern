@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..models import Node, RunDraft, Session, StateDelta, TraceEvent, WorldState
-from ..models.worldbook import WorldbookEntry
+from ..models.worldbook import EntryKind, WorldbookEntry
 from .jsonfile import append_jsonl, read_jsonl, read_model, read_model_or_none, write_model
 
 
@@ -117,21 +117,37 @@ class SessionRepository:
         chain.reverse()
         return chain
 
-    def initial_state(self) -> WorldState:
-        """worldinfo 种子构成的初始 state——**一切分支共同的起点**。
-
-        设定条目是混的：静态部分（性格、背景）留在 worldinfo，会变的部分
-        （在哪、知道什么、什么关系）作为种子迁移进 state。这样模型不必把设定
-        抄进 state，副本分叉的问题就不存在了。
-
-        它是 session 级配置而非路径的一部分，因此改了种子会影响所有分支——
-        这和改角色卡的效果一致，是对的。
-        """
+    def compose_initial_state(self) -> WorldState:
+        """把全部 `STATE` 条目合成一个初始状态。**故事开始之前**用它。"""
         state = WorldState()
         for entry in self.worldbook():
-            if entry.seeds:
-                state = state.apply(StateDelta(set=entry.seeds))
+            if entry.kind is EntryKind.STATE and entry.values:
+                state = state.apply(StateDelta(set=entry.values))
         return state
+
+    def initial_state(self) -> WorldState:
+        """一切分支共同的起点。
+
+        **故事一开始就冻结**（D158）。开始之前它是现算的——那时改设定当然该
+        立刻生效，故事还没有过去。第一轮落地时快照进 `Session.initial_state`，
+        之后再改条目就只影响"以后新建的会话"，不再回头改写既有的每一轮。
+
+        早先它一直是现算的，说法是"改了影响所有分支，同改角色卡，是对的"。
+        **那个类比不成立**：改角色卡改的是设定，而这里改的是**已经发生过的
+        剧情所依赖的事实**——第五轮写着"她掏出钥匙"，而钥匙是初始状态给的；
+        把它删掉，那一轮就凭空多了一把不存在的钥匙，且没有任何地方会报错。
+        """
+        session = self.load_session()
+        if session.initial_state is not None:
+            return WorldState(values=session.initial_state)
+        return self.compose_initial_state()
+
+    def freeze_initial_state(self) -> None:
+        """把当前的初始状态定下来。**第一轮开始时调，之后是空操作。**"""
+        session = self.load_session()
+        if session.initial_state is None:
+            session.initial_state = self.compose_initial_state().values
+            self.save_session(session)
 
     def state_at(self, leaf_id: str | None) -> WorldState:
         """沿路径重放增量，得到该点的状态。
@@ -140,7 +156,7 @@ class SessionRepository:
         否则会出现"文本对、状态悄悄错"——那类 bug 要很多 run 后才以角色行为
         不合理的形式暴露，届时根本查不出源头。
 
-        起点是 worldinfo 种子而非空，见 ``initial_state``。
+        起点是初始状态而非空，见 ``initial_state``。
         """
         state = self.initial_state()
         if leaf_id is None:
@@ -170,11 +186,9 @@ class SessionRepository:
     def delete_worldbook_entry(self, entry_id: str) -> bool:
         """删掉一条设定。不存在返回 ``False``。
 
-        **它的种子会一并消失**，而种子是 `initial_state()` 的一部分——也就是
-        所有分支的共同起点。所以删一条带种子的设定，等于把那几个键从**每一轮**
-        的状态里抽掉（同改角色卡，D90）。调用方该让用户知道这件事。
-
-        已经写进各轮增量的键不受影响：那些是路径上的事实，不是起点。
+        **故事开始之后删初始状态条目不影响既有的每一轮**（D158）：起点那时
+        已经冻结进 `Session.initial_state` 了，这里删的只是"以后新建会话时的模板"。
+        开始之前删则立刻生效——那时故事还没有过去，没有东西依赖它。
         """
         path = self.worldbook_path(entry_id)
         if not path.exists():

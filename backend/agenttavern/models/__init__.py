@@ -19,7 +19,7 @@ from .node import InputSource, Node, RunStatus, UserInput, new_id
 from .session import Session
 from .state import StateDelta, WorldState, replay
 from .trace import Actor, AttributionClass, TraceEvent, TraceEventType
-from .worldbook import WorldbookEntry, WorldbookMode
+from .worldbook import EntryKind, WorldbookEntry, WorldbookMode
 
 __all__ = [
     "Actor",
@@ -48,6 +48,7 @@ __all__ = [
     "TraceEvent",
     "TraceEventType",
     "UserInput",
+    "EntryKind",
     "WorldbookEntry",
     "WorldbookMode",
     "WorldState",

@@ -35,8 +35,8 @@ def test_scenarios_are_deliberately_opposite() -> None:
     def leaves(scenario) -> list[object]:
         out = []
         for entry in scenario.worldbook:
-            for path in paths_of(entry.seeds):
-                out.append(walk(entry.seeds, path))
+            for path in paths_of(entry.values):
+                out.append(walk(entry.values, path))
         return out
 
     assert not any(isinstance(v, int | float) and not isinstance(v, bool) for v in leaves(noir))

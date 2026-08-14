@@ -25,6 +25,7 @@ from ..llm import Message
 from ..models import (
     Capabilities,
     ControlDimensions,
+    EntryKind,
     Node,
     SessionMeta,
     StateDelta,
@@ -33,6 +34,19 @@ from ..models import (
     WorldState,
 )
 from .assembler import Prompt, assemble, text
+
+
+def player_character(meta: SessionMeta, worldinfo: Sequence[WorldbookEntry] = ()) -> str:
+    """用户扮演的是谁。**worldbook 里的 `PLAYER` 条目优先**（D158）。
+
+    此前只有 `SessionMeta.user_character` 一个名字，于是「用户扮演谁」和
+    「这个人是什么样」分在两个地方——改了一处另一处不动，而 writer 两样都要。
+    现在那条条目自己就带着正文，名字从它来；没有这条条目时退回 meta 里的名字。
+    """
+    for entry in worldinfo:
+        if entry.kind is EntryKind.PLAYER:
+            return entry.name
+    return meta.user_character
 
 
 def _speaking(allowed: bool) -> str:
