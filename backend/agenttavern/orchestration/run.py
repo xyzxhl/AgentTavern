@@ -62,12 +62,20 @@ async def execute_run(
     inbox: Inbox | None = None,
     developer: bool = False,
     on_delta: RunDelta | None = None,
+    run_id: str | None = None,
 ) -> RunOutcome:
+    """``run_id`` 由调用方指定时，**这一轮开始之前发生的事也能挂在它名下**。
+
+    唯一的用处是 goal 的开场（D168）：goal_manager 要先规划、写出这一轮的输入，
+    而那几次调用理应属于**它开出来的那一轮**，不是上一轮。id 在这里生成的话，
+    调用方在规划那一刻还拿不到它，只能另起一个没有节点的 id——那些记录就再也
+    没地方显示了。
+    """
     # **故事一开始就把初始状态定下来**（D158）：之后再改 worldbook 的初始状态
     # 条目，只影响新会话，不再回头改写既有的每一轮。第二轮起这里是空操作。
     repo.freeze_initial_state()
 
-    run_id = new_id("run")
+    run_id = run_id or new_id("run")
     # **开发者模式强制落盘**（D156）：记了不落盘，下次就查不了了，而查问题
     # 恰恰总是事后。它与 `capabilities.trace` 是或的关系，不是覆盖。
     tracer = Tracer(

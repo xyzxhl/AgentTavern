@@ -17,13 +17,15 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal, cast
 
-from ..agents import advance_goal, sync_conversation
+from ..agents import GoalStep, advance_goal, sync_conversation
 from ..llm import LLMGateway, Usage
 from ..models import (
     Actor,
     ControlOverride,
+    Goal,
     GoalRun,
     InputSource,
+    Session,
     TraceEvent,
     TraceEventType,
     UserInput,
@@ -124,6 +126,14 @@ class SessionRunner:
         它不是持久状态：进程内的一次传递，用完即清。
         """
 
+        self._goal_opening = False
+        """目标刚被设上 / 恢复，**还没让 goal_manager 规划过**（D168）。
+
+        置位的是 `nudge()`，消费的是下一次 goal 驱动的 run——它会在 director 之前
+        先跑一次 goal_manager，拿到开场那条输入。判定跑过之后就清掉：那时它刚写
+        好下一条输入，不需要再开场一次。
+        """
+
         self._autocontinue_armed = False
         """自动续跑是**一次 run 的后果**，不是冷启动就发生的事。
 
@@ -178,8 +188,13 @@ class SessionRunner:
 
         有 run 在跑时它同样安全：`None` 在队列里等着，那一轮结束后照常被取出，
         而 `_check_goal` 反正也会重新打开自动续跑。
+
+        **`_goal_opening` 一并置位**（D168）：紧接着那一轮要先让 goal_manager
+        规划、写出开场的输入，否则第一轮是空手推的——而 director 从来不读 goal，
+        那一轮完全不知道有目标这回事。
         """
         self._autocontinue_armed = True
+        self._goal_opening = True
         self._queue.put_nowait(None)
 
     def answer(self, question_id: str, selected: str) -> bool:
@@ -284,12 +299,28 @@ class SessionRunner:
 
     async def _execute(self, item: _Queued | None) -> None:
         session = self._repo.load_session()
+        # **id 提前生成**：目标开场时 goal_manager 要先说话，而那些记录属于
+        # 它开出来的这一轮（D168）。
+        run_id = new_id("run")
 
         # 自动续跑时用 goal_manager 写的那条输入（D141）。**用完即清**：它只对紧接着
         # 的这一轮有效，留着会在用户插话之后被错误地重放。真的用户输入优先（D27），
         # 所以只在 `item is None` 这条路上取。
         simulated = self._goal_input if item is None else None
         self._goal_input = None
+
+        if item is None and self._goal_opening:
+            self._goal_opening = False
+            # **先宣告这一轮开始，再让它规划。** 规划要跑几十秒，不先宣告的话
+            # 界面上那段时间什么都没有——而这一轮的记录已经在往外推了。
+            self._run_id = run_id
+            self._emit(RunStarted(run_id=run_id))
+            simulated = await self._open_goal(session, run_id) or simulated
+            # 规划期间目标可能当场判完、撞上预算、或被用户放弃。
+            if not self._should_autocontinue():
+                self._emit(RunInterrupted(resumable=False))
+                return
+            session = self._repo.load_session()
 
         try:
             outcome = await execute_run(
@@ -320,6 +351,7 @@ class SessionRunner:
                 developer=self._developer,
                 # 分片带上 run_id：前端要把它归到正确的那一轮名下（D160）。
                 on_delta=self._emit_delta,
+                run_id=run_id,
             )
         except asyncio.CancelledError:
             raise
@@ -349,6 +381,30 @@ class SessionRunner:
 
         await self._check_goal(outcome.node.id, outcome.usage)
 
+    async def _open_goal(self, session: Session, run_id: str) -> str | None:
+        """**目标刚设上（或刚恢复）时，先让它规划一次**（D168）。返回开场那条输入。
+
+        不这么做的话，goal 驱动的第一轮是空手推的：**director 从来不读 goal**
+        （它眼里模拟输入和真输入必须一模一样，D148），所以那一轮完全不知道有目标
+        这回事，而它恰恰是最该定方向的一轮。goal_manager 要等它写完才第一次开口，
+        然后照着一段随机开的剧情去拆阶段。
+
+        记录挂在**即将开始的那一轮**名下（`run_id` 由调用方先生成），不是上一轮：
+        这几次调用是为了那一轮才发生的。路径末端仍取当前活跃叶——它是"故事到
+        这儿了"，和这一轮无关。
+        """
+        goal = session.meta.goal
+        if goal is None:
+            return None
+        run = session.goal_run or GoalRun(started_at_leaf_id=session.active_leaf_id)
+        if run.paused:
+            return None
+
+        step, usage = await self._goal_turn(session, goal, run, run_id, session.active_leaf_id)
+        # **开场不算一轮**：还没有任何 run 被开出来。token 照算——它是真花的钱。
+        self._settle_goal(goal, run, step, usage, count_run=False)
+        return step.next_input
+
     async def _check_goal(self, leaf_id: str, usage: Usage) -> None:
         """goal_manager 在 **run 末**跑（D28/D40/D141/D148）——与控制权（轮内）
         作用点不同。
@@ -376,11 +432,32 @@ class SessionRunner:
         if run.paused:
             return
 
+        # 判过一次就不用再开场了——开场要的那条输入它刚写好了。
+        self._goal_opening = False
+
+        step, spent = await self._goal_turn(session, goal, run, leaf_id, leaf_id)
+        self._goal_input = step.next_input
+        self._settle_goal(goal, run, step, spent + usage, count_run=True)
+
+    async def _goal_turn(
+        self,
+        session: Session,
+        goal: Goal,
+        run: GoalRun,
+        run_id: str,
+        leaf_id: str | None,
+    ) -> tuple[GoalStep, Usage]:
+        """搭一次 goal_manager 调用的台：备好对话、跑一轮、把记录挂到 `run_id` 上。
+
+        `run_id` 是这些记录**归属的那一轮**，`leaf_id` 是当前路径的末端。判定时
+        两者是同一个（判的就是刚写完那一轮）；开场时不同——记录属于即将开始的
+        那一轮，而路径还停在上一轮的末端。
+        """
         # goal_manager 是真实的模型调用，因此它**必须和 run 一样可见、一样计入预算**：
         # 不推事件的话，goal 为什么迟迟不达标就完全无从查起。
         tracer = Tracer(
             self._repo,
-            leaf_id,
+            run_id,
             lambda event: self._emit(Trace(event=event)),
             persist=session.capabilities.trace or self._developer,
             developer=self._developer,
@@ -392,7 +469,7 @@ class SessionRunner:
             session.meta,
             goal,
             run,
-            self._repo.path_to(leaf_id),
+            self._repo.path_to(leaf_id) if leaf_id else [],
             density=session.control.expansion_density,
         )
         step = await advance_goal(
@@ -402,23 +479,24 @@ class SessionRunner:
             run,
             density=session.control.expansion_density,
             user_id=session.id,
-            # **它的思考也要能看见**（D166）。分片挂在刚写完那一轮的 `run_id` 上，
-            # 和它的 trace 事件落在同一处——goal_manager 是在那一轮之后跑的，
-            # 那就是它归属的地方。`leaf_id` 而不是 `self._run_id`：意思一样，
-            # 但这里手上就有确切的那个，不必依赖别处刚好设对了。
+            # **它的思考也要能看见**（D166）。分片和它的 trace 事件挂同一个
+            # `run_id`——显式传而不是靠 `self._run_id` 刚好设对了。
             on_delta=(
-                (lambda kind, text: self._emit_delta(Actor.GOAL_MANAGER.value, kind, text, leaf_id))
+                (lambda kind, text: self._emit_delta(Actor.GOAL_MANAGER.value, kind, text, run_id))
                 if session.capabilities.stream
                 else None
             ),
         )
-        self._goal_input = step.next_input
+        return step, tracer.usage
 
+    def _settle_goal(
+        self, goal: Goal, run: GoalRun, step: GoalStep, spent: Usage, *, count_run: bool
+    ) -> None:
+        """把这一次的产出记回去：花销、终态、预算、进度。"""
         # **无论成败都记一次 run**——否则持续失败的 run 会让自动续跑无限空转。
-        run.spent_runs += 1
-        run.spent_tokens += (
-            usage.tokens_in + usage.tokens_out + tracer.usage.tokens_in + tracer.usage.tokens_out
-        )
+        # 开场那次不算：它还没开出任何一轮来。
+        run.spent_runs += 1 if count_run else 0
+        run.spent_tokens += spent.tokens_in + spent.tokens_out
 
         if step.finished is not None:
             self._finish_goal(*step.finished)
@@ -426,13 +504,13 @@ class SessionRunner:
 
         # 预算到顶**不是失败**，是暂停：用户可以把上限调大接着跑（D148）。
         # 对话原样留着，所以恢复时不用重新判一遍。
-        spent = run.exhausted(goal)
-        if spent is not None:
-            run.paused, run.paused_reason = True, spent
+        exhausted = run.exhausted(goal)
+        if exhausted is not None:
+            run.paused, run.paused_reason = True, exhausted
 
         if not self._save_goal_run(run):
-            # 判定期间用户放弃了目标。那这一轮的判定结果连同它写的下一条输入
-            # 一起作废——继续推进度只会让界面显示一个已经不存在的目标。
+            # 判定期间用户放弃了目标。那这一次的结果连同它写的下一条输入一起
+            # 作废——继续推进度只会让界面显示一个已经不存在的目标。
             self._goal_input = None
             return
         # **每一轮都推一次进度**（D161）：中间状态被一条条划掉是用户最想看的东西，
@@ -446,8 +524,8 @@ class SessionRunner:
                 max_total_tokens=goal.max_total_tokens,
             )
         )
-        if spent is not None:
-            self._emit(GoalPaused(reason=spent))
+        if exhausted is not None:
+            self._emit(GoalPaused(reason=exhausted))
 
     def _emit_delta(self, actor: str, kind: str, text: str, run_id: str | None = None) -> None:
         """把一段分片推出去。**能力关掉时根本走不到这里**——`ctx.stream_to`
@@ -479,7 +557,10 @@ class SessionRunner:
         # **宣告排在它自己那条 trace 之前。** 反过来的话，客户端多半会在收到
         # `run_started` 时清掉上一轮的过程记录——而这一轮的第一条已经先到了，
         # 于是它当场被自己的开场白抹掉。
-        if event.type is TraceEventType.RUN_STARTED:
+        #
+        # 已经宣告过就不再宣告：goal 开场时 `_execute` 提前宣告过一次（要让
+        # 规划那几十秒在界面上有着落，D168），那和这里说的是同一轮。
+        if event.type is TraceEventType.RUN_STARTED and event.run_id != self._run_id:
             self._run_id = event.run_id
             self._emit(RunStarted(run_id=event.run_id))
         self._emit(Trace(event=event))

@@ -224,7 +224,7 @@ function NewGoal(): JSX.Element {
       </p>
       <p className="mt-2 text-[10px] leading-snug text-dim/70">
         设完<b className="font-medium text-fg">立刻开始</b>
-        ：一轮都还没写过也一样。第一轮没有输入，之后每轮的输入由它替你写。
+        ：一轮都还没写过也一样。它先拆出中间状态、写好第一条输入，再开始推——之后每一轮的输入都由它替你写。
       </p>
     </div>
   );

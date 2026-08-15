@@ -593,24 +593,37 @@ def test_goal_drives_another_run_with_a_simulated_input(client_for) -> None:
     assert run["spent_runs"] >= 1, "预算计数必须落盘——它以前在内存里，重启就归零"
 
 
-def test_setting_a_goal_starts_it_without_waiting_for_input(client_for) -> None:
-    """**设目标就是"去做"**（D165）——包括一轮都还没写过的会话。
+def opening(next_input: str, *subgoals: str):
+    """goal 开场那一次 goal_manager 调用（D168）：拆阶段 + 写出第一条输入，然后收口。"""
+    return [
+        tools(
+            ("plan", {"subgoals": list(subgoals) or ["他先松口"]}),
+            ("steer", {"next_input": next_input}),
+        ),
+        text("先走这一步。"),
+    ]
 
-    以前不是这样：自动续跑只在一次 run 正常结束之后才打开，所以在空会话上设完
-    目标什么都不会发生，界面举着「目标推进中」一动不动，直到用户随便打句话把它
-    推起来。那条规则挡的是「带 goal 的 session 一连上就自己开始生成」——**连接
-    不是指令，而设目标是**。
 
-    第一轮没有输入（"直接推进"）：goal_manager 只在 run 末跑，它还没机会写。
-    从第二轮起才有它写的那条。
+def test_setting_a_goal_plans_first_then_runs(client_for) -> None:
+    """**设目标就是"去做"**（D165），而且**先规划再动手**（D168）。
+
+    两件事以前都不是这样：
+
+    - 自动续跑只在一次 run 正常结束之后才打开，所以在空会话上设完目标什么都不会
+      发生，界面举着「目标推进中」一动不动，直到用户随便打句话把它推起来。那条
+      规则挡的是「带 goal 的 session 一连上就自己开始生成」——**连接不是指令，
+      而设目标是**。
+    - 打开之后第一轮是**空手推的**：`director` 从来不读 goal（模拟输入和真输入
+      在它眼里必须一模一样，D148），所以最该定方向的那一轮完全不知道有目标这回
+      事，goal_manager 要等它写完才第一次开口，然后照着一段随机开的剧情拆阶段。
+
+    现在顺序是：goal_manager 规划 → 它写的输入 → director → writer。
     """
     llm = ScriptedLLM(
+        *opening("我把照片推过去。", "他先松口", "两人摊开说"),
         *one_run(outline="开场。", prose="正文一。"),
-        tools(
-            ("plan", {"subgoals": ["他先松口"]}),
-            ("steer", {"next_input": "我把照片推过去。"}),
-        ),
-        text("先推到这里。"),
+        tool("steer", next_input="再问一句。"),
+        text("接着推。"),
         *one_run(outline="第二轮。", prose="正文二。"),
         state=one_state(),
     )
@@ -624,9 +637,48 @@ def test_setting_a_goal_starts_it_without_waiting_for_input(client_for) -> None:
         first = collect(ws, "run_finished")[-1]["node"]
         second = collect(ws, "run_finished")[-1]["node"]
 
-    assert first["user_input"] is None, "没人打字，这一轮就是直接推进"
-    assert second["user_input"]["text"] == "我把照片推过去。"
-    assert second["user_input"]["source"] == "simulated"
+    assert first["user_input"]["text"] == "我把照片推过去。", "第一轮就该是它写的输入"
+    assert first["user_input"]["source"] == "simulated"
+    assert second["user_input"]["text"] == "再问一句。"
+
+    # **规划先于推演**：第一次问的是 goal_manager，不是 director。
+    assert GOAL_MARK in llm.system_prompts[0]
+    # 中间状态在第一轮落地之前就有了——否则面板上要空到第一轮写完。
+    run = client.get(f"/sessions/{session_id}").json()["session"]["goal_run"]
+    assert [s["description"] for s in run["plan"]["subgoals"]] == ["他先松口", "两人摊开说"]
+
+
+def test_the_opening_plan_belongs_to_the_run_it_opens(client_for) -> None:
+    """开场那几次调用**挂在它开出来的那一轮名下**（D168）。
+
+    换句话说：宣告「开始新的一轮」必须排在规划**之前**。规划要跑几十秒，晚宣告
+    的话界面上那段时间什么都没有，而这一轮的记录已经在往外推了——前端拿到一批
+    属于"还没开始的一轮"的事件，只能扔掉。
+    """
+    llm = ScriptedLLM(
+        *opening("我把照片推过去。"),
+        *one_run(outline="开场。", prose="正文一。"),
+        state=one_state(),
+    )
+    client = client_for(llm)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "set_goal", "description": "写到摊牌"}))
+        messages = collect(ws, "run_finished")
+
+    kinds = [m["type"] for m in messages]
+    assert kinds.count("run_started") == 1, "只宣告一次——提前宣告过就不再重复"
+    assert kinds.index("run_started") == 0, "宣告排在规划之前"
+
+    run_id = messages[0]["run_id"]
+    assert messages[-1]["node"]["id"] == run_id, "run = node，id 是同一个"
+    planning = [
+        m for m in messages if m["type"] == "trace" and m["event"]["actor"] == "goal_manager"
+    ]
+    assert planning, "规划留了记录"
+    assert {m["event"]["run_id"] for m in planning} == {run_id}, "归到它开出来的那一轮"
 
 
 def test_an_empty_budget_means_no_budget(client_for) -> None:
@@ -639,6 +691,7 @@ def test_an_empty_budget_means_no_budget(client_for) -> None:
     `None`，以及 `exhausted()` 一次都没喊停。
     """
     llm = ScriptedLLM(
+        *opening("开个头。"),
         *one_run(outline="第一轮。", prose="正文一。"),
         tool("steer", next_input="再走一步。"),
         text("接着推。"),
@@ -983,6 +1036,7 @@ def test_resuming_hands_over_the_turns_the_user_wrote_meanwhile(client_for) -> N
     llm = ScriptedLLM(
         *one_run(outline="第一轮。", prose="正文一。"),
         *one_run(outline="第二轮。", prose="正文二。"),
+        *opening("接着说。"),
         *one_run(outline="第三轮。", prose="正文三。"),
         tool("finish", outcome="failed", reason="用户把局面带到了走不回去的地方"),
         text("完了。"),
@@ -1000,16 +1054,26 @@ def test_resuming_hands_over_the_turns_the_user_wrote_meanwhile(client_for) -> N
 
         # **恢复本身就是"接着跑"**（D165）——第三轮不用用户再打一句话推它。
         ws.send_text(json.dumps({"type": "goal_control", "action": "resume"}))
-        collect(ws, "run_finished")
+        third = collect(ws, "run_finished")[-1]["node"]
         finished = collect(ws, "goal_finished")[-1]
 
     asked = [r for r in llm.requests if GOAL_MARK in r["messages"][0]["content"]]
-    assert len(asked) == 1, "恢复之后才轮到它，而且只轮到一次"
-    body = "\n".join(m.get("content") or "" for m in asked[0]["messages"])
-    assert body.count("用户自己的输入") == 2, "暂停期间那两轮也算，而且都是用户打的"
-    assert body.count("没有输入，直接推进") == 1, "第三轮是恢复之后它自己开的"
-    for prose in ("正文一。", "正文二。", "正文三。"):
-        assert prose in body, "补的是正文，不是细纲（D150）"
+    # 三次**请求**，两次登场：开场那次调了 `steer` 再空手回来收口（两次请求），
+    # 判定那次调了 `finish` 就地收摊（一次）。
+    assert len(asked) == 3
+
+    # **交接发生在恢复的那一刻**（D168）：它先补上暂停期间那两轮，再据此写下一条
+    # 输入——而不是先空手推一轮、写完了才第一次看见那两轮。
+    handover = "\n".join(m.get("content") or "" for m in asked[0]["messages"])
+    assert handover.count("用户自己的输入") == 2, "暂停期间那两轮也算，而且都是用户打的"
+    for prose in ("正文一。", "正文二。"):
+        assert prose in handover, "补的是正文，不是细纲（D150）"
+    assert third["user_input"]["text"] == "接着说。"
+    assert third["user_input"]["source"] == "simulated"
+
+    judged = "\n".join(m.get("content") or "" for m in asked[-1]["messages"])
+    assert judged.count("我写的输入") == 1, "第三轮是它自己写的，来源要标对"
+    assert "正文三。" in judged
 
     # `failed` 也是终态：和 `done` 一样交回控制权、一样把 goal 清掉。
     assert finished["outcome"] == "failed"

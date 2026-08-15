@@ -21,14 +21,29 @@ const AFTER_WRITER = new Set(["state_manager", "goal_manager"]);
 /**
  * 按**运行顺序**把一轮切成两半：正文之前发生的，和正文之后发生的。
  *
- * 切点是第一条来自 writer 之后那些 agent 的记录。之后的编排层事件
- * （`state_committed`、`run_finished`）跟着落到下半——它们本来就发生在那之后。
+ * 切点**按位置定，不按 actor 定**——`writer` 最后那条记录之后就是下半。这一点
+ * 在 goal 开场时才见分晓（D168）：那时 goal_manager 跑在 director **之前**，
+ * 而它照 actor 认的话会被扔到正文下面去，时间线正好反了。位置不会说谎。
  *
- * trace 事件和思考段都按时间排着，所以同一个函数能切两样东西。
+ * 没有 writer 记录时退回按 actor 认——两种情形都走这条：从 state 阶段续跑的
+ * 那一轮（这一轮压根没有 writer），以及思考段那份（writer 未必有思考段）。
+ *
+ * 之后的编排层事件（`state_committed`、`run_finished`）跟着落到下半，
+ * 它们本来就发生在那之后。trace 事件和思考段都按时间排着，一个函数切两样。
  */
 export function splitAtProse<T extends { actor: string }>(items: T[]): [T[], T[]] {
-  const at = items.findIndex((x) => AFTER_WRITER.has(x.actor));
-  return at < 0 ? [items, []] : [items.slice(0, at), items.slice(at)];
+  let cut = -1;
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (items[i]?.actor === "writer") {
+      cut = i + 1;
+      break;
+    }
+  }
+  if (cut < 0) {
+    const at = items.findIndex((x) => AFTER_WRITER.has(x.actor));
+    cut = at < 0 ? items.length : at;
+  }
+  return [items.slice(0, cut), items.slice(cut)];
 }
 
 /**
