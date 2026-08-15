@@ -15,6 +15,22 @@ const ACTOR_LABEL: Record<string, string> = {
 /** 这些是编排层的脚手架，不是"它在想什么"。默认压暗，收起时也不计入步数。 */
 const PLUMBING = new Set(["context_assembled", "run_started", "run_finished", "model_request"]);
 
+/** **writer 之后才跑的 agent**：状态维护后置（D143），目标判定在 run 末（D28/D148）。 */
+const AFTER_WRITER = new Set(["state_manager", "goal_manager"]);
+
+/**
+ * 按**运行顺序**把一轮切成两半：正文之前发生的，和正文之后发生的。
+ *
+ * 切点是第一条来自 writer 之后那些 agent 的记录。之后的编排层事件
+ * （`state_committed`、`run_finished`）跟着落到下半——它们本来就发生在那之后。
+ *
+ * trace 事件和思考段都按时间排着，所以同一个函数能切两样东西。
+ */
+export function splitAtProse<T extends { actor: string }>(items: T[]): [T[], T[]] {
+  const at = items.findIndex((x) => AFTER_WRITER.has(x.actor));
+  return at < 0 ? [items, []] : [items.slice(0, at), items.slice(at)];
+}
+
 /**
  * 一轮的过程：**摆在正文流里，不在侧栏**。
  *
@@ -22,13 +38,19 @@ const PLUMBING = new Set(["context_assembled", "run_started", "run_finished", "m
  * 把它放到右边等于要求读者一边读正文一边扭头，而这两样东西本来就是一件事的
  * 两个阶段。
  *
- * **正文一落地就自动收起**（`collapsed`）：过程是"这一轮为什么写成这样"的答案，
- * 只在你问的时候才需要；跑的时候你盯着它看进度，跑完了它就该让位给正文。
+ * **同理，正文之后跑的东西要摆在正文下面**（D167）：状态维护后置到 writer 之后
+ * （D143），goal 判定更在 run 末（D28）——把它们塞进正文上方那一块，等于让
+ * 时间线在正文这里倒着走一段。所以 `Turn` 渲染两块，中间夹着正文。
+ *
+ * **正文一落地就自动收起**：过程是"这一轮为什么写成这样"的答案，只在你问的
+ * 时候才需要；跑的时候你盯着它看进度，跑完了它就该让位给正文。
  */
 export function Process({
   events,
   running,
   thinking,
+  label = "过程",
+  tail,
 }: {
   events: TraceEvent[];
   running: boolean;
@@ -37,6 +59,11 @@ export function Process({
    * 它是过程，不是产出，所以摆在这里；分段是因为一轮里最多四个 agent 说过话，
    * 拼成一坨就分不出哪句是谁的了。 */
   thinking?: Thought[];
+  /** 收起时那一行怎么称呼这一块。默认「过程」；正文下面那块叫「写完之后」——
+   * **说清它是什么时候发生的**，那正是分成两块要传达的东西。 */
+  label?: string;
+  /** 摆在正文下方（留上边距而不是下边距）。 */
+  tail?: boolean;
 }): JSX.Element | null {
   // 跑着的时候摊开，跑完自动收起——但用户手动开过就听用户的。
   const [opened, setOpened] = useState<boolean | null>(null);
@@ -46,27 +73,30 @@ export function Process({
 
   const steps = events.filter((e) => !PLUMBING.has(e.type));
   const latest = steps.at(-1) ?? events.at(-1);
+  const gap = tail ? "mt-4" : "mb-3";
 
   if (!open) {
     return (
       <button
         onClick={() => setOpened(true)}
-        className="mb-3 flex items-center gap-1.5 text-xs text-dim transition-colors hover:text-fg"
+        className={`${gap} flex items-center gap-1.5 text-xs text-dim transition-colors hover:text-fg`}
       >
         <span className="select-none">▸</span>
-        <span>过程 {steps.length} 步</span>
+        <span>
+          {label} {steps.length} 步
+        </span>
       </button>
     );
   }
 
   return (
-    <div className="mb-3">
+    <div className={gap}>
       <button
         onClick={() => setOpened(false)}
         className="mb-1.5 flex items-center gap-1.5 text-xs text-dim transition-colors hover:text-fg"
       >
         <span className="select-none">▾</span>
-        <span>{running ? (latest?.label ?? "正在开始") : `过程 ${steps.length} 步`}</span>
+        <span>{running ? (latest?.label ?? "正在开始") : `${label} ${steps.length} 步`}</span>
         {running && <span className="inline-block h-1 w-1 animate-pulse rounded-full bg-accent" />}
       </button>
 

@@ -100,7 +100,14 @@ async def run_state_manager(
     rounds = 0
 
     for rounds in range(1, max_rounds + 1):  # noqa: B007 — 出口在循环体里，要留住轮数
-        response = await ctx.gateway.complete(messages, tools=specs, user_id=ctx.session.id)
+        # **它的思考也要能看见**（D166/D167）：它和 director、writer 一样是个
+        # agent，而它跑在正文之后，界面上归到正文下面那一块。
+        response = await ctx.gateway.complete(
+            messages,
+            tools=specs,
+            user_id=ctx.session.id,
+            on_delta=ctx.stream_to(Actor.STATE_MANAGER),
+        )
 
         tracer.exchange(Actor.STATE_MANAGER, messages, response, tools=specs)
         tracer.emit(

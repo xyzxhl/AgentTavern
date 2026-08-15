@@ -1172,14 +1172,15 @@ def test_deltas_say_who_wrote_them(client_for) -> None:
     assert "".join(v for v in by_actor.values()) != messages[-1]["node"]["prose"]
 
 
-def test_the_goal_manager_streams_too(client_for) -> None:
-    """**它也是个 agent**（D166）。
+def test_the_agents_after_the_writer_stream_too(client_for) -> None:
+    """**它们也是 agent**（D166/D167）。
 
-    director 和 writer 的思考一直在推，goal_manager 的却藏着——凭什么。而它恰恰
-    是最需要看的那个：目标迟迟不达标时，唯一能回答"它到底在等什么"的就是这段。
+    director 和 writer 的思考一直在推，跑在正文之后那两个（state_manager 与
+    goal_manager）却藏着——凭什么。goal_manager 尤其：目标迟迟不达标时，唯一能
+    回答"它到底在等什么"的就是这段。
 
-    分片挂在**刚写完那一轮**的 `run_id` 上，和它的 trace 事件落在同一处：
-    goal_manager 是在那一轮之后跑的，那就是它归属的地方。
+    goal_manager 的分片挂在**刚写完那一轮**的 `run_id` 上，和它的 trace 事件落在
+    同一处：它是在那一轮之后跑的，那就是它归属的地方。
     """
     llm = ScriptedLLM(
         *one_run(outline="第一轮。", prose="正文一。"),
@@ -1199,14 +1200,19 @@ def test_the_goal_manager_streams_too(client_for) -> None:
         node_id = first[-1]["node"]["id"]
         second = collect(ws, "run_finished")
 
-    goal_deltas = [
-        m
-        for m in first + second
-        if m["type"] == "delta" and m["actor"] == "goal_manager" and m["kind"] == "content"
-    ]
+    def said_by(actor: str) -> list[dict]:
+        return [
+            m
+            for m in first + second
+            if m["type"] == "delta" and m["actor"] == actor and m["kind"] == "content"
+        ]
+
+    goal_deltas = said_by("goal_manager")
     assert "".join(m["text"] for m in goal_deltas) == "这一步还差着摊牌。"
     assert {m["run_id"] for m in goal_deltas} == {node_id}, "归到它判定的那一轮名下"
-    # 它写的那句话**不是正文**——按 actor 分流就是为了挡住这个（同 `deltas_say_who`）。
+    # 状态维护也跑在正文之后（D143），同样该看得见。
+    assert "".join(m["text"] for m in said_by("state_manager")) == "无变化。无变化。"
+    # 它们写的东西**都不是正文**——按 actor 分流就是为了挡住这个（同 `deltas_say_who`）。
     assert first[-1]["node"]["prose"] == "正文一。"
 
 

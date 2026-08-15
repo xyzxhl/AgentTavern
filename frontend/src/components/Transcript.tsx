@@ -3,7 +3,7 @@ import Markdown from "react-markdown";
 
 import type { Node } from "../protocol";
 import { useSession } from "../store";
-import { Process } from "./Process";
+import { Process, splitAtProse } from "./Process";
 
 /**
  * 正文流。**每一轮是「输入 → 过程 → 正文」三段**，过程摆在两者中间——
@@ -83,6 +83,12 @@ function Turn({
   /** 过程那半反过来：节点里没有它，落地之后照样留着（D166）。 */
   thinking?: import("../store").Thought[];
 }): JSX.Element {
+  // **时间线不能在正文这里倒着走**（D167）：状态维护跑在 writer 之后（D143），
+  // goal 判定更在 run 末（D28），它们的思考与工具调用因此归到正文**下面**那一块。
+  const [beforeEvents, afterEvents] = splitAtProse(events);
+  const [beforeThinking, afterThinking] = splitAtProse(thinking ?? []);
+  const post = afterEvents.length > 0 || afterThinking.length > 0;
+
   return (
     <article className="mb-8">
       {said && (
@@ -99,7 +105,9 @@ function Turn({
         </div>
       )}
 
-      <Process events={events} running={!!running} thinking={thinking} />
+      {/* 上面这块在下面那块开始有动静的那一刻就不再"跑着"了——**进度指示应该
+          跟着当前阶段走**，否则两块会同时闪，看不出在哪一段。 */}
+      <Process events={beforeEvents} running={!!running && !post} thinking={beforeThinking} />
 
       {/* 还在写：把攒出来的字直接摆出来。**不做 Markdown**——半截语法
           （没闭合的 `**`、写了一半的列表）渲染出来会跳来跳去。 */}
@@ -119,10 +127,23 @@ function Turn({
           <p className="text-sm text-dim">（这一轮没有写出正文。）</p>
         ))}
 
+      {/* 偏离报告是 writer 交出来的，跟着正文走，排在"写完之后"前面。 */}
       {node?.deviation_report && (
         <p className="mt-3 border-l-2 border-line pl-3 text-xs text-dim">
           偏离报告：{node.deviation_report}
         </p>
+      )}
+
+      {/* **写完之后**：状态维护（D143）与目标判定（D28）。goal_manager 尤其晚——
+          它跑在这一轮落地之后，那时 `running` 已经是 false 了，所以这块是收着的。 */}
+      {post && (
+        <Process
+          events={afterEvents}
+          running={!!running}
+          thinking={afterThinking}
+          label="写完之后"
+          tail
+        />
       )}
     </article>
   );
