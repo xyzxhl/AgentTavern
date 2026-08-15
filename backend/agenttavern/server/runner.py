@@ -432,8 +432,17 @@ class SessionRunner:
         if run.paused:
             return
 
-        # 判过一次就不用再开场了——开场要的那条输入它刚写好了。
-        self._goal_opening = False
+        if self._goal_opening:
+            # **目标是在这一轮跑着的时候设上（或恢复）的——那这一轮不算它的**（D169）。
+            # 它早就交给 director 了，抢不回来：判它、把它的开销记到目标账上，
+            # 都是在为一件目标没参与的事结账。
+            #
+            # 所以起点划到它身上：它和它之前的剧情一样进静态前缀、给细纲，
+            # 目标**从下一轮开始**。开场那次留给下一轮去跑——那时才有它自己的
+            # `run_id` 可挂（D168），而在这里跑就只能挂到刚结束的这一轮名下。
+            run.started_at_leaf_id = leaf_id
+            self._save_goal_run(run)
+            return
 
         step, spent = await self._goal_turn(session, goal, run, leaf_id, leaf_id)
         self._goal_input = step.next_input

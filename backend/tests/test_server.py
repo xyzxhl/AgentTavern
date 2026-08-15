@@ -816,8 +816,7 @@ def test_a_goal_set_while_a_run_is_in_flight_survives_that_run(client_for) -> No
         tool("ask_question", question="往哪边走？", options=["左", "右", "回头"]),
         tool("submit_outline", outline="她推开门。"),
         text("门轴响了。"),
-        tool("steer", next_input="接着走。"),
-        text("先推到这里。"),
+        *opening("接着走。"),
         *one_run(outline="第二轮。", prose="正文二。"),
         state=one_state(),
     )
@@ -847,14 +846,20 @@ def test_a_goal_set_while_a_run_is_in_flight_survives_that_run(client_for) -> No
         second = collect(ws, "run_finished")[-1]["node"]
 
     # **正在跑的那一轮是唯一的例外**（D168）：它已经交给 director 了，抢不回来。
-    # 目标从**下一轮**接管——那一轮的输入是 goal_manager 在这一轮末写的。
+    # 目标从**下一轮**接管，而那一轮照常是「先规划、再动手」。
     assert second["user_input"]["text"] == "接着走。"
     assert second["user_input"]["source"] == "simulated"
-    # 而且**没有多跑一次开场**：这一轮末的判定已经把下一条输入写好了。它第一次
-    # 开口时手里已经有那一轮的正文，说明那是判定而不是开场。
+
+    # **那一轮不算目标的**（D169）：它早就在跑了，判它、把它的开销记到目标账上，
+    # 都是在为一件目标没参与的事结账。所以它进静态前缀、给细纲，和它之前的
+    # 剧情一样——不是逐条追加的「第 N 轮」记录，也不进 `spent_runs`。
     asked = [r for r in llm.requests if GOAL_MARK in r["messages"][0]["content"]]
     first_words = "\n".join(m.get("content") or "" for m in asked[0]["messages"])
-    assert "门轴响了。" in first_words, "它第一次开口是在那一轮末，不是抢在它前面"
+    assert "她推开门。" in first_words, "它仍然要知道故事到哪儿了"
+    assert "门轴响了。" not in first_words, "但给的是细纲，不是正文——那一轮不是它的"
+    assert "第 1 轮" not in first_words
+    run = client.get(f"/sessions/{session_id}").json()["session"]["goal_run"]
+    assert run["spent_runs"] == 1, "只有它自己开出来的那一轮算数"
 
 
 def test_abandoning_during_judgement_leaves_nothing_behind(client_for, tmp_path: Path) -> None:
