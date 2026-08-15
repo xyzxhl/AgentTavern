@@ -648,6 +648,70 @@ def test_setting_a_goal_plans_first_then_runs(client_for) -> None:
     assert [s["description"] for s in run["plan"]["subgoals"]] == ["他先松口", "两人摊开说"]
 
 
+def test_a_goal_set_mid_story_also_plans_before_it_runs(client_for) -> None:
+    """**第几轮设的不影响这条**（D168）：先规划、写出输入，再交给 director。
+
+    空会话和跑了几轮的会话唯一的差别在**它读到什么**：已经写出来的剧情进静态
+    前缀、**给细纲**（"故事到这儿了"，够用而且便宜），goal 期间的每一轮才逐条
+    追加、给正文（D150）。所以设目标那一刻路径末端就是切点，它之前一条都不算
+    goal 期间的轮次。
+    """
+    llm = ScriptedLLM(
+        *one_run(outline="用户自己写的那一轮。", prose="正文一。"),
+        *opening("我把照片推过去。"),
+        *one_run(outline="第二轮。", prose="正文二。"),
+        state=one_state(),
+    )
+    client = client_for(llm)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "我推开门"}))
+        collect(ws, "run_finished")
+        ws.send_text(json.dumps({"type": "set_goal", "description": "写到摊牌"}))
+        second = collect(ws, "run_finished")[-1]["node"]
+
+    assert second["user_input"]["text"] == "我把照片推过去。"
+    assert second["user_input"]["source"] == "simulated"
+
+    planning = [r for r in llm.requests if GOAL_MARK in r["messages"][0]["content"]][0]
+    body = "\n".join(m.get("content") or "" for m in planning["messages"])
+    assert "用户自己写的那一轮。" in body, "goal 之前的剧情要给它，否则它凭空拆阶段"
+    assert "正文一。" not in body, "但给的是细纲——那一段只回答「故事到这儿了」（D150）"
+    assert "第 1 轮" not in body, "也不算 goal 期间的轮次：它进前缀，不是逐条追加的记录"
+
+
+def test_the_opening_conversation_carries_into_the_first_judgement(client_for) -> None:
+    """开场那次和紧接着的判定**是同一份对话**，中间不重建（D148/D168）。
+
+    `sync_conversation` 只在"上次看到的节点还在 goal 期间那一段里"时才增量追加，
+    否则整份重建。开场恰好卡在这个判据的缝上：那时 goal 期间一轮都还没有，
+    上次看到的是**切点**那个节点。照字面判的话，goal 期间的第一轮就会触发一次
+    重建——而那时对话完全是连续的，重建只是白白丢掉它开场时写计划的那段过程，
+    然后拿一份 `plan_snapshot` 顶上。**恢复时那样降级是有理由的，这里没有。**
+    """
+    llm = ScriptedLLM(
+        *opening("我把照片推过去。"),
+        *one_run(outline="第一轮。", prose="正文一。"),
+        tool("finish", outcome="done", reason="到了"),
+        state=one_state(),
+    )
+    client = client_for(llm)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "set_goal", "description": "写到摊牌"}))
+        collect(ws, "run_finished")
+        collect(ws, "goal_finished")
+
+    judged = [r for r in llm.requests if GOAL_MARK in r["messages"][0]["content"]][-1]
+    called = [c["function"]["name"] for m in judged["messages"] for c in m.get("tool_calls") or []]
+    assert "steer" in called, "开场时它自己那几步还在对话里，没有被重建冲掉"
+    assert "第 1 轮" in json.dumps(judged["messages"], ensure_ascii=False), "新的一轮照常追加"
+
+
 def test_the_opening_plan_belongs_to_the_run_it_opens(client_for) -> None:
     """开场那几次调用**挂在它开出来的那一轮名下**（D168）。
 
@@ -782,7 +846,15 @@ def test_a_goal_set_while_a_run_is_in_flight_survives_that_run(client_for) -> No
         # 目标活下来了，所以它会自己开下一轮。
         second = collect(ws, "run_finished")[-1]["node"]
 
+    # **正在跑的那一轮是唯一的例外**（D168）：它已经交给 director 了，抢不回来。
+    # 目标从**下一轮**接管——那一轮的输入是 goal_manager 在这一轮末写的。
+    assert second["user_input"]["text"] == "接着走。"
     assert second["user_input"]["source"] == "simulated"
+    # 而且**没有多跑一次开场**：这一轮末的判定已经把下一条输入写好了。它第一次
+    # 开口时手里已经有那一轮的正文，说明那是判定而不是开场。
+    asked = [r for r in llm.requests if GOAL_MARK in r["messages"][0]["content"]]
+    first_words = "\n".join(m.get("content") or "" for m in asked[0]["messages"])
+    assert "门轴响了。" in first_words, "它第一次开口是在那一轮末，不是抢在它前面"
 
 
 def test_abandoning_during_judgement_leaves_nothing_behind(client_for, tmp_path: Path) -> None:

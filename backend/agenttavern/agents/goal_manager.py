@@ -163,9 +163,9 @@ def sync_conversation(
 ) -> None:
     """把对话补到当前路径的末端。**能续就续，续不上就整份重建。**
 
-    续得上的条件是：已有对话，且上次看到的那个节点**还在当前路径上**。
-    不满足就重建——那正是暂停期间用户切了分支的情形，而「以最终选择的分支为准」
-    只有重建做得到：增量追加撤不回来（D148）。
+    续得上的条件是：已有对话，且上次看到的那个节点**还在当前路径上**——或者
+    恰好是**切点**那个（见下）。不满足就重建——那正是暂停期间用户切了分支的
+    情形，而「以最终选择的分支为准」只有重建做得到：增量追加撤不回来（D148）。
 
     重建丢掉的是 goal_manager 自己那些工具调用的历史，但计划与进度以投影的形式
     完整留着（`plan_snapshot`），**代价只在恢复那一刻付一次**——之后又是增量，
@@ -177,8 +177,18 @@ def sync_conversation(
     before, during = path[:cut], path[cut:]
 
     during_ids = [n.id for n in during]
-    resumable = bool(run.conversation) and run.seen_leaf_id in during_ids
-    start = during_ids.index(run.seen_leaf_id) + 1 if resumable and run.seen_leaf_id else 0
+    # **停在切点上也算续得上**（D168）。开场那一次跑在任何 goal 期间的轮次之前，
+    # 那时 `during` 是空的，`seen_leaf_id` 落在 goal 之前的最后一个节点上——照
+    # 「还在 during 里」判的话，goal 期间的第一轮就会触发一次整份重建，而那时
+    # 对话完全是连续的。重建只是白白丢掉它开场时自己写计划的那段过程。
+    #
+    # 拿切点**那个节点**比，而不是拿 `started_at_leaf_id` 比：分支切走之后
+    # `started_at_leaf_id` 可能根本不在路径上（`cut` 退回 0），那种情形必须重建。
+    seen = run.seen_leaf_id
+    at_cut = seen == (ids[cut - 1] if cut else None)
+    resumable = bool(run.conversation) and (at_cut or seen in during_ids)
+    # 停在切点上时 `during` 整段都还没给过，从头追加。
+    start = during_ids.index(seen) + 1 if resumable and not at_cut and seen else 0
 
     if not resumable:
         run.conversation = _prefix(meta, goal, density, before)
