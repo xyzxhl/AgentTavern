@@ -23,8 +23,10 @@ export function GoalPanel(): JSX.Element {
   const subgoals = progress?.subgoals ?? run?.plan?.subgoals ?? [];
   const spentRuns = progress?.spent_runs ?? run?.spent_runs ?? 0;
   const spentTokens = progress?.spent_tokens ?? run?.spent_tokens ?? 0;
-  const maxRuns = progress?.max_runs ?? goal.max_runs ?? 0;
-  const maxTokens = progress?.max_total_tokens ?? goal.max_total_tokens ?? 0;
+  // **`null` 是"不设上限"，不是 0**（D164）。`??` 在这里会把它悄悄换成
+  // 另一条的值，所以按"有没有推过进度"来选，不按值是否为空。
+  const maxRuns = (progress ? progress.max_runs : goal.max_runs) ?? null;
+  const maxTokens = (progress ? progress.max_total_tokens : goal.max_total_tokens) ?? null;
   const paused = run?.paused ?? false;
   const done = subgoals.filter((s) => s.done).length;
 
@@ -94,6 +96,8 @@ export function GoalPanel(): JSX.Element {
   );
 }
 
+/** 一条预算。**`cap` 为 `null` 就是没设上限**（D164）：只报已经花了多少，
+ * 不画进度条——没有分母的进度条只会误导。 */
 function Meter({
   label,
   used,
@@ -102,41 +106,59 @@ function Meter({
 }: {
   label: string;
   used: number;
-  cap: number;
+  cap: number | null;
   compact?: boolean;
 }): JSX.Element {
   const show = (n: number) => (compact && n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
-  const ratio = cap > 0 ? Math.min(1, used / cap) : 0;
+  const ratio = cap ? Math.min(1, used / cap) : 0;
   return (
     <div className="flex-1">
       <div className="flex justify-between">
         <span>{label}</span>
-        <span className={ratio >= 1 ? "text-accent" : ""}>
-          {show(used)}/{show(cap)}
+        <span className={cap !== null && ratio >= 1 ? "text-accent" : ""}>
+          {show(used)}
+          {cap === null ? " · 不限" : `/${show(cap)}`}
         </span>
       </div>
       <div className="mt-0.5 h-0.5 rounded bg-ink-600">
-        <div className="h-full rounded bg-accent" style={{ width: `${ratio * 100}%` }} />
+        {cap !== null && (
+          <div className="h-full rounded bg-accent" style={{ width: `${ratio * 100}%` }} />
+        )}
       </div>
     </div>
   );
 }
 
-/** **预算耗尽是暂停，不是失败**（D148）——调大上限就能接着跑。 */
-function AddBudget({ maxRuns, maxTokens }: { maxRuns: number; maxTokens: number }): JSX.Element {
+/** **预算耗尽是暂停，不是失败**（D148）——调大上限就能接着跑。
+ *
+ * 没设上限时它整个不出现：没有可加的东西，多一个按不动的按钮只是噪音。 */
+function AddBudget({
+  maxRuns,
+  maxTokens,
+}: {
+  maxRuns: number | null;
+  maxTokens: number | null;
+}): JSX.Element | null {
   const send = useSession((s) => s.send);
+  if (maxRuns === null && maxTokens === null) return null;
   return (
     <button
       className="btn"
       onClick={() => {
-        const more = prompt("再给几轮？", "10");
+        const more = prompt("再给几轮？（留空 = 从此不设上限）", "10");
+        if (more === null) return;
+        if (!more.trim()) {
+          send({ type: "set_goal_budget", unlimited: true });
+          return;
+        }
         const n = Number(more);
-        if (!n || n < 0) return;
+        if (!Number.isInteger(n) || n < 1) return;
         send({
           type: "set_goal_budget",
-          max_runs: maxRuns + n,
+          max_runs: maxRuns === null ? null : maxRuns + n,
           // token 上限按同样的比例跟着放，否则加了轮数还是会立刻撞上另一条。
-          max_total_tokens: maxTokens + Math.round((maxTokens / Math.max(maxRuns, 1)) * n),
+          max_total_tokens:
+            maxTokens === null ? null : maxTokens + Math.round((maxTokens / (maxRuns || 1)) * n),
         });
       }}
     >
@@ -150,15 +172,16 @@ function NewGoal(): JSX.Element {
   const [text, setText] = useState("");
   const [runs, setRuns] = useState("");
 
+  // **留空 = 不设上限**（D164）。`Number("") === 0` 会被服务端当场拒掉，
+  // 所以空串必须显式变成 `null`，不能靠 `Number(runs) || null` 蒙混过去——
+  // 那个写法把 "0" 和 "" 混成同一件事，而它们的意思正好相反。
+  const cap = runs.trim() ? Number(runs) : null;
+  const bad = cap !== null && (!Number.isInteger(cap) || cap < 1);
+
   function submit(): void {
     const said = text.trim();
-    if (!said) return;
-    send({
-      type: "set_goal",
-      description: said,
-      max_runs: Number(runs) || null,
-      max_total_tokens: null,
-    });
+    if (!said || bad) return;
+    send({ type: "set_goal", description: said, max_runs: cap, max_total_tokens: null });
     setText("");
     setRuns("");
   }
@@ -183,16 +206,25 @@ function NewGoal(): JSX.Element {
           onChange={(e) => setRuns(e.target.value)}
           type="number"
           min={1}
-          placeholder="轮数上限"
-          className="w-24 rounded border border-line bg-ink-900 px-2 py-1 text-xs text-fg placeholder:text-dim/60 focus:border-dim focus:outline-none"
+          placeholder="轮数上限（留空不限）"
+          className={`w-40 rounded border bg-ink-900 px-2 py-1 text-xs text-fg placeholder:text-dim/60 focus:outline-none ${
+            bad ? "border-accent" : "border-line focus:border-dim"
+          }`}
         />
-        <button className="btn" onClick={submit} disabled={!text.trim()}>
+        <button className="btn" onClick={submit} disabled={!text.trim() || bad}>
           开始
         </button>
       </div>
       <p className="mt-2 text-[10px] leading-snug text-dim/70">
-        上限是止损，不是预期——模型可能永远判不达标，目标本身也可能不可达。
-        到顶是暂停不是失败，随时可以加预算接着跑。
+        {/* **留空是在表态，不是没填**（D164）：不设上限就一直推到达成、失败，
+            或者你自己按停。想止损就填个数。 */}
+        <b className="font-medium text-fg">留空就是不设上限</b>
+        ，一直推到达成、失败或你按暂停。填了数就是止损——模型可能永远判不达标，
+        目标本身也可能不可达；到顶是暂停不是失败，随时可以加预算接着跑。
+      </p>
+      <p className="mt-2 text-[10px] leading-snug text-dim/70">
+        设完<b className="font-medium text-fg">立刻开始</b>
+        ：一轮都还没写过也一样。第一轮没有输入，之后每轮的输入由它替你写。
       </p>
     </div>
   );

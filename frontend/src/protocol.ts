@@ -57,6 +57,7 @@ export type MaxTotalTokens = number | null;
 export type Type8 = "set_goal_budget";
 export type MaxRuns1 = number | null;
 export type MaxTotalTokens1 = number | null;
+export type Unlimited = boolean;
 export type Type9 = "goal_control";
 export type Action = "pause" | "resume" | "abandon";
 export type ServerMessage =
@@ -197,8 +198,8 @@ export type Done = boolean;
 export type Subgoals = SubGoal[];
 export type SpentRuns = number;
 export type SpentTokens = number;
-export type MaxRuns2 = number;
-export type MaxTotalTokens2 = number;
+export type MaxRuns2 = number | null;
+export type MaxTotalTokens2 = number | null;
 export type Type23 = "goal_paused";
 export type Reason2 = string;
 export type Type24 = "error";
@@ -210,8 +211,8 @@ export type ContentScale = string;
 export type GenreTone = string;
 export type UserCharacter = string;
 export type Description2 = string;
-export type MaxRuns3 = number;
-export type MaxTotalTokens3 = number;
+export type MaxRuns3 = number | null;
+export type MaxTotalTokens3 = number | null;
 export type TimeDriven = boolean;
 export type Nudge = boolean;
 export type State = boolean;
@@ -388,6 +389,7 @@ export interface SetGoalBudget {
   type?: Type8;
   max_runs?: MaxRuns1;
   max_total_tokens?: MaxTotalTokens1;
+  unlimited?: Unlimited;
 }
 /**
  * 暂停 / 恢复 / 放弃当前 goal（D148）。

@@ -456,14 +456,20 @@ async def test_the_nudge_only_asks_for_the_one_remaining_step(tmp_path: Path) ->
 # -- 情色指导与破限：YAML 槽位，默认空 -----------------------------------------
 
 
-def test_nsfw_defaults_to_empty_and_injects_nothing() -> None:
-    """情色指导**出厂为空**，空则整节不注入——连标题都不出现。
+def test_empty_nsfw_injects_nothing_at_all(monkeypatch) -> None:
+    """情色指导**留空则整节不注入**——连标题都不出现。
 
-    这条钉的是「不预设内容」这个决定本身：它是部署方按自己的模型填的东西，
-    我们在仓库里写任何示例都会被当成推荐值。
+    **它钉的是空槽位的行为，不是仓库里填了什么。** 早先这条断言的是"出厂为空"，
+    理由是"写任何示例都会被当成推荐值"；那个理由针对的是我们，不是部署方，
+    而这份 YAML 现在是部署方自己在维护（D35 的分工）。继续钉着它，等于每次
+    有人按自己的模型填上一段就红一次——`test_each_side_gets_its_own_sections`
+    那条已经吃过一模一样的亏：钉内容的测试不保护不变量，只是把文案冻住。
+
+    留空必须干净地消失，是因为标题本身就是一句指令：一个只剩「情色描写」四个字、
+    底下什么都没有的小节，比不出现更糟。
     """
-    for side in ("writer", "director"):
-        assert _real_text(side, "nsfw") == ""
+    real = assembler.load
+    monkeypatch.setattr(assembler, "load", lambda name: {**real(name), "nsfw": ""})
 
     meta = make_meta()
     for prompt in (writer_text(meta, ControlDimensions()), prompt_for(meta=meta)):

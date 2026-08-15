@@ -20,7 +20,8 @@ export function GoalBar(): JSX.Element | null {
   const subgoals = progress?.subgoals ?? run?.plan?.subgoals ?? [];
   const done = subgoals.filter((s) => s.done).length;
   const spent = progress?.spent_runs ?? run?.spent_runs ?? 0;
-  const cap = progress?.max_runs ?? goal.max_runs ?? 0;
+  // **`null` 是"不设上限"，不是 0**（D164）：`??` 会把它悄悄换成另一条的值。
+  const cap = (progress ? progress.max_runs : goal.max_runs) ?? null;
   const paused = run?.paused ?? false;
 
   return (
@@ -37,7 +38,7 @@ export function GoalBar(): JSX.Element | null {
         </span>
       )}
       <span className="shrink-0 font-mono text-[11px] text-dim">
-        {spent}/{cap} 轮
+        {cap === null ? `第 ${spent + 1} 轮 · 不限` : `${spent}/${cap} 轮`}
       </span>
 
       <button

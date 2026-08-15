@@ -151,11 +151,16 @@ class Goal(BaseModel):
     description: str
     """用户设定的可判定标准。表述越具体，模型判定越准。"""
 
-    max_runs: int = LIMITS.goal_manager.max_runs
-    """硬上限保底——模型可能永远判不达标，或目标本身不可达。"""
+    max_runs: int | None = None
+    """硬上限保底——模型可能永远判不达标，或目标本身不可达。
 
-    max_total_tokens: int = LIMITS.goal_manager.max_total_tokens
-    """硬上限保底（同上）。
+    **`None` = 不设上限**（D164）。以前留空会被填成一个默认值（50），那等于替
+    用户做了决定：他没填，不是"随便给个数"，是"别拦我"。想要止损的人本来就会
+    填一个数；不填的人被一个自己没见过的数字在第 50 轮拦下来，只会以为出了故障。
+    """
+
+    max_total_tokens: int | None = None
+    """硬上限保底（同上，`None` = 不设上限）。
 
     **两条预算都可以在 goal 跑着的时候调大**——那就是"加预算继续"（D148）。
     `description` 不行：对话是围着它建起来的，改了等于换了个目标。
@@ -295,10 +300,14 @@ class GoalRun(BaseModel):
     """
 
     def exhausted(self, goal: Goal) -> str | None:
-        """预算到顶了没有。到了返回一句人能读的理由，没到返回 ``None``。"""
-        if self.spent_runs >= goal.max_runs:
+        """预算到顶了没有。到了返回一句人能读的理由，没到返回 ``None``。
+
+        **没设的那条不参与判断**（D164）：`None` 是"不设上限"，不是"上限为零"。
+        两条都没设时它永远返回 ``None``——那正是用户要的，止损交给暂停和放弃。
+        """
+        if goal.max_runs is not None and self.spent_runs >= goal.max_runs:
             return f"已跑满 {goal.max_runs} 轮"
-        if self.spent_tokens >= goal.max_total_tokens:
+        if goal.max_total_tokens is not None and self.spent_tokens >= goal.max_total_tokens:
             return f"已用掉 {self.spent_tokens} token（上限 {goal.max_total_tokens}）"
         return None
 

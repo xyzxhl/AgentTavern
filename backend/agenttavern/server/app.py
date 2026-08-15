@@ -343,21 +343,20 @@ async def _handle(
         if session.meta.goal is not None:
             await broadcast(ServerError(message="已经有一个目标在跑。先放弃它再设新的。"))
         else:
+            # **留空就是不设上限**（D164）：两条预算原样透传，`None` 一路带到
+            # `Goal`，不在这里替用户填一个默认值。
             session.meta.goal = Goal(
                 description=message.description,
-                **{
-                    k: v
-                    for k, v in (
-                        ("max_runs", message.max_runs),
-                        ("max_total_tokens", message.max_total_tokens),
-                    )
-                    if v is not None
-                },
+                max_runs=message.max_runs,
+                max_total_tokens=message.max_total_tokens,
             )
             # **记下从哪儿开始**（D150）：它之前的剧情给细纲、进静态前缀，
             # 之后的每一轮给正文、逐条追加。
             session.goal_run = GoalRun(started_at_leaf_id=session.active_leaf_id)
             repo.save_session(session)
+            # **设目标就是"去做"**（D165）。不叫醒的话，一个还没写过任何一轮的
+            # 会话会举着「目标推进中」一动不动，直到用户随便打句话把它推起来。
+            runner.nudge()
 
     elif isinstance(message, SetGoalBudget):
         # **这是"加预算接着跑"的入口。** 目标本身禁改，预算恰恰要能在跑到一半
@@ -366,14 +365,24 @@ async def _handle(
         if session.meta.goal is None:
             await broadcast(ServerError(message="当前没有目标。"))
         else:
+            if message.unlimited:
+                # 两条一起去掉。**只去掉一条没有意义**：另一条照样会把它拦下来，
+                # 而用户按的那个按钮写的是"不设上限"。
+                session.meta.goal.max_runs = None
+                session.meta.goal.max_total_tokens = None
             if message.max_runs is not None:
                 session.meta.goal.max_runs = message.max_runs
             if message.max_total_tokens is not None:
                 session.meta.goal.max_total_tokens = message.max_total_tokens
             run = session.goal_run
-            if run is not None and run.paused and run.exhausted(session.meta.goal) is None:
+            resumed = run is not None and run.paused and run.exhausted(session.meta.goal) is None
+            if resumed and run is not None:
                 run.paused, run.paused_reason = False, ""
             repo.save_session(session)
+            # 加完预算它得自己接着跑——否则「加预算」只是把数字改大，还得再手动
+            # 推一把才动。
+            if resumed:
+                runner.nudge()
 
     elif isinstance(message, GoalControl):
         session = repo.load_session()
@@ -389,6 +398,8 @@ async def _handle(
             run.paused_reason = "用户暂停" if run.paused else ""
             session.goal_run = run
             repo.save_session(session)
+            if not run.paused:
+                runner.nudge()
 
     elif isinstance(message, Regenerate):
         # 重生成 = 在当前叶的父节点下新建兄弟（D46）。**只能重 roll 当前节点**

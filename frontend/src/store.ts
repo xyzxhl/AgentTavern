@@ -16,6 +16,12 @@ import type {
 
 export type RunPhase = "idle" | "running" | "asking";
 
+/** 某个 agent 连续说的一段过程（思考段，或它推演途中的自言自语）。 */
+export interface Thought {
+  actor: string;
+  text: string;
+}
+
 export interface SessionState {
   meta: ServerMeta | null;
   sessionIds: string[];
@@ -41,14 +47,20 @@ export interface SessionState {
 
   /** 流式攒出来的字：`run_id` → `{ 正文, 过程 }`（D160）。
    *
-   * **按来源分开，不按 kind 分**：`content` 分片两个 agent 都在发——director
-   * 那些是推演途中的自言自语，writer 的才是正文。混在一起攒，界面上就会把
-   * 「我先把这一轮推演清楚」当成故事的第一句显示出来。
+   * **按来源分开，不按 kind 分**：`content` 分片几个 agent 都在发——director
+   * 那些是推演途中的自言自语，goal_manager 那些是它判定时说的话，只有 writer
+   * 的才是正文。混在一起攒，界面上就会把「我先把这一轮推演清楚」当成故事的
+   * 第一句显示出来。
    *
-   * **它是旁路，不是权威**——分片可能因为断线而丢，所以这里攒的东西只用来
-   * 「边写边看」，一等到 `run_finished` 就让位给节点里的正文，不当真值留着。
+   * 过程那半**按 agent 分段留着**（D166）：一轮里最多四个 agent 说过话，
+   * 拼成一大坨就分不出哪句是谁的了，而"是谁在想这件事"恰恰是查问题时的第一个
+   * 问题。相邻的同一个 agent 合并成一段。
+   *
+   * **正文那半是旁路，不是权威**——分片可能因为断线而丢，所以它只用来
+   * 「边写边看」，一等到 `run_finished` 就让位给节点里的正文。过程那半相反：
+   * 它在节点里没有对应物，扔掉就永远看不到了，所以落地之后照样留着。
    */
-  streaming: Record<string, { prose: string; process: string }>;
+  streaming: Record<string, { prose: string; process: Thought[] }>;
 
   /** 刚发出去、还没等到 `run_started` 的那句话。**只为把它归到正确的一轮名下。**
    * 服务端要到 `run_finished` 才把输入回给我们，而过程要在那之前就显示出来。 */
@@ -102,13 +114,13 @@ export const useSession = create<SessionState>((set, get) => {
         // 思考段、它推演途中的自言自语、writer 自己的思考段。
         const isProse = message.actor === "writer" && message.kind === "content";
         set((s) => {
-          const now = s.streaming[at] ?? { prose: "", process: "" };
+          const now = s.streaming[at] ?? { prose: "", process: [] };
           return {
             streaming: {
               ...s.streaming,
               [at]: {
                 prose: now.prose + (isProse ? message.text : ""),
-                process: now.process + (isProse ? "" : message.text),
+                process: isProse ? now.process : append(now.process, message.actor, message.text),
               },
             },
           };
@@ -137,8 +149,19 @@ export const useSession = create<SessionState>((set, get) => {
           phase: "idle",
           question: null,
           live: null,
-          // **攒出来的字到此为止**：节点里的正文才是权威，留着两份只会不一致。
-          streaming: without(s.streaming, message.node.id ?? ""),
+          // **正文到此为止，思考段留着**（D166）。
+          //
+          // 正文有权威版本——节点里那份，留两份只会不一致。思考段没有：它不在
+          // 节点里，也不在开发者模式之外的任何地方，扔掉就是永远看不到了。
+          // 而 goal_manager **是在这条消息之后才跑的**，它的分片挂在同一个
+          // run_id 上；这里整条抹掉的话，它的思考连落脚的地方都没有。
+          streaming: {
+            ...s.streaming,
+            [message.node.id ?? ""]: {
+              prose: "",
+              process: s.streaming[message.node.id ?? ""]?.process ?? [],
+            },
+          },
           // 同一个 id 就替换（重生成会落新节点，切分支会整条换掉）。
           path: upsert(s.path, message.node),
         }));
@@ -286,9 +309,14 @@ export const useSession = create<SessionState>((set, get) => {
   };
 });
 
-function without<T>(map: Record<string, T>, key: string): Record<string, T> {
-  const { [key]: _gone, ...rest } = map;
-  return rest;
+/** 接上最后一段，来源变了才另起一段。**分片是逐字来的**，一片一段的话
+ * 一轮下来会有两万多个元素，而它们本来就是一句话。 */
+function append(process: Thought[], actor: string, text: string): Thought[] {
+  const last = process.at(-1);
+  if (last?.actor === actor) {
+    return [...process.slice(0, -1), { actor, text: last.text + text }];
+  }
+  return [...process, { actor, text }];
 }
 
 function upsert(path: Node[], node: Node): Node[] {

@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from agenttavern.config import Settings
 from agenttavern.models import Capabilities, Goal, Session, SessionMeta
 from agenttavern.server import create_app
+from agenttavern.storage import SessionRepository
 
 
 def one_run(
@@ -592,6 +593,193 @@ def test_goal_drives_another_run_with_a_simulated_input(client_for) -> None:
     assert run["spent_runs"] >= 1, "预算计数必须落盘——它以前在内存里，重启就归零"
 
 
+def test_setting_a_goal_starts_it_without_waiting_for_input(client_for) -> None:
+    """**设目标就是"去做"**（D165）——包括一轮都还没写过的会话。
+
+    以前不是这样：自动续跑只在一次 run 正常结束之后才打开，所以在空会话上设完
+    目标什么都不会发生，界面举着「目标推进中」一动不动，直到用户随便打句话把它
+    推起来。那条规则挡的是「带 goal 的 session 一连上就自己开始生成」——**连接
+    不是指令，而设目标是**。
+
+    第一轮没有输入（"直接推进"）：goal_manager 只在 run 末跑，它还没机会写。
+    从第二轮起才有它写的那条。
+    """
+    llm = ScriptedLLM(
+        *one_run(outline="开场。", prose="正文一。"),
+        tools(
+            ("plan", {"subgoals": ["他先松口"]}),
+            ("steer", {"next_input": "我把照片推过去。"}),
+        ),
+        text("先推到这里。"),
+        *one_run(outline="第二轮。", prose="正文二。"),
+        state=one_state(),
+    )
+    client = client_for(llm)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        # 一个字都没打，只是设了个目标。
+        ws.send_text(json.dumps({"type": "set_goal", "description": "写到摊牌"}))
+        first = collect(ws, "run_finished")[-1]["node"]
+        second = collect(ws, "run_finished")[-1]["node"]
+
+    assert first["user_input"] is None, "没人打字，这一轮就是直接推进"
+    assert second["user_input"]["text"] == "我把照片推过去。"
+    assert second["user_input"]["source"] == "simulated"
+
+
+def test_an_empty_budget_means_no_budget(client_for) -> None:
+    """**留空就是不设上限**（D164）。
+
+    以前留空会被填成配置里的 50 轮——那是替用户做决定：他没填不是"随便给个数"，
+    是"别拦我"。而被一个自己没见过的数字在第 50 轮拦下来，只会以为出了故障。
+
+    这里跑三轮：搁在旧默认值下这当然也过，所以真正的断言在落盘的那两个
+    `None`，以及 `exhausted()` 一次都没喊停。
+    """
+    llm = ScriptedLLM(
+        *one_run(outline="第一轮。", prose="正文一。"),
+        tool("steer", next_input="再走一步。"),
+        text("接着推。"),
+        *one_run(outline="第二轮。", prose="正文二。"),
+        tool("steer", next_input="再来。"),
+        text("接着推。"),
+        *one_run(outline="第三轮。", prose="正文三。"),
+        tool("finish", outcome="done", reason="摊牌了"),
+        text("收工。"),
+        state=one_state(),
+    )
+    client = client_for(llm)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "set_goal", "description": "写到摊牌"}))
+        progress = []
+        for _ in range(3):
+            seen = collect(ws, "run_finished")
+            progress += [m for m in seen if m["type"] == "goal_progress"]
+        finished = collect(ws, "goal_finished")[-1]
+
+    assert finished["outcome"] == "done"
+    assert progress, "每轮都推一次进度（D161）"
+    for p in progress:
+        assert p["max_runs"] is None and p["max_total_tokens"] is None, "没设就是 None，不是 0"
+    assert not [m for m in progress if m.get("type") == "goal_paused"]
+
+
+def test_a_zero_budget_is_rejected_rather_than_silently_pausing(client_for) -> None:
+    """`0` 表达不了任何意图：一设上就是"已经跑满"，goal 当场暂停。
+
+    它最可能的来源是前端把空输入框转成了数字，而那时用户的意思恰恰是"不设上限"。
+    静默接受的话，症状是"目标设完就自己暂停了"——没人会想到去看那个数字。
+    """
+    client = client_for(happy_llm())
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "set_goal", "description": "写到摊牌", "max_runs": 0}))
+        assert "格式错误" in collect(ws, "error")[-1]["message"]
+
+    assert client.get(f"/sessions/{session_id}").json()["session"]["meta"]["goal"] is None
+
+
+def test_a_goal_set_while_a_run_is_in_flight_survives_that_run(client_for) -> None:
+    """**运行中设的目标不能被那一轮结束时的写回抹掉。**
+
+    元操作与生成是并行的（D24），而 run 手里那份 `session` 是它开始那一刻的
+    快照。以前它在末尾把整份写回去，于是这期间设的目标、以及**这一轮自己刚
+    冻结的初始状态**（D158）一起没了——一个字的报错都没有。
+
+    这里用 `ask_question` 把 run 挂在半路（D66：挂起不设超时），趁它挂着设目标。
+    """
+    llm = ScriptedLLM(
+        tool("ask_question", question="往哪边走？", options=["左", "右", "回头"]),
+        tool("submit_outline", outline="她推开门。"),
+        text("门轴响了。"),
+        tool("steer", next_input="接着走。"),
+        text("先推到这里。"),
+        *one_run(outline="第二轮。", prose="正文二。"),
+        state=one_state(),
+    )
+    client = client_for(llm)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "我推开门"}))
+        question = collect(ws, "question")[-1]
+
+        # run 正挂在问句上——这一刻设目标。
+        ws.send_text(json.dumps({"type": "set_goal", "description": "写到摊牌"}))
+        ws.send_text(
+            json.dumps({"type": "answer", "question_id": question["question_id"], "selected": "左"})
+        )
+        collect(ws, "run_finished")
+
+        # **先查落盘的那份再等下一轮。** 抹掉的症状是"下一轮永远不来"，而等一条
+        # 永远不来的消息只会挂住——那样测试失败会变成超时，看不出是什么坏了。
+        body = client.get(f"/sessions/{session_id}").json()["session"]
+        assert body["meta"]["goal"] is not None, "运行中设的目标被那一轮的写回抹掉了"
+        assert body["meta"]["goal"]["description"] == "写到摊牌"
+        assert body["initial_state"] is not None, "这一轮冻结的初始状态也不该被写回抹掉"
+
+        # 目标活下来了，所以它会自己开下一轮。
+        second = collect(ws, "run_finished")[-1]["node"]
+
+    assert second["user_input"]["source"] == "simulated"
+
+
+def test_abandoning_during_judgement_leaves_nothing_behind(client_for, tmp_path: Path) -> None:
+    """判定是一次真实的模型调用，跑几十秒——用户完全可能在这中间按放弃。
+
+    照写回去的话会留下一份**没有主人的 `goal_run`**：它带着几十万字的对话，
+    而且下次设目标时那份旧进度会当成新目标的进度显示出来。goal_manager 这一轮
+    判出来的东西——包括它替用户写的下一条输入——也必须一起作废，否则用户放弃完
+    还会莫名其妙再看到一轮自动推进。
+
+    **放弃的时机要卡准**：从 WS 发一条"放弃"是抢不到这个窗口的，它会在判定开始
+    之前就被处理掉，那时 `_check_goal` 一进门就返回了，走不到写回那一步。所以
+    这里在**应答 goal_manager 那次请求的同一刻**直接改盘上的 session——那正好
+    是判定跑到一半的时候。
+    """
+    goal_repo = SessionRepository(tmp_path, "s-abandon")
+
+    def abandon() -> None:
+        """用户此刻按下了放弃。"""
+        session = goal_repo.load_session()
+        session.meta.goal = None
+        session.goal_run = None
+        goal_repo.save_session(session)
+
+    llm = ScriptedLLM(
+        *one_run(outline="第一轮。", prose="正文一。"),
+        tool("steer", next_input="我把照片推过去。"),
+        text("先推到这里。"),
+        *one_run(outline="不该发生的第二轮。"),
+        state=one_state(),
+        on_goal_request=abandon,
+    )
+    client = client_for(llm)
+    session = Session(id="s-abandon", meta=SessionMeta(goal=Goal(description="写到摊牌")))
+    client.post("/sessions", json=session.model_dump(mode="json"))
+
+    with client.websocket_connect(f"/sessions/{session.id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "开始"}))
+        collect(ws, "run_finished")
+        # 拿一条会报错的消息当同步点，确认队列里没有别的东西在跑。
+        ws.send_text(json.dumps({"type": "不存在的类型"}))
+        assert "格式错误" in collect(ws, "error")[-1]["message"]
+
+    detail = client.get(f"/sessions/{session.id}").json()
+    assert detail["session"]["meta"]["goal"] is None
+    assert detail["session"]["goal_run"] is None, "没有主人的运行时状态不该留在盘上"
+    assert len(detail["path"]) == 1, "放弃之后不该再自动开一轮"
+
+
 def test_progress_is_pushed_every_turn_not_only_at_the_end(client_for) -> None:
     """**中间状态被一条条划掉，是用户最想看的东西**（D161）。
 
@@ -744,7 +932,9 @@ def test_abandoning_is_the_only_way_to_swap_a_goal(client_for) -> None:
     body = client.get(f"/sessions/{session.id}").json()["session"]
     assert body["meta"]["goal"]["description"] == "换一个"
     assert body["goal_run"] is not None, "新目标带着自己那份运行时状态"
-    assert body["goal_run"]["conversation"] == [], "旧对话没跟过来"
+    # **旧对话没跟过来。** 不能断言它是空的：新目标一设上就自己开跑了（D165），
+    # 那份对话到这一刻多半已经有内容——要钉的是内容属于**新**目标。
+    assert "写到摊牌" not in json.dumps(body["goal_run"]["conversation"], ensure_ascii=False)
 
 
 def test_a_paused_goal_neither_judges_nor_continues(client_for) -> None:
@@ -808,15 +998,16 @@ def test_resuming_hands_over_the_turns_the_user_wrote_meanwhile(client_for) -> N
             ws.send_text(json.dumps({"type": "submit", "text": said}))
             collect(ws, "run_finished")
 
+        # **恢复本身就是"接着跑"**（D165）——第三轮不用用户再打一句话推它。
         ws.send_text(json.dumps({"type": "goal_control", "action": "resume"}))
-        ws.send_text(json.dumps({"type": "submit", "text": "接着说"}))
         collect(ws, "run_finished")
         finished = collect(ws, "goal_finished")[-1]
 
     asked = [r for r in llm.requests if GOAL_MARK in r["messages"][0]["content"]]
     assert len(asked) == 1, "恢复之后才轮到它，而且只轮到一次"
     body = "\n".join(m.get("content") or "" for m in asked[0]["messages"])
-    assert body.count("用户自己的输入") == 3, "暂停期间那两轮也算，而且都是用户打的"
+    assert body.count("用户自己的输入") == 2, "暂停期间那两轮也算，而且都是用户打的"
+    assert body.count("没有输入，直接推进") == 1, "第三轮是恢复之后它自己开的"
     for prose in ("正文一。", "正文二。", "正文三。"):
         assert prose in body, "补的是正文，不是细纲（D150）"
 
@@ -979,6 +1170,44 @@ def test_deltas_say_who_wrote_them(client_for) -> None:
     assert by_actor["director"] == "我先想想。"
     # 全部 content 拼起来**不等于**正文——这正是必须按来源分开的理由。
     assert "".join(v for v in by_actor.values()) != messages[-1]["node"]["prose"]
+
+
+def test_the_goal_manager_streams_too(client_for) -> None:
+    """**它也是个 agent**（D166）。
+
+    director 和 writer 的思考一直在推，goal_manager 的却藏着——凭什么。而它恰恰
+    是最需要看的那个：目标迟迟不达标时，唯一能回答"它到底在等什么"的就是这段。
+
+    分片挂在**刚写完那一轮**的 `run_id` 上，和它的 trace 事件落在同一处：
+    goal_manager 是在那一轮之后跑的，那就是它归属的地方。
+    """
+    llm = ScriptedLLM(
+        *one_run(outline="第一轮。", prose="正文一。"),
+        tool("steer", next_input="再走一步。"),
+        text("这一步还差着摊牌。"),
+        *one_run(outline="第二轮。", prose="正文二。"),
+        state=one_state(),
+    )
+    client = client_for(llm)
+    session = Session(meta=SessionMeta(goal=Goal(description="写到摊牌")))
+    client.post("/sessions", json=session.model_dump(mode="json"))
+
+    with client.websocket_connect(f"/sessions/{session.id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "开始"}))
+        first = collect(ws, "run_finished")
+        node_id = first[-1]["node"]["id"]
+        second = collect(ws, "run_finished")
+
+    goal_deltas = [
+        m
+        for m in first + second
+        if m["type"] == "delta" and m["actor"] == "goal_manager" and m["kind"] == "content"
+    ]
+    assert "".join(m["text"] for m in goal_deltas) == "这一步还差着摊牌。"
+    assert {m["run_id"] for m in goal_deltas} == {node_id}, "归到它判定的那一轮名下"
+    # 它写的那句话**不是正文**——按 actor 分流就是为了挡住这个（同 `deltas_say_who`）。
+    assert first[-1]["node"]["prose"] == "正文一。"
 
 
 def test_streaming_can_be_switched_off(client_for) -> None:

@@ -255,8 +255,15 @@ async def execute_run(
         {"empty_delta": ctx.staged_delta.is_empty(), "resumed_from": stage.value},
     )
 
+    # **重新载入再写，不要把手里这份整个盖回去。** `session` 是这一轮开始那一刻
+    # 的快照，而元操作与生成是并行的（D24）：这期间用户可能设了目标、改了配置，
+    # 而且**这一轮自己**在开头就调过 `freeze_initial_state()`——那也是一次
+    # 读-改-写。整份写回等于把它们一起抹掉，而且一个字的报错都不会有。
+    # （实测：初始状态的冻结在每一轮结束时都被这样撤销，D158 一直没真正生效。）
+    latest = repo.load_session()
+    latest.active_leaf_id = node.id
+    repo.save_session(latest)
     session.active_leaf_id = node.id
-    repo.save_session(session)
 
     # **生成后追问**：本轮产出已定，这一步只影响以后怎么回看（D112）。
     # 问的是"这一轮是不是一段的结尾"——**判定在生成时，压缩在需要时**（D113）：

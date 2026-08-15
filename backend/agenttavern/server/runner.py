@@ -20,6 +20,7 @@ from typing import Literal, cast
 from ..agents import advance_goal, sync_conversation
 from ..llm import LLMGateway, Usage
 from ..models import (
+    Actor,
     ControlOverride,
     GoalRun,
     InputSource,
@@ -91,7 +92,8 @@ class SessionRunner:
         管的是另一件事——那条决定要不要留 trace 文件，这条决定 trace 里有没有原文。
         """
 
-        self._queue: asyncio.Queue[_Queued] = asyncio.Queue()
+        self._queue: asyncio.Queue[_Queued | None] = asyncio.Queue()
+        """``None`` 是**唤醒信号**（`nudge`），不是一条输入。见那里的说明。"""
         self._pending: list[_Queued] = []
         self._questions: dict[str, asyncio.Future[str]] = {}
         self._current: asyncio.Task[None] | None = None
@@ -160,6 +162,26 @@ class SessionRunner:
         await self._queue.put(item)
         self._emit(QueueStatus(pending=[q.text for q in self._pending]))
 
+    def nudge(self) -> None:
+        """用户刚对 goal 做了动作（设立 / 恢复 / 加预算）：**打开自动续跑并唤醒循环**。
+
+        两件事缺一不可。
+
+        `_autocontinue_armed` 默认关着，挡的是「带 goal 的 session 一连上就自己
+        开始生成」——**连接不是指令**。但设目标是指令：用户按下去的意思就是
+        "去做"。所以一个还没写过任何一轮的会话，设完目标就该动起来，而不是
+        举着「目标推进中」一动不动，等用户随便打句话把它推起来。
+
+        唤醒是因为循环这时多半停在 `self._queue.get()` 上——`_should_autocontinue()`
+        只在出队之后才被问到，光把开关拨开没人会去看。放一个 `None` 进去把它叫醒，
+        出队那一刻**再确认一次**：中间可能已经被放弃或暂停了。
+
+        有 run 在跑时它同样安全：`None` 在队列里等着，那一轮结束后照常被取出，
+        而 `_check_goal` 反正也会重新打开自动续跑。
+        """
+        self._autocontinue_armed = True
+        self._queue.put_nowait(None)
+
     def answer(self, question_id: str, selected: str) -> bool:
         future = self._questions.pop(question_id, None)
         if future is None or future.done():
@@ -212,6 +234,12 @@ class SessionRunner:
             except asyncio.QueueEmpty:
                 # 队列空了才考虑 goal 驱动的自动续跑——用户输入优先（D27）。
                 item = None if self._should_autocontinue() else await self._queue.get()
+
+            # `None` 有两个来源：队列空了而 goal 该自己开下一轮，或者 `nudge()`
+            # 放进来的唤醒信号。**两者都要在这一刻再问一次**——目标可能在信号
+            # 排队期间被放弃、暂停或跑满了预算。
+            if item is None and not self._should_autocontinue():
+                continue
 
             if item is not None and item in self._pending:
                 self._pending.remove(item)
@@ -374,6 +402,15 @@ class SessionRunner:
             run,
             density=session.control.expansion_density,
             user_id=session.id,
+            # **它的思考也要能看见**（D166）。分片挂在刚写完那一轮的 `run_id` 上，
+            # 和它的 trace 事件落在同一处——goal_manager 是在那一轮之后跑的，
+            # 那就是它归属的地方。`leaf_id` 而不是 `self._run_id`：意思一样，
+            # 但这里手上就有确切的那个，不必依赖别处刚好设对了。
+            on_delta=(
+                (lambda kind, text: self._emit_delta(Actor.GOAL_MANAGER.value, kind, text, leaf_id))
+                if session.capabilities.stream
+                else None
+            ),
         )
         self._goal_input = step.next_input
 
@@ -393,7 +430,11 @@ class SessionRunner:
         if spent is not None:
             run.paused, run.paused_reason = True, spent
 
-        self._save_goal_run(run)
+        if not self._save_goal_run(run):
+            # 判定期间用户放弃了目标。那这一轮的判定结果连同它写的下一条输入
+            # 一起作废——继续推进度只会让界面显示一个已经不存在的目标。
+            self._goal_input = None
+            return
         # **每一轮都推一次进度**（D161）：中间状态被一条条划掉是用户最想看的东西，
         # 而它此前只写在盘上，界面要等到 goal 结束才会动。
         self._emit(
@@ -408,13 +449,24 @@ class SessionRunner:
         if spent is not None:
             self._emit(GoalPaused(reason=spent))
 
-    def _emit_delta(self, actor: str, kind: str, text: str) -> None:
+    def _emit_delta(self, actor: str, kind: str, text: str, run_id: str | None = None) -> None:
         """把一段分片推出去。**能力关掉时根本走不到这里**——`ctx.stream_to`
         返回 `None`，那一路直接退回非流式（D160）。
+
+        ``run_id`` 缺省用当前这一轮的。显式传是给 goal_manager 用的：它在 run
+        结束**之后**跑，那时 `self._run_id` 还没被下一轮改掉，两者其实一样，
+        但那是巧合而不是保证。
         """
         if kind not in _DELTA_KINDS:
             return
-        self._emit(Delta(run_id=self._run_id, actor=actor, kind=cast(DeltaKind, kind), text=text))
+        self._emit(
+            Delta(
+                run_id=run_id or self._run_id,
+                actor=actor,
+                kind=cast(DeltaKind, kind),
+                text=text,
+            )
+        )
 
     def _on_trace(self, event: TraceEvent) -> None:
         """每条 trace 都推给 UI，**顺带把 `RunStarted` 补出来**。
@@ -432,13 +484,21 @@ class SessionRunner:
             self._emit(RunStarted(run_id=event.run_id))
         self._emit(Trace(event=event))
 
-    def _save_goal_run(self, run: GoalRun) -> None:
+    def _save_goal_run(self, run: GoalRun) -> bool:
         """写回运行时状态。**每次都重新载入 session**——判定期间可能有 REST
         请求改过它（元操作与生成并行，D24）。
+
+        **目标没了就不写**：判定要跑几十秒，用户完全可能在这中间按了放弃。
+        照写的话会留下一份没有主人的 `goal_run`——它带着几十万字的对话，而且
+        下次设目标时那份旧进度会当成新目标的进度显示出来。返回值告诉调用方
+        "这次判定已经作废了"。
         """
         session = self._repo.load_session()
+        if session.meta.goal is None:
+            return False
         session.goal_run = run
         self._repo.save_session(session)
+        return True
 
     def _finish_goal(self, outcome: str, reason: str) -> None:
         """交回控制权。**两种终态都走这里，但用户必须知道是哪一种**：
@@ -449,6 +509,10 @@ class SessionRunner:
         self._goal_input = None
         self._autocontinue_armed = False
         session = self._repo.load_session()
+        if session.meta.goal is None:
+            # 判定期间用户自己放弃了。**不报"目标达成"**——那个目标已经不在了，
+            # 报出去只会让用户以为放弃没生效。
+            return
         session.meta.goal = None
         session.goal_run = None
         self._repo.save_session(session)

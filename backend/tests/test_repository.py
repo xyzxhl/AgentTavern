@@ -178,13 +178,14 @@ def test_config_yaml_covers_every_knob() -> None:
             Capabilities().state_recent_runs,
         ),
         "goal_manager.max_rounds": (LIMITS.goal_manager.max_rounds, goal_manager.MAX_ROUNDS),
-        "goal_manager.max_runs": (LIMITS.goal_manager.max_runs, Goal(description="x").max_runs),
-        "goal_manager.max_total_tokens": (
-            LIMITS.goal_manager.max_total_tokens,
-            Goal(description="x").max_total_tokens,
-        ),
     }
     assert {k for k, (a, b) in wired.items() if a != b} == set()
+
+    # goal 的两条预算**不在这份表里**，因为它们不再有默认值（D164）：留空就是
+    # 不设上限，由设目标的人当场决定。配置里放一个数会替没填的人做决定。
+    assert Goal(description="x").max_runs is None
+    assert Goal(description="x").max_total_tokens is None
+    assert not hasattr(LIMITS.goal_manager, "max_runs")
 
     # session 级那几处只是**取默认值**，仍然能单独覆盖。
     assert Capabilities(upstream_runs=9).upstream_runs == 9

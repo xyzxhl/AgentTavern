@@ -124,8 +124,13 @@ class SetGoal(BaseModel):
 
     type: Literal["set_goal"] = "set_goal"
     description: str
-    max_runs: int | None = None
-    max_total_tokens: int | None = None
+    max_runs: int | None = Field(default=None, ge=1)
+    max_total_tokens: int | None = Field(default=None, ge=1)
+    """**留空即不设上限**（D164）——原样透传，服务端不替用户填默认值。
+
+    下界是 1 而不是 0：`0` 表达不了任何意图（一设上就是"已经跑满"，goal 当场
+    暂停），而它最可能的来源是前端把空字符串转成了数字。宁可当场报错。
+    """
 
 
 class SetGoalBudget(BaseModel):
@@ -136,8 +141,17 @@ class SetGoalBudget(BaseModel):
     """
 
     type: Literal["set_goal_budget"] = "set_goal_budget"
-    max_runs: int | None = None
-    max_total_tokens: int | None = None
+    max_runs: int | None = Field(default=None, ge=1)
+    max_total_tokens: int | None = Field(default=None, ge=1)
+    """**这里的 `None` 是"这条不动"，不是"改成无上限"**——和 `SetGoal` 不同。
+
+    两条消息的语义差别在于有没有"原来的值"：设立时留空是在表态，改预算时留空
+    只是没提到它。要改成无上限走 `unlimited`。
+    """
+
+    unlimited: bool = False
+    """把两条上限一起去掉。**从有上限改成没上限需要一个明确的动作**——
+    否则它和"这条不动"在协议里长得一模一样（都是缺省）。"""
 
 
 class GoalControl(BaseModel):
@@ -305,8 +319,10 @@ class GoalProgress(BaseModel):
     subgoals: list[SubGoal] = Field(default_factory=list)
     spent_runs: int = 0
     spent_tokens: int = 0
-    max_runs: int = 0
-    max_total_tokens: int = 0
+    max_runs: int | None = None
+    max_total_tokens: int | None = None
+    """``None`` = 这条没设上限（D164）。**不是 0**——0 会被界面渲染成一条
+    满格的进度条。"""
 
 
 class GoalPaused(BaseModel):

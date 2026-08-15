@@ -77,8 +77,8 @@ class _StateManager(BaseModel):
 
 class _GoalManager(BaseModel):
     max_rounds: int = 4
-    max_runs: int = 50
-    max_total_tokens: int = 8_000_000
+    # `max_runs` / `max_total_tokens` **已删除**（D164）：预算不再有默认值，
+    # 留空就是不设上限。一个配置里的默认数只会在用户没要求的时候把他拦下来。
 
 
 class _Context(BaseModel):

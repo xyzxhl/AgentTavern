@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import type { TraceEvent } from "../protocol";
+import type { Thought } from "../store";
 
 const ACTOR_LABEL: Record<string, string> = {
   director: "推演",
@@ -31,14 +32,17 @@ export function Process({
 }: {
   events: TraceEvent[];
   running: boolean;
-  /** 流式攒出来的思考段（D160）。**它是过程，不是产出**，所以摆在这里。 */
-  thinking?: string;
+  /** 流式攒出来的思考段，**按 agent 分段**（D160/D166）。
+   *
+   * 它是过程，不是产出，所以摆在这里；分段是因为一轮里最多四个 agent 说过话，
+   * 拼成一坨就分不出哪句是谁的了。 */
+  thinking?: Thought[];
 }): JSX.Element | null {
   // 跑着的时候摊开，跑完自动收起——但用户手动开过就听用户的。
   const [opened, setOpened] = useState<boolean | null>(null);
   const open = opened ?? running;
 
-  if (events.length === 0 && !thinking) return null;
+  if (events.length === 0 && !thinking?.length) return null;
 
   const steps = events.filter((e) => !PLUMBING.has(e.type));
   const latest = steps.at(-1) ?? events.at(-1);
@@ -72,10 +76,50 @@ export function Process({
         ))}
       </ol>
 
-      {thinking && (
-        <div className="mt-1.5 border-l border-line pl-3">
-          <p className="whitespace-pre-wrap text-xs leading-relaxed text-dim/70">{thinking}</p>
+      {thinking && thinking.length > 0 && (
+        <div className="mt-1.5 space-y-1 border-l border-line pl-3">
+          {thinking.map((one, i) => (
+            <Thinking key={`${one.actor}-${i}`} thought={one} running={running} />
+          ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+const FOLD_AT = 300;
+
+/**
+ * 某个 agent 的一段思考。**长了就自己折起来**（同 D163 的理由）。
+ *
+ * 跑着的时候默认摊开——那时它就是进度条，你盯着它看到哪儿了；跑完之后默认
+ * 折起，因为那时它只在"为什么写成这样"被问起时才需要，而 director 一轮的
+ * 思考段实测有两万多字，摊着会把整条正文流顶到屏幕外面去。
+ */
+function Thinking({ thought, running }: { thought: Thought; running: boolean }): JSX.Element {
+  const [opened, setOpened] = useState<boolean | null>(null);
+  const long = thought.text.length > FOLD_AT;
+  const open = opened ?? (running || !long);
+  const who = ACTOR_LABEL[thought.actor] ?? thought.actor;
+
+  return (
+    <div>
+      {long && (
+        <button
+          onClick={() => setOpened(!open)}
+          className="flex items-baseline gap-1.5 text-[10px] text-dim/70 transition-colors hover:text-fg"
+        >
+          <span className="select-none">{open ? "▾" : "▸"}</span>
+          <span>
+            {who}的思考 {thought.text.length} 字
+          </span>
+        </button>
+      )}
+      {open && (
+        <p className="whitespace-pre-wrap text-xs leading-relaxed text-dim/70">
+          {!long && <span className="mr-1.5 font-mono text-[10px] text-dim/50">{who}</span>}
+          {thought.text}
+        </p>
       )}
     </div>
   );

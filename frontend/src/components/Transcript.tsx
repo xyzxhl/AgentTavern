@@ -41,6 +41,9 @@ export function Transcript(): JSX.Element {
             simulated={node.user_input?.source === "simulated"}
             events={traces[node.id ?? ""] ?? []}
             node={node}
+            // **落地之后思考段还留着**（D166）：它不在节点里，扔掉就再也看不到了。
+            // goal_manager 更是在这一轮落地**之后**才跑的，它的思考只能挂在这儿。
+            thinking={streaming[node.id ?? ""]?.process}
           />
         ))}
 
@@ -77,7 +80,8 @@ function Turn({
   running?: boolean;
   /** 流式攒出来的正文。**只在这一轮还没落地时用**——节点一到就让位（D160）。 */
   streamed?: string;
-  thinking?: string;
+  /** 过程那半反过来：节点里没有它，落地之后照样留着（D166）。 */
+  thinking?: import("../store").Thought[];
 }): JSX.Element {
   return (
     <article className="mb-8">

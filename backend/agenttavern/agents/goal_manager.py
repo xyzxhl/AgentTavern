@@ -38,7 +38,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..config import LIMITS
-from ..llm import LLMGateway, Message, Role
+from ..llm import LLMGateway, Message, OnDelta, Role
 from ..models import (
     Actor,
     ExpansionDensity,
@@ -203,11 +203,16 @@ async def advance_goal(
     model: str | None = None,
     user_id: str | None = None,
     max_rounds: int = MAX_ROUNDS,
+    on_delta: OnDelta | None = None,
 ) -> GoalStep:
     """跑一轮 goal_manager。**对话由调用方备好**（含这一轮新追加的那条记录）。
 
     这里只负责：把对话发出去、执行工具、把新增的消息追加回 `run.conversation`。
     进度与终态由工具写进 `GoalContext`。
+
+    ``on_delta`` 是流式出口（D160/D166）。**它和 director、writer 一样是个
+    agent**，凭什么它的思考就该藏起来——而它恰恰是最需要看的那个：目标迟迟不
+    达标时，唯一能回答"它到底在等什么"的就是这段。``None`` 走非流式。
     """
     ctx = GoalContext(goal=goal, run=run)
     registry = ToolRegistry.for_goal_manager()
@@ -225,7 +230,9 @@ async def advance_goal(
     )
 
     for _ in range(max_rounds):
-        response = await gateway.complete(messages, tools=specs, model=model, user_id=user_id)
+        response = await gateway.complete(
+            messages, tools=specs, model=model, user_id=user_id, on_delta=on_delta
+        )
         tracer.exchange(Actor.GOAL_MANAGER, messages, response, tools=specs)
         tracer.emit(
             TraceEventType.MODEL_RESPONSE,

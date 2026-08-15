@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -39,6 +40,7 @@ class ScriptedLLM:
         auto_close: str | None = "0",
         state: dict[str, Any] | list[dict[str, Any]] | None = None,
         auto_state: bool = True,
+        on_goal_request: Callable[[], None] | None = None,
     ) -> None:
         """``auto_close`` 让**生成后追问**自动应答，不消耗脚本。
 
@@ -55,11 +57,16 @@ class ScriptedLLM:
         **这样写是为了让脚本不再编码调用顺序。** 状态维护的位置已经搬过一次
         （从 director 之内搬到 writer 之后），编码顺序的脚本那次全断了。
         要测 state_manager 的 loop 本身，传 ``auto_state=False`` 自己排脚本。
+
+        ``on_goal_request`` 在**应答 goal_manager 那次请求的同一刻**被调用，
+        用来模拟"判定跑到一半时用户动了手"（放弃、暂停、改预算）。那个窗口从
+        WS 那侧抢不到：消息会在判定开始之前就被处理掉，于是根本走不到写回那步。
         """
         self._replies = list(replies)
         self._auto_close = auto_close
         self._states = [state] if isinstance(state, dict) else list(state or [])
         self._auto_state = auto_state
+        self._on_goal_request = on_goal_request
         self.requests: list[dict[str, Any]] = []
 
     def _reply(self, message: dict[str, Any], *, streaming: bool = False) -> httpx.Response:
@@ -76,6 +83,9 @@ class ScriptedLLM:
         # **流式默认是开的**（D160），所以脚本必须两种都会应答——否则整套测试
         # 走的都是非流式那条路，而产品跑的是另一条。
         streaming = bool(payload.get("stream"))
+
+        if self._on_goal_request and GOAL_MARK in messages[0].get("content", ""):
+            self._on_goal_request()
 
         if self._auto_close and FOLLOWUP_MARK in messages[-1].get("content", ""):
             return self._reply(text(self._auto_close), streaming=streaming)
