@@ -17,7 +17,7 @@
   ├─ state_manager（tool loop，run 末，读细纲 + 正文）
   │     产出：状态增量
   │
-  └─ goal_manager（tool loop，跨 run 的长对话，仅长任务，run 末）
+  └─ goal_manager（tool loop，跨 run 的长对话，仅长任务，run 末 + 开场，D168）
         产出：下一条输入 / 目标终态
 ```
 

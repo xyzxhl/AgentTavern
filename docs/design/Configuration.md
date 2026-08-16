@@ -21,7 +21,7 @@
 
 | 开关 | 默认 | 关闭时 |
 |---|---|---|
-| `state` | 开 | **state_manager 整个不跑**，`state_query` / `state_write` 不注册（D80/D143） |
+| `state` | 开 | **state_manager 整个不跑**，`state_query` / `state_write` 不注册（D143）。~~E0 契约随之失效（D80）~~——E0 本身已被 D143 删除，这条连带没有对象了 |
 | `history_search` | 关 | **禁止检索**：只有近期全文 + 更早的长期总结，`history.*` 不注册 |
 | `summarize` | `manual` | 摘要由用户维护，`summarize` 不注册；`auto` 时模型自行压缩并缓存 |
 | `ask_question` | 开 | 模型只能自己拿主意。**注意这与控制权等级不同**：等级调节积极性，这里是有没有这个动作 |
