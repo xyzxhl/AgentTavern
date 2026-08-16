@@ -47,6 +47,11 @@ def client_for(tmp_path: Path):
     return build
 
 
+def book_of(client, session_id: str) -> str:
+    """这个 session 开在哪份设定上（D170）。**建会话时会自动配一份空的。**"""
+    return client.get(f"/sessions/{session_id}").json()["session"]["worldbook_id"]
+
+
 def collect(ws, until: str, limit: int = 80) -> list[dict]:
     """读到某个类型的消息为止。
 
@@ -91,14 +96,50 @@ def test_missing_session_is_404(client_for) -> None:
 
 def test_worldinfo_roundtrip(client_for) -> None:
     client = client_for(happy_llm())
-    session_id = client.post("/sessions").json()["id"]
+    book = client.post("/worldbooks").json()["id"]
 
     client.put(
-        f"/sessions/{session_id}/worldinfo",
+        f"/worldbooks/{book}/entries",
         json={"id": "wi_1", "name": "教团", "content": "很长的设定"},
     )
-    entries = client.get(f"/sessions/{session_id}/worldinfo").json()
+    entries = client.get(f"/worldbooks/{book}/entries").json()
     assert entries[0]["name"] == "教团"
+
+
+def test_a_worldbook_can_open_several_sessions(client_for) -> None:
+    """**一份设定开出好几个故事**（D170 推翻了 D92 的一对一）。
+
+    它们共用同一批条目——改一次，所有故事都跟着，而那正是把 worldbook 独立
+    出来要买的东西。已经发生过的剧情所依赖的事实是另一回事：那部分在各自的
+    第一轮就冻结了（D158），互不影响。
+    """
+    client = client_for(happy_llm())
+    book = client.post("/worldbooks", json={"meta": {"name": "旧城区"}}).json()["id"]
+    client.put(f"/worldbooks/{book}/entries", json={"name": "教团", "content": "总部在旧城区。"})
+
+    ids = [client.post("/sessions", json={"worldbook_id": book}).json()["id"] for _ in range(2)]
+
+    listed = client.get("/worldbooks").json()[0]
+    assert listed["worldbook"]["meta"]["name"] == "旧城区"
+    assert sorted(listed["sessions"]) == sorted(ids), "得看得见谁在用"
+    assert listed["entries"] == 1
+
+    # **有故事在用就不让删**：删掉的话那几局会当场失忆，而界面上什么都不会说。
+    assert client.delete(f"/worldbooks/{book}").status_code == 409
+    for sid in ids:
+        assert book_of(client, sid) == book
+
+
+def test_a_new_session_gets_its_own_worldbook_when_none_is_named(client_for) -> None:
+    """**先开故事、边写边补设定**也要走得通（D170）。
+
+    要求先建 worldbook 才能开会话，等于在最没有想法的那一刻逼人做决定。
+    """
+    client = client_for(happy_llm())
+    a, b = (client.post("/sessions").json()["id"] for _ in range(2))
+
+    assert book_of(client, a) and book_of(client, b)
+    assert book_of(client, a) != book_of(client, b), "各自一份，不共用"
 
 
 def test_deleting_a_state_entry_before_the_story_starts_takes_effect(client_for) -> None:
@@ -109,9 +150,10 @@ def test_deleting_a_state_entry_before_the_story_starts_takes_effect(client_for)
     """
     client = client_for(happy_llm())
     session_id = client.post("/sessions").json()["id"]
+    book = book_of(client, session_id)
 
     client.put(
-        f"/sessions/{session_id}/worldinfo",
+        f"/worldbooks/{book}/entries",
         json={
             "id": "wi_1",
             "name": "陈屿·初始状态",
@@ -121,19 +163,19 @@ def test_deleting_a_state_entry_before_the_story_starts_takes_effect(client_for)
     )
     assert client.get(f"/sessions/{session_id}").json()["state"] == {"陈屿": {"在场": True}}
 
-    assert client.delete(f"/sessions/{session_id}/worldinfo/wi_1").json() == {"deleted": "wi_1"}
-    assert client.get(f"/sessions/{session_id}/worldinfo").json() == []
+    assert client.delete(f"/worldbooks/{book}/entries/wi_1").json() == {"deleted": "wi_1"}
+    assert client.get(f"/worldbooks/{book}/entries").json() == []
     assert client.get(f"/sessions/{session_id}").json()["state"] == {}
 
     # 删不存在的要报错，不能静默成功——否则前端会以为删掉了。
-    assert client.delete(f"/sessions/{session_id}/worldinfo/wi_1").status_code == 404
+    assert client.delete(f"/worldbooks/{book}/entries/wi_1").status_code == 404
 
 
 # -- worldbook 导入导出（格式见 docs/design/WorldbookFormat.md） -----------------
 
 
-def _bundle(client, session_id: str) -> dict:
-    return client.get(f"/sessions/{session_id}/worldbook/export").json()
+def _bundle(client, book: str) -> dict:
+    return client.get(f"/worldbooks/{book}/export").json()
 
 
 def test_export_drops_the_id_and_the_cached_summary(client_for) -> None:
@@ -145,13 +187,13 @@ def test_export_drops_the_id_and_the_cached_summary(client_for) -> None:
       改过旧摘要就是错的，而导入方无从判断改没改——**缓存不该跨机器传播**。
     """
     client = client_for(happy_llm())
-    session_id = client.post("/sessions").json()["id"]
+    book = client.post("/worldbooks").json()["id"]
     client.put(
-        f"/sessions/{session_id}/worldinfo",
+        f"/worldbooks/{book}/entries",
         json={"id": "wi_1", "name": "陈屿", "content": "旧货店老板。", "summary": "老板"},
     )
 
-    bundle = _bundle(client, session_id)
+    bundle = _bundle(client, book)
     assert bundle["format"] == "agenttavern.worldbook"
     assert bundle["version"] == 1
     assert bundle["entries"][0]["name"] == "陈屿"
@@ -162,7 +204,7 @@ def test_export_drops_the_id_and_the_cached_summary(client_for) -> None:
 def test_import_reassigns_ids_so_nothing_is_silently_overwritten(client_for) -> None:
     """同一份文件导两次，应当得到两批条目，而不是第二次把第一次盖掉。"""
     client = client_for(happy_llm())
-    session_id = client.post("/sessions").json()["id"]
+    book = client.post("/worldbooks").json()["id"]
     bundle = {
         "format": "agenttavern.worldbook",
         "version": 1,
@@ -170,9 +212,9 @@ def test_import_reassigns_ids_so_nothing_is_silently_overwritten(client_for) -> 
     }
 
     for _ in range(2):
-        client.post(f"/sessions/{session_id}/worldbook/import", json=bundle)
+        client.post(f"/worldbooks/{book}/import", json=bundle)
 
-    entries = client.get(f"/sessions/{session_id}/worldinfo").json()
+    entries = client.get(f"/worldbooks/{book}/entries").json()
     assert len(entries) == 2
     assert len({e["id"] for e in entries}) == 2, "id 必须重新分配"
     assert all(e["id"] != "wi_x" for e in entries)
@@ -180,11 +222,11 @@ def test_import_reassigns_ids_so_nothing_is_silently_overwritten(client_for) -> 
 
 def test_import_can_replace_instead_of_append(client_for) -> None:
     client = client_for(happy_llm())
-    session_id = client.post("/sessions").json()["id"]
-    client.put(f"/sessions/{session_id}/worldinfo", json={"name": "旧的"})
+    book = client.post("/worldbooks").json()["id"]
+    client.put(f"/worldbooks/{book}/entries", json={"name": "旧的"})
 
     body = client.post(
-        f"/sessions/{session_id}/worldbook/import?replace=true",
+        f"/worldbooks/{book}/import?replace=true",
         json={
             "format": "agenttavern.worldbook",
             "version": 1,
@@ -192,8 +234,10 @@ def test_import_can_replace_instead_of_append(client_for) -> None:
         },
     ).json()
 
-    assert body == {"imported": 1, "removed": 1, "frozen": False}
-    assert [e["name"] for e in client.get(f"/sessions/{session_id}/worldinfo").json()] == ["新的"]
+    # `frozen` 报的是**哪几局故事已经开始了**：一份设定可以开出好几个（D170），
+    # 而它们各自冻结在各自的第一轮，导入只影响还没开始的那些。
+    assert body == {"imported": 1, "removed": 1, "frozen": []}
+    assert [e["name"] for e in client.get(f"/worldbooks/{book}/entries").json()] == ["新的"]
 
 
 def test_an_unknown_format_is_refused_instead_of_read_best_effort(client_for) -> None:
@@ -203,21 +247,23 @@ def test_an_unknown_format_is_refused_instead_of_read_best_effort(client_for) ->
     而那时已经分不清是导入丢的还是模型写坏的。
     """
     client = client_for(happy_llm())
-    session_id = client.post("/sessions").json()["id"]
+    book = client.post("/worldbooks").json()["id"]
 
     for bad in (
         {"format": "sillytavern.lorebook", "version": 1, "entries": [{"name": "x"}]},
         {"format": "agenttavern.worldbook", "version": 99, "entries": [{"name": "x"}]},
         {"format": "agenttavern.worldbook", "version": 1, "entries": []},
     ):
-        assert client.post(f"/sessions/{session_id}/worldbook/import", json=bad).status_code == 400
-    assert client.get(f"/sessions/{session_id}/worldinfo").json() == []
+        assert client.post(f"/worldbooks/{book}/import", json=bad).status_code == 400
+    assert client.get(f"/worldbooks/{book}/entries").json() == []
 
 
 def test_a_round_trip_keeps_the_kinds_and_the_expansion_settings(client_for) -> None:
     """三类条目、可展开开关、展开层级都要原样过一遍（D158）。"""
     client = client_for(happy_llm())
-    a = client.post("/sessions").json()["id"]
+    a = client.post("/worldbooks", json={"meta": {"name": "旧城区", "genre_tone": "悬疑"}}).json()[
+        "id"
+    ]
     for entry in (
         {
             "name": "旧货店",
@@ -240,20 +286,23 @@ def test_a_round_trip_keeps_the_kinds_and_the_expansion_settings(client_for) -> 
             "values": {"陈屿": {"在场": True}},
         },
     ):
-        client.put(f"/sessions/{a}/worldinfo", json=entry)
+        client.put(f"/worldbooks/{a}/entries", json=entry)
 
-    b = client.post("/sessions").json()["id"]
-    client.post(f"/sessions/{b}/worldbook/import", json=_bundle(client, a))
+    b = client.post("/worldbooks").json()["id"]
+    client.post(f"/worldbooks/{b}/import?replace=true", json=_bundle(client, a))
 
-    landed = {e["name"]: e for e in client.get(f"/sessions/{b}/worldinfo").json()}
+    landed = {e["name"]: e for e in client.get(f"/worldbooks/{b}/entries").json()}
     assert landed["旧货店"]["kind"] == "world" and landed["旧货店"]["mode"] == "on_demand"
     # **用户扮演的角色是一般角色的子类**（D159）：它是 `character` + 一个标记，
     # 不是第四种条目。语言习惯也要跟着过来。
     assert landed["林昭"]["kind"] == "character" and landed["林昭"]["is_player"] is True
     assert landed["林昭"]["voice"] == "话少，先观察再开口"
     assert landed["起点"]["kind"] == "state" and landed["起点"]["depth"] == 2
-    # 初始状态跟着过来，而且这个会话还没开始，所以立刻生效。
-    assert client.get(f"/sessions/{b}").json()["state"] == {"陈屿": {"在场": True}}
+    # 初始状态跟着过来；开在这份设定上的会话还没开始，所以立刻生效。
+    landed_session = client.post("/sessions", json={"worldbook_id": b}).json()["id"]
+    assert client.get(f"/sessions/{landed_session}").json()["state"] == {"陈屿": {"在场": True}}
+    # **世界那半边也跟着走**（D170）：题材和尺度是这个世界的事，不是某局故事的。
+    assert client.get(f"/worldbooks/{b}").json()["worldbook"]["meta"]["genre_tone"] == "悬疑"
 
 
 # -- WebSocket：一个完整 run --------------------------------------------------

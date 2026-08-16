@@ -29,6 +29,7 @@ from ..models import (
     UserInput,
 )
 from ..orchestration import execute_run
+from ..prompting import player_character
 from ..storage import SessionRepository, Store
 from ..tracing import Tracer
 from .metrics import Metrics, collect
@@ -197,8 +198,12 @@ async def run_scenario(
     store = Store(settings.data_dir)
     session = variant.apply(scenario.make_session())
     repo = store.create_session(session)
+    # 设定是**一级资产**（D170）：场景把整份都建起来——世界那半边（题材、尺度、
+    # 语言习惯）和条目一样不属于 session。
+    book = repo.book()
+    book.save(book.load().model_copy(update={"meta": scenario.world}))
     for entry in scenario.worldbook:
-        repo.save_worldbook_entry(entry)
+        book.save_entry(entry)
 
     result = BenchResult(scenario=scenario.name, variant=variant.name, session_id=session.id)
     pending = list(scenario.inputs[:limit] if limit else scenario.inputs)
@@ -286,7 +291,7 @@ async def _drive_goal(
     tracer = Tracer(repo, leaf_id, events.append, persist=session.capabilities.trace)
 
     sync_conversation(
-        session.meta,
+        player_character(repo.world_meta(), repo.worldbook()),
         goal,
         run,
         repo.path_to(leaf_id),

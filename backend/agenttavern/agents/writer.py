@@ -36,7 +36,7 @@ class WriterResult:
 async def run_writer(ctx: RunContext, tracer: Tracer, outline: str) -> WriterResult:
     upstream = _recent_prose(ctx)
     messages = writer_prompt(
-        ctx.session.meta,
+        ctx.world,
         ctx.session.control,
         outline=outline,
         upstream=upstream,

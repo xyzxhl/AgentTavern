@@ -15,8 +15,21 @@ class Session(BaseModel):
     id: str = Field(default_factory=lambda: new_id("sess"))
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
+    worldbook_id: str = ""
+    """在哪份设定上开的（D170）。**worldbook 是一级资产，一份能开出好几个 session。**
+
+    存 id 而不是内嵌一份拷贝：拷贝的话「改一次、所有故事都跟着」就没了，而那正是
+    把它独立出来要买的东西。代价是设定会在故事跑着的时候被别处改动——那件事的
+    答案见 `initial_state`（已经发生过的剧情所依赖的事实**冻结**，静态设定跟着改）。
+
+    空串是**旧数据**：升级时会给它建一份自己的 worldbook（`Store.migrate`）。
+    """
+
     meta: SessionMeta = Field(default_factory=SessionMeta)
-    """元指令：这个 session 要什么体验。创建时设定，很少改。"""
+    """元指令：**这局故事**要什么。创建时设定，很少改。
+
+    世界那一半在 `WorldMeta`，跟着 worldbook 走（D170）。
+    """
 
     control: ControlDimensions = Field(default_factory=ControlDimensions)
     """控制维度的常驻取值。单轮可被 ControlOverride 覆盖。"""

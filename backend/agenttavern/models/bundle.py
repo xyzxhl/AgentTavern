@@ -1,14 +1,17 @@
 """worldbook 的交换格式。格式与三条约定见 docs/design/WorldbookFormat.md。
 
-**一份 worldbook 开启一个 session**（D90），所以它是这个项目里唯一值得单独定
-格式的东西——别的（节点树、trace、state）都是跑出来的产物，不是人写的输入。
+worldbook 是**用户写的唯一输入**，所以它是这个项目里唯一值得单独定格式的
+东西——别的（节点树、trace、state）都是跑出来的产物。
+
+**一份 worldbook 可以开出好几个 session**（D170 推翻了 D92 的一对一），
+所以包里带上整份设定的属性（题材、尺度、名字），不再从 session 的标题借。
 """
 
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from .worldbook import WorldbookEntry
+from .worldbook import WorldbookEntry, WorldMeta
 
 FORMAT = "agenttavern.worldbook"
 VERSION = 1
@@ -23,11 +26,23 @@ class WorldbookBundle(BaseModel):
     name: str = ""
     note: str = ""
 
+    meta: WorldMeta = Field(default_factory=WorldMeta)
+    """整份设定的属性：题材与基调、尺度（D170）。
+
+    **它们得跟着走**——它们和条目一样是这个世界的事，而不是某局故事的。
+    以前不在包里，是因为那时它们挂在 session 上，导出方根本够不着。
+    """
+
     entries: list[WorldbookEntry] = Field(default_factory=list)
 
     @classmethod
     def of(
-        cls, entries: list[WorldbookEntry], *, name: str = "", note: str = ""
+        cls,
+        entries: list[WorldbookEntry],
+        *,
+        name: str = "",
+        note: str = "",
+        meta: WorldMeta | None = None,
     ) -> WorldbookBundle:
         """打包。**去掉 `id` 与 `summary`**（见文档 §2）。
 
@@ -38,8 +53,9 @@ class WorldbookBundle(BaseModel):
           **缓存不该跨机器传播。**
         """
         return cls(
-            name=name,
+            name=name or (meta.name if meta else ""),
             note=note,
+            meta=meta or WorldMeta(),
             entries=[entry.model_copy(update={"id": "", "summary": None}) for entry in entries],
         )
 

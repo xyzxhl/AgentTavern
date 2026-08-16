@@ -3,9 +3,11 @@
 目录布局::
 
     data/sessions/<session_id>/
-      session.json              元指令、控制维度默认值、goal
+      session.json              worldbook_id、标题、goal、控制维度默认值
       nodes/<node_id>.json      一个 run 一个节点
       trace/<run_id>.jsonl      append-only，每 run 一个文件
+
+**设定不在这里**——它是一级资产，见 `worldbooks.py`（D170）。
 
 写入是**单线程**的（D6），因此不需要锁。规模上限是几百个 run × 每个几 KB，
 全量读取毫秒级；真到瓶颈再加索引缓存，模型不变。
@@ -13,15 +15,28 @@
 
 from __future__ import annotations
 
+import json
+import shutil
 from pathlib import Path
 
-from ..models import Node, RunDraft, Session, StateDelta, TraceEvent, WorldState
-from ..models.worldbook import EntryKind, WorldbookEntry
+from ..models import (
+    Node,
+    RunDraft,
+    Session,
+    StateDelta,
+    TraceEvent,
+    Worldbook,
+    WorldbookEntry,
+    WorldMeta,
+    WorldState,
+)
 from .jsonfile import append_jsonl, read_jsonl, read_model, read_model_or_none, write_model
+from .worldbooks import WorldbookRepository
 
 
 class SessionRepository:
     def __init__(self, root: Path, session_id: str) -> None:
+        self.root = root
         self.dir = root / "sessions" / session_id
         self.session_id = session_id
 
@@ -119,11 +134,7 @@ class SessionRepository:
 
     def compose_initial_state(self) -> WorldState:
         """把全部 `STATE` 条目合成一个初始状态。**故事开始之前**用它。"""
-        state = WorldState()
-        for entry in self.worldbook():
-            if entry.kind is EntryKind.STATE and entry.values:
-                state = state.apply(StateDelta(set=entry.values))
-        return state
+        return self.book().compose_initial_state()
 
     def initial_state(self) -> WorldState:
         """一切分支共同的起点。
@@ -170,45 +181,21 @@ class SessionRepository:
 
     # -- worldinfo ----------------------------------------------------------
 
-    @property
-    def worldbook_dir(self) -> Path:
-        return self.dir / "worldinfo"
+    def book(self) -> WorldbookRepository:
+        """这个 session 挂在哪份设定上（D170）。
 
-    def worldbook_path(self, entry_id: str) -> Path:
-        return self.worldbook_dir / f"{entry_id}.json"
-
-    def save_worldbook_entry(self, entry: WorldbookEntry) -> None:
-        write_model(self.worldbook_path(entry.id), entry)
-
-    def load_worldbook_entry(self, entry_id: str) -> WorldbookEntry | None:
-        return read_model_or_none(self.worldbook_path(entry_id), WorldbookEntry)
-
-    def delete_worldbook_entry(self, entry_id: str) -> bool:
-        """删掉一条设定。不存在返回 ``False``。
-
-        **故事开始之后删初始状态条目不影响既有的每一轮**（D158）：起点那时
-        已经冻结进 `Session.initial_state` 了，这里删的只是"以后新建会话时的模板"。
-        开始之前删则立刻生效——那时故事还没有过去，没有东西依赖它。
+        **每次重新读 session**：`worldbook_id` 本身不会变，但元操作与生成是并行的
+        （D24），缓存一份反而多一个可能对不上的东西，而这一步只是拼个路径。
         """
-        path = self.worldbook_path(entry_id)
-        if not path.exists():
-            return False
-        path.unlink()
-        return True
-
-    def clear_worldbook(self) -> int:
-        """删掉全部条目，返回删了几条。**导入时的「替换」用它。**"""
-        entries = self.worldbook()
-        for entry in entries:
-            self.worldbook_path(entry.id).unlink(missing_ok=True)
-        return len(entries)
+        return WorldbookRepository(self.root, self.load_session().worldbook_id)
 
     def worldbook(self) -> list[WorldbookEntry]:
-        """**全部**条目，不做预筛选（D62/D63）。索引覆盖全集是准入标准。"""
-        if not self.worldbook_dir.exists():
-            return []
-        entries = [read_model(p, WorldbookEntry) for p in self.worldbook_dir.glob("*.json")]
-        return sorted(entries, key=lambda e: (e.name, e.id))
+        """这个 session 看得见的全部设定条目。**不做预筛选**（D62/D63）。"""
+        return self.book().entries()
+
+    def world_meta(self) -> WorldMeta:
+        """题材、尺度、名字——**世界自己的属性**，跟着 worldbook 走（D170）。"""
+        return self.book().load().meta
 
     # -- trace --------------------------------------------------------------
 
@@ -220,15 +207,25 @@ class SessionRepository:
 
 
 class Store:
-    """数据根目录。"""
+    """数据根目录。**两类一级资产：worldbook 与 session**（D170）。"""
 
     def __init__(self, root: Path) -> None:
         self.root = root
+
+    # -- session ------------------------------------------------------------
 
     def session(self, session_id: str) -> SessionRepository:
         return SessionRepository(self.root, session_id)
 
     def create_session(self, session: Session) -> SessionRepository:
+        """**没指定设定就现建一份空的**（D170）。
+
+        允许「先开故事、边写边补设定」——要求先建 worldbook 才能开会话，等于
+        在最没有想法的那一刻逼人做决定。
+        """
+        if not session.worldbook_id:
+            book = self.create_worldbook(Worldbook())
+            session = session.model_copy(update={"worldbook_id": book.worldbook_id})
         repo = self.session(session.id)
         repo.save_session(session)
         return repo
@@ -238,3 +235,86 @@ class Store:
         if not sessions_dir.exists():
             return []
         return sorted(p.name for p in sessions_dir.iterdir() if (p / "session.json").exists())
+
+    # -- worldbook ----------------------------------------------------------
+
+    def worldbook(self, worldbook_id: str) -> WorldbookRepository:
+        return WorldbookRepository(self.root, worldbook_id)
+
+    def create_worldbook(self, book: Worldbook) -> WorldbookRepository:
+        repo = self.worldbook(book.id)
+        repo.save(book)
+        return repo
+
+    def list_worldbooks(self) -> list[str]:
+        books_dir = self.root / "worldbooks"
+        if not books_dir.exists():
+            return []
+        return sorted(p.name for p in books_dir.iterdir() if (p / "worldbook.json").exists())
+
+    def sessions_of(self, worldbook_id: str) -> list[str]:
+        """哪些会话开在这份设定上。
+
+        **删设定之前必须问这个**：一份被三局故事用着的设定被删掉，那三局的
+        角色会当场失忆，而界面上什么都不会说。
+        """
+        return [
+            sid
+            for sid in self.list_sessions()
+            if self.session(sid).load_session().worldbook_id == worldbook_id
+        ]
+
+    def delete_worldbook(self, worldbook_id: str) -> bool:
+        """删掉一份设定。**有人在用就不删**，返回 ``False``（同不存在）。"""
+        repo = self.worldbook(worldbook_id)
+        if not repo.exists() or self.sessions_of(worldbook_id):
+            return False
+        shutil.rmtree(repo.dir, ignore_errors=True)
+        return True
+
+    # -- 旧数据 -------------------------------------------------------------
+
+    def migrate(self) -> int:
+        """把 worldbook 从 session 目录里搬出来（D170）。返回搬了几个 session。
+
+        **启动时跑一次，之后是空操作。** 旧布局是 `sessions/<id>/worldinfo/`，
+        而世界那几个属性（题材、尺度、用户扮演谁）当时挂在 `session.json` 的
+        `meta` 里——`SessionMeta` 上已经没有那些字段了，所以这里读**原始 JSON**，
+        不经模型：模型会默默把它们丢掉，而那正是要抢救的东西。
+
+        一个旧 session 得到一份属于它自己的设定，不合并——两局旧故事的设定重名
+        也可能完全是两回事，合并会把它们搅在一起，而拆回去没有依据。
+        """
+        moved = 0
+        for session_id in self.list_sessions():
+            repo = self.session(session_id)
+            raw = json.loads(repo.session_path.read_text(encoding="utf-8"))
+            if raw.get("worldbook_id"):
+                continue
+
+            meta = raw.get("meta") or {}
+            book = Worldbook(
+                meta=WorldMeta(
+                    # 旧的 session 标题同时是世界的名字——那时两者没分开。
+                    name=meta.get("title") or "未命名",
+                    content_scale=meta.get("content_scale") or "",
+                    genre_tone=meta.get("genre_tone") or "",
+                    character_voices=meta.get("character_voices") or {},
+                    user_character=meta.get("user_character") or "",
+                )
+            )
+            book_repo = self.create_worldbook(book)
+
+            old_entries = repo.dir / "worldinfo"
+            if old_entries.exists():
+                book_repo.entries_dir.mkdir(parents=True, exist_ok=True)
+                for path in old_entries.glob("*.json"):
+                    shutil.move(str(path), str(book_repo.entries_dir / path.name))
+                shutil.rmtree(old_entries, ignore_errors=True)
+
+            raw["worldbook_id"] = book.id
+            repo.session_path.write_text(
+                json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            moved += 1
+        return moved

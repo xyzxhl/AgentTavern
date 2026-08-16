@@ -20,13 +20,15 @@ from ..models import (
     SessionMeta,
     SessionModes,
     TraceEvent,
+    Worldbook,
     WorldbookBundle,
     WorldbookEntry,
+    WorldMeta,
     new_id,
 )
 from ..orchestration import close_segment
 from ..prompting import choices_of
-from ..storage import SessionRepository, Store
+from ..storage import SessionRepository, Store, WorldbookRepository
 from ..tracing import Tracer
 from .protocol import (
     Answer,
@@ -82,6 +84,10 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
             await active.aclose()
 
     app = FastAPI(title="AgentTavern", lifespan=lifespan)
+
+    # **旧数据在这里搬家**（D170）：worldbook 以前躺在 session 目录里。
+    # 跑一次就是空操作，所以放在这里比放一条命令可靠——没人会记得去跑那条命令。
+    store.migrate()
 
     def repo_of(session_id: str) -> SessionRepository:
         repo = store.session(session_id)
@@ -198,26 +204,93 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
         """
         return repo_of(session_id).read_trace(run_id)
 
-    # -- worldinfo ----------------------------------------------------------
+    # -- worldbook（一级资产，D170） -----------------------------------------
 
-    @app.get("/sessions/{session_id}/worldinfo")
-    def list_worldinfo(session_id: str) -> list[WorldbookEntry]:
-        return repo_of(session_id).worldbook()
+    def book_of(worldbook_id: str) -> WorldbookRepository:
+        repo = store.worldbook(worldbook_id)
+        if not repo.exists():
+            raise HTTPException(404, f"设定不存在：{worldbook_id}")
+        return repo
 
-    @app.put("/sessions/{session_id}/worldinfo")
-    def put_worldinfo(session_id: str, entry: WorldbookEntry) -> WorldbookEntry:
-        repo_of(session_id).save_worldbook_entry(entry)
+    @app.get("/worldbooks")
+    def list_worldbooks() -> list[dict[str, Any]]:
+        """**带上「谁在用」**：一份设定可以开出好几个故事（D170），而删之前
+        必须看得见这件事——被三局故事用着的设定被删掉，那三局会当场失忆。
+        """
+        return [
+            {
+                "worldbook": store.worldbook(wid).load(),
+                "entries": len(store.worldbook(wid).entries()),
+                "sessions": store.sessions_of(wid),
+            }
+            for wid in store.list_worldbooks()
+        ]
+
+    @app.post("/worldbooks")
+    def create_worldbook(book: Worldbook | None = None) -> Worldbook:
+        created = book or Worldbook()
+        store.create_worldbook(created)
+        return created
+
+    @app.get("/worldbooks/{worldbook_id}")
+    def get_worldbook(worldbook_id: str) -> dict[str, Any]:
+        repo = book_of(worldbook_id)
+        return {
+            "worldbook": repo.load(),
+            "entries": repo.entries(),
+            "sessions": store.sessions_of(worldbook_id),
+            "initial_state": repo.compose_initial_state().values,
+        }
+
+    @app.patch("/worldbooks/{worldbook_id}")
+    def patch_worldbook(worldbook_id: str, meta: WorldMeta) -> Worldbook:
+        """改整份设定的属性（名字、题材、尺度）。
+
+        **它立刻对所有正在跑的故事生效**——那是对的，这些是"这个世界是什么"，
+        改它等于改角色卡。已经发生过的剧情所依赖的事实是另一回事，那部分在
+        第一轮就冻结了（`Session.initial_state`，D158）。
+        """
+        repo = book_of(worldbook_id)
+        book = repo.load().model_copy(update={"meta": meta})
+        repo.save(book)
+        return book
+
+    @app.delete("/worldbooks/{worldbook_id}")
+    def delete_worldbook(worldbook_id: str) -> dict[str, Any]:
+        """**有故事在用就不让删**，先说清是哪几局。"""
+        book_of(worldbook_id)
+        users = store.sessions_of(worldbook_id)
+        if users:
+            raise HTTPException(409, f"还有 {len(users)} 局故事开在这份设定上。")
+        store.delete_worldbook(worldbook_id)
+        return {"deleted": worldbook_id}
+
+    @app.get("/worldbooks/{worldbook_id}/entries")
+    def list_entries(worldbook_id: str) -> list[WorldbookEntry]:
+        return book_of(worldbook_id).entries()
+
+    @app.put("/worldbooks/{worldbook_id}/entries")
+    def put_entry(worldbook_id: str, entry: WorldbookEntry) -> WorldbookEntry:
+        book_of(worldbook_id).save_entry(entry)
         return entry
 
-    @app.get("/sessions/{session_id}/worldbook/export")
-    def export_worldbook(session_id: str) -> WorldbookBundle:
-        """导出成一份可以拷走的文件。格式见 docs/design/WorldbookFormat.md。"""
-        repo = repo_of(session_id)
-        return WorldbookBundle.of(repo.worldbook(), name=repo.load_session().meta.title)
+    @app.delete("/worldbooks/{worldbook_id}/entries/{entry_id}")
+    def delete_entry(worldbook_id: str, entry_id: str) -> dict[str, Any]:
+        """删一条设定。故事开始之后删初始状态条目不影响既有的每一轮（D158）。"""
+        if not book_of(worldbook_id).delete_entry(entry_id):
+            raise HTTPException(404, f"设定条目不存在：{entry_id}")
+        return {"deleted": entry_id}
 
-    @app.post("/sessions/{session_id}/worldbook/import")
+    @app.get("/worldbooks/{worldbook_id}/export")
+    def export_worldbook(worldbook_id: str) -> WorldbookBundle:
+        """导出成一份可以拷走的文件。格式见 docs/design/WorldbookFormat.md。"""
+        repo = book_of(worldbook_id)
+        meta = repo.load().meta
+        return WorldbookBundle.of(repo.entries(), meta=meta)
+
+    @app.post("/worldbooks/{worldbook_id}/import")
     def import_worldbook(
-        session_id: str, bundle: WorldbookBundle, replace: bool = False
+        worldbook_id: str, bundle: WorldbookBundle, replace: bool = False
     ) -> dict[str, Any]:
         """导入。``replace=True`` 先清空，否则追加。
 
@@ -227,27 +300,28 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
 
         **不改已经冻结的初始状态**（D158）：故事一旦开始，起点就定死了，导入
         只影响"以后新建的会话"。还没开始时导入会立刻改变当前状态——那时没有
-        任何一轮依赖它，改了是对的。
+        任何一轮依赖它，改了是对的。**这里报的是「有几局故事已经开始了」**——
+        一份设定可以开出好几个（D170），而它们各自冻结在各自的第一轮。
         """
         if (bad := bundle.check()) is not None:
             raise HTTPException(400, bad)
 
-        repo = repo_of(session_id)
-        removed = repo.clear_worldbook() if replace else 0
+        repo = book_of(worldbook_id)
+        removed = repo.clear() if replace else 0
+        if replace:
+            # 整份换掉时世界那半边也一起换：它和条目是同一份设定的两半。
+            repo.save(repo.load().model_copy(update={"meta": bundle.meta}))
         for entry in bundle.entries:
-            repo.save_worldbook_entry(entry.model_copy(update={"id": new_id("wi")}))
+            repo.save_entry(entry.model_copy(update={"id": new_id("wi")}))
         return {
             "imported": len(bundle.entries),
             "removed": removed,
-            "frozen": repo.load_session().initial_state is not None,
+            "frozen": [
+                sid
+                for sid in store.sessions_of(worldbook_id)
+                if store.session(sid).load_session().initial_state is not None
+            ],
         }
-
-    @app.delete("/sessions/{session_id}/worldinfo/{entry_id}")
-    def delete_worldinfo(session_id: str, entry_id: str) -> dict[str, Any]:
-        """删一条设定。故事开始之后删初始状态条目不影响既有的每一轮（D158）。"""
-        if not repo_of(session_id).delete_worldbook_entry(entry_id):
-            raise HTTPException(404, f"设定条目不存在：{entry_id}")
-        return {"deleted": entry_id}
 
     # -- WebSocket ----------------------------------------------------------
 

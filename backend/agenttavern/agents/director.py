@@ -120,7 +120,7 @@ async def run_director(
     # 产出它的那个 run 结束（D120）。这是笔账：一轮推理一万五千字，而决定本身
     # 以细纲的形式完整留着。
     prompt = director_prompt(
-        meta=session.meta,
+        world=ctx.world,
         control=session.control,
         # **本 run 开始时的状态。** 这里原先写的是 `current_state`（叠加暂存增量），
         # 为的是续跑时模型别看见一份不含自己刚写下那笔的状态。director 不再写
@@ -130,6 +130,8 @@ async def run_director(
         history=prior,
         capabilities=session.capabilities,
         worldinfo=ctx.repo.worldbook(),
+        # 目标是**这局故事**的，不跟着世界走（D170）。
+        goal=session.meta.goal,
     )
     messages = prompt.messages
 

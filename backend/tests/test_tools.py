@@ -303,7 +303,7 @@ async def test_history_read_says_which_refs_it_dropped(reg, ctx) -> None:
 async def test_worldinfo_read_says_where_to_resume(reg, ctx) -> None:
     """分页是无损的，但**得说清下一个 start 是多少**——只给一个布尔量等于让模型猜。"""
     entry = WorldbookEntry(name="教团", content="设定内容。" * 100)
-    ctx.repo.save_worldbook_entry(entry)
+    ctx.repo.book().save_entry(entry)
 
     body = await call(reg, ctx, "worldinfo_read", refs=[entry.id], max_chars=50)
 
@@ -316,7 +316,7 @@ async def test_worldinfo_index_covers_everything(reg, ctx) -> None:
     因为漏掉时模型根本不知道条目存在。
     """
     for i in range(3):
-        ctx.repo.save_worldbook_entry(
+        ctx.repo.book().save_entry(
             WorldbookEntry(name=f"设定{i}", content="内容" * 50, mode=WorldbookMode.ON_DEMAND)
         )
 
@@ -331,11 +331,11 @@ async def test_worldinfo_index_covers_everything(reg, ctx) -> None:
 async def test_summarize_caches_and_reuses(reg, ctx) -> None:
     """懒惰生成 + 系统缓存（D69）：第二次调用不再打模型。"""
     entry = WorldbookEntry(name="教团", content="很长的设定" * 100)
-    ctx.repo.save_worldbook_entry(entry)
+    ctx.repo.book().save_entry(entry)
 
     first = await call(reg, ctx, "summarize", source=f"wi:{entry.id}")
     assert first.content == "摘要文本"
-    assert ctx.repo.load_worldbook_entry(entry.id).summary == "摘要文本"
+    assert ctx.repo.book().load_entry(entry.id).summary == "摘要文本"
 
     ctx.gateway = fake_gateway("不该被调用")
     second = await call(reg, ctx, "summarize", source=f"wi:{entry.id}")
@@ -345,7 +345,7 @@ async def test_summarize_caches_and_reuses(reg, ctx) -> None:
 
 async def test_summary_falls_back_to_head_in_index(reg, ctx) -> None:
     """尚无摘要的条目回退到"前 N 字 + 字数"——仍满足 D62。"""
-    ctx.repo.save_worldbook_entry(
+    ctx.repo.book().save_entry(
         WorldbookEntry(name="教团", content="甲乙丙丁" * 100, mode=WorldbookMode.ON_DEMAND)
     )
     index = await call(reg, ctx, "worldinfo_list")
@@ -525,8 +525,8 @@ def test_state_entries_become_the_replay_base(tmp_path: Path) -> None:
     诱因消失了，比在提示词里禁止可靠。
     """
     repo = Store(tmp_path).create_session(Session())
-    repo.save_worldbook_entry(WorldbookEntry(name="林昭", content="记者，做事谨慎。"))
-    repo.save_worldbook_entry(
+    repo.book().save_entry(WorldbookEntry(name="林昭", content="记者，做事谨慎。"))
+    repo.book().save_entry(
         WorldbookEntry(
             name="林昭·初始状态",
             kind=EntryKind.STATE,
@@ -556,7 +556,7 @@ def test_the_initial_state_freezes_once_the_story_starts(tmp_path: Path) -> None
 
     def put(values: dict[str, object]) -> None:
         # **同一个 id** ——不固定的话每次都是新增一条，而不是改那一条。
-        repo.save_worldbook_entry(
+        repo.book().save_entry(
             WorldbookEntry(id="wi_start", name="起点", kind=EntryKind.STATE, values=values)
         )
 

@@ -9,6 +9,7 @@ import { SessionList } from "./components/SessionList";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar";
 import { Transcript } from "./components/Transcript";
+import { WorldbookLibrary } from "./components/WorldbookLibrary";
 import { WorldbookPanel } from "./components/WorldbookPanel";
 import { useSession } from "./store";
 
@@ -25,7 +26,9 @@ export function App(): JSX.Element {
   const title = useSession((s) => s.session?.meta?.title);
   const model = useSession((s) => s.meta?.model);
   const developer = useSession((s) => s.meta?.developer ?? false);
+  const worldbookId = useSession((s) => s.session?.worldbook_id ?? "");
   const [worldbook, setWorldbook] = useState(false);
+  const [library, setLibrary] = useState(false);
   const [settings, setSettings] = useState(false);
   const [devtools, setDevtools] = useState(false);
 
@@ -52,10 +55,15 @@ export function App(): JSX.Element {
             </button>
           )}
           <div className="flex-1" />
+          {/* **设定库不依赖当前会话**：worldbook 是一级资产（D170），没有会话
+              打开时照样进得去——那正是"先有世界，再有故事"那条路的入口。 */}
+          <button className="btn" onClick={() => setLibrary(true)}>
+            设定库
+          </button>
           {sessionId && (
             <>
               <button className="btn" onClick={() => setWorldbook(true)}>
-                设定
+                本局设定
               </button>
               <button className="btn" onClick={() => setSettings(true)}>
                 配置
@@ -79,7 +87,10 @@ export function App(): JSX.Element {
           </div>
         )}
 
-        {worldbook && sessionId && <WorldbookPanel onClose={() => setWorldbook(false)} />}
+        {library && <WorldbookLibrary onClose={() => setLibrary(false)} />}
+        {worldbook && worldbookId && (
+          <WorldbookPanel worldbookId={worldbookId} onClose={() => setWorldbook(false)} />
+        )}
         {settings && sessionId && <SettingsPanel onClose={() => setSettings(false)} />}
         {devtools && sessionId && <DeveloperPanel onClose={() => setDevtools(false)} />}
       </main>

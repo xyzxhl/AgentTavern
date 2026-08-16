@@ -206,10 +206,8 @@ export type Type24 = "error";
 export type Message1 = string;
 export type Id2 = string;
 export type CreatedAt1 = string;
+export type WorldbookId = string;
 export type Title = string;
-export type ContentScale = string;
-export type GenreTone = string;
-export type UserCharacter = string;
 export type Description2 = string;
 export type MaxRuns3 = number | null;
 export type MaxTotalTokens3 = number | null;
@@ -257,7 +255,12 @@ export type Format = string;
 export type Version = number;
 export type Name2 = string;
 export type Note = string;
+export type Name3 = string;
+export type ContentScale = string;
+export type GenreTone = string;
+export type UserCharacter = string;
 export type Entries = WorldbookEntry[];
+export type Id4 = string;
 
 export interface AgentTavern {
   ClientMessage: ClientMessage;
@@ -265,6 +268,7 @@ export interface AgentTavern {
   Session: Session;
   WorldbookEntry: WorldbookEntry;
   WorldbookBundle: WorldbookBundle;
+  Worldbook: Worldbook;
 }
 /**
  * 提交一条用户输入，**开新的一轮**（F3a「推进」）。
@@ -657,6 +661,7 @@ export interface ServerError {
 export interface Session {
   id?: Id2;
   created_at?: CreatedAt1;
+  worldbook_id?: WorldbookId;
   meta?: SessionMeta;
   control?: ControlDimensions;
   modes?: SessionModes;
@@ -666,11 +671,16 @@ export interface Session {
   goal_run?: GoalRun | null;
 }
 /**
- * Session 元指令：**这个世界是什么**。定义目标，不定义过程。
+ * **这局故事**自己的元指令。定义目标，不定义过程。
  *
- * 分界线是「换个人来读还成不成立」：题材与基调、尺度、角色语言习惯都是世界
- * 自己的属性，跟着世界设定走，换谁来读都一样；文风和视角不是——它们是读者
- * 这一侧的偏好，所以和铺陈程度一起归 `ControlDimensions`。
+ * 这里以前还装着题材与基调、尺度、角色语言习惯、用户扮演谁——**那些是世界
+ * 自己的属性，已经搬进 `WorldMeta`**（D170）。搬家的依据是这个类原本就写着的
+ * 判别式「换个人来读还成不成立」：它同样答得出「换局故事还成不成立」，而答案
+ * 也是成立。当时没搬，是因为 worldbook 还不是独立的东西（D92：一份 worldbook
+ * 开启一个 session），"世界的属性"和"故事的属性"没有区别的余地。
+ *
+ * 文风和视角两样都不在这儿：它们是读者这一侧的偏好，和铺陈程度一起归
+ * `ControlDimensions`。
  *
  * **没有「否定项」字段**（D139）。不能提前揭示的东西属于世界设定，写进
  * worldinfo 或 state；「不许写什么」这类写作纪律属于提示词，写进 YAML。
@@ -678,14 +688,7 @@ export interface Session {
  */
 export interface SessionMeta {
   title?: Title;
-  content_scale?: ContentScale;
-  genre_tone?: GenreTone;
-  character_voices?: CharacterVoices;
-  user_character?: UserCharacter;
   goal?: Goal | null;
-}
-export interface CharacterVoices {
-  [k: string]: string;
 }
 /**
  * 长任务终止条件（D28）。
@@ -790,5 +793,37 @@ export interface WorldbookBundle {
   version?: Version;
   name?: Name2;
   note?: Note;
+  meta?: WorldMeta;
   entries?: Entries;
+}
+/**
+ * **这个世界是什么**——不是这局故事是什么（D170）。
+ *
+ * 这几个字段以前叫 `SessionMeta`，挂在 session 上。它们从一开始就写着自己的
+ * 判别式：「换个人来读还成不成立」——题材与基调、尺度是世界自己的属性，换谁
+ * 来读都一样。**那条判别式同样答得出「换局故事还成不成立」**，而答案也是成立。
+ * 所以它们本来就该跟着 worldbook 走，只是当时 worldbook 还不是独立的东西
+ * （D92：一份 worldbook 开启一个 session），两者的区别没有着落。
+ *
+ * 留在 session 上的只剩这局故事自己的：标题、目标。
+ */
+export interface WorldMeta {
+  name?: Name3;
+  content_scale?: ContentScale;
+  genre_tone?: GenreTone;
+  character_voices?: CharacterVoices;
+  user_character?: UserCharacter;
+}
+export interface CharacterVoices {
+  [k: string]: string;
+}
+/**
+ * 一份设定，**一级资产**（D170）：不属于任何 session，可以开出好几个。
+ *
+ * 条目不在这里——它们一条一个文件，由 `WorldbookRepository` 管。这个模型只装
+ * 整份设定的属性，好让 `worldbook.json` 是一份能单独读懂的东西。
+ */
+export interface Worldbook {
+  id?: Id4;
+  meta?: WorldMeta;
 }

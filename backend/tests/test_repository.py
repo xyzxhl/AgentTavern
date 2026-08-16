@@ -201,3 +201,79 @@ def test_a_missing_config_file_falls_back_instead_of_crashing(tmp_path: Path) ->
     from agenttavern.config import Limits, load_limits
 
     assert load_limits(tmp_path / "没有这个文件.yaml") == Limits()
+
+
+# -- 旧数据搬家（D170） --------------------------------------------------------
+
+
+def test_migration_lifts_the_worldbook_out_of_the_session(tmp_path: Path) -> None:
+    """worldbook 以前躺在 `sessions/<id>/worldinfo/` 里（D92 的一对一）。
+
+    **世界那几个属性也要抢救出来**：题材、尺度、用户扮演谁当时挂在
+    `session.json` 的 `meta` 里，而 `SessionMeta` 上已经没有那些字段了——
+    照模型读会被默默丢掉，所以迁移读的是原始 JSON。
+    """
+    import json
+
+    from agenttavern.storage import Store
+
+    old = tmp_path / "sessions" / "sess_old"
+    (old / "worldinfo").mkdir(parents=True)
+    (old / "session.json").write_text(
+        json.dumps(
+            {
+                "id": "sess_old",
+                "meta": {
+                    "title": "雨夜",
+                    "genre_tone": "现代，悬疑",
+                    "content_scale": "克制",
+                    "user_character": "林昭",
+                    "character_voices": {"陈屿": "话少"},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (old / "worldinfo" / "wi_1.json").write_text(
+        json.dumps({"id": "wi_1", "name": "教团", "content": "总部在旧城区。"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    store = Store(tmp_path)
+    assert store.migrate() == 1
+    assert store.migrate() == 0, "跑第二遍是空操作"
+
+    session = store.session("sess_old").load_session()
+    assert session.worldbook_id, "指到了新建的那份设定上"
+    assert session.meta.title == "雨夜", "故事的标题留在 session 上"
+
+    book = store.worldbook(session.worldbook_id)
+    assert [e.name for e in book.entries()] == ["教团"]
+    meta = book.load().meta
+    assert meta.genre_tone == "现代，悬疑"
+    assert meta.content_scale == "克制"
+    assert meta.user_character == "林昭"
+    assert meta.character_voices == {"陈屿": "话少"}
+    # 旧目录搬空了，不留一份会被人误改的副本。
+    assert not (old / "worldinfo").exists()
+
+
+def test_migration_gives_each_old_session_its_own_worldbook(tmp_path: Path) -> None:
+    """**不合并**：两局旧故事的设定重名也可能完全是两回事，合并没法拆回去。"""
+    import json
+
+    from agenttavern.storage import Store
+
+    for name in ("a", "b"):
+        d = tmp_path / "sessions" / f"sess_{name}"
+        d.mkdir(parents=True)
+        (d / "session.json").write_text(
+            json.dumps({"id": f"sess_{name}", "meta": {"title": "同名"}}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    store = Store(tmp_path)
+    store.migrate()
+    books = {store.session(f"sess_{n}").load_session().worldbook_id for n in ("a", "b")}
+    assert len(books) == 2

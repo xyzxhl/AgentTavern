@@ -6,9 +6,17 @@ import type {
   ServerMessage,
   Session,
   TraceEvent,
+  Worldbook,
   WorldbookBundle,
   WorldbookEntry,
 } from "./protocol";
+
+/** 列表里的一份设定：**带上「谁在用」**——删之前必须看得见这件事（D170）。 */
+export interface WorldbookCard {
+  worldbook: Worldbook;
+  entries: number;
+  sessions: string[];
+}
 
 export interface ServerMeta {
   developer: boolean;
@@ -36,29 +44,45 @@ export const api = {
   getSession: (id: string) =>
     json<{ session: Session; path: Node[]; state: Record<string, unknown> }>(`/sessions/${id}`),
 
-  // -- worldbook：session 的起点（D90 / D158）---------------------------------
+  // -- worldbook：**一级资产，不属于任何 session**（D170）--------------------
   //
-  // 条目分两类：`lore` 的 `content` 进 worldinfo（静态设定），`state` 的 `values`
-  // 进初始状态（会变的部分）。**初始状态在故事开始时冻结**——开始之前改立刻生效，
-  // 之后改只影响以后新建的会话。
-  listWorldbook: (id: string) => json<WorldbookEntry[]>(`/sessions/${id}/worldinfo`),
-  saveWorldbookEntry: (id: string, entry: WorldbookEntry) =>
-    json<WorldbookEntry>(`/sessions/${id}/worldinfo`, {
-      method: "PUT",
-      body: JSON.stringify(entry),
-    }),
-  deleteWorldbookEntry: (id: string, entryId: string) =>
-    json<{ deleted: string }>(`/sessions/${id}/worldinfo/${entryId}`, { method: "DELETE" }),
+  // 一份设定能开出好几个故事，所以它有自己的管理界面，不挂在某个会话下面。
+  // 条目分三类：`world` / `character` 的 `content` 进 worldinfo（静态设定），
+  // `state` 的 `values` 进初始状态（会变的部分）。
+  //
+  // **改设定立刻对所有故事生效**，那是对的——这些是"这个世界是什么"，改它等于
+  // 改角色卡。已经发生过的剧情所依赖的事实是另一回事：初始状态在**每局故事
+  // 各自的第一轮**冻结（D158），此后改它只影响还没开始的那些。
+  listWorldbooks: () => json<WorldbookCard[]>("/worldbooks"),
+  createWorldbook: (book?: Partial<Worldbook>) =>
+    json<Worldbook>("/worldbooks", { method: "POST", body: JSON.stringify(book ?? null) }),
+  getWorldbook: (id: string) =>
+    json<{
+      worldbook: Worldbook;
+      entries: WorldbookEntry[];
+      sessions: string[];
+      initial_state: Record<string, unknown>;
+    }>(`/worldbooks/${id}`),
+  patchWorldbook: (id: string, meta: Worldbook["meta"]) =>
+    json<Worldbook>(`/worldbooks/${id}`, { method: "PATCH", body: JSON.stringify(meta) }),
+  /** 有故事开在上面时服务端返回 409——删掉的话那几局会当场失忆。 */
+  deleteWorldbook: (id: string) =>
+    json<{ deleted: string }>(`/worldbooks/${id}`, { method: "DELETE" }),
+
+  listEntries: (id: string) => json<WorldbookEntry[]>(`/worldbooks/${id}/entries`),
+  saveEntry: (id: string, entry: WorldbookEntry) =>
+    json<WorldbookEntry>(`/worldbooks/${id}/entries`, { method: "PUT", body: JSON.stringify(entry) }),
+  deleteEntry: (id: string, entryId: string) =>
+    json<{ deleted: string }>(`/worldbooks/${id}/entries/${entryId}`, { method: "DELETE" }),
 
   /** 回看某一轮落盘的 trace（D162）。开发者面板靠它看当前连接之前的轮次。 */
-  readTrace: (id: string, runId: string) =>
-    json<TraceEvent[]>(`/sessions/${id}/trace/${runId}`),
+  readTrace: (id: string, runId: string) => json<TraceEvent[]>(`/sessions/${id}/trace/${runId}`),
 
   // 导入导出。格式与三条约定见 docs/design/WorldbookFormat.md。
-  exportWorldbook: (id: string) => json<WorldbookBundle>(`/sessions/${id}/worldbook/export`),
+  exportWorldbook: (id: string) => json<WorldbookBundle>(`/worldbooks/${id}/export`),
   importWorldbook: (id: string, bundle: WorldbookBundle, replace: boolean) =>
-    json<{ imported: number; removed: number; frozen: boolean }>(
-      `/sessions/${id}/worldbook/import?replace=${replace}`,
+    json<{ imported: number; removed: number; frozen: string[] }>(
+      `/worldbooks/${id}/import?replace=${replace}`,
       { method: "POST", body: JSON.stringify(bundle) },
     ),
 };

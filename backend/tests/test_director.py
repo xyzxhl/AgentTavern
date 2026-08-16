@@ -16,11 +16,11 @@ from agenttavern.models import (
     ModelAuthority,
     Node,
     Session,
-    SessionMeta,
     StateDelta,
     UserInput,
     WorldbookEntry,
     WorldbookMode,
+    WorldMeta,
     WorldState,
     replay,
 )
@@ -56,14 +56,14 @@ def joined(messages: list[Message]) -> str:
 
 
 def director_messages(
-    meta: SessionMeta | None = None,
+    world: WorldMeta | None = None,
     control: ControlDimensions | None = None,
     state: WorldState | None = None,
     capabilities: Capabilities | None = None,
     worldinfo: list[WorldbookEntry] | None = None,
 ) -> list[Message]:
     return director_prompt(
-        meta or SessionMeta(),
+        world or WorldMeta(),
         control or ControlDimensions(),
         state or WorldState(),
         None,
@@ -87,8 +87,8 @@ def _state_block(prompt: str) -> str:
     return body[body.index("{") : body.rindex("}") + 1]
 
 
-def writer_text(meta: SessionMeta, control: ControlDimensions) -> str:
-    return joined(writer_prompt(meta, control).messages)
+def writer_text(world: WorldMeta, control: ControlDimensions) -> str:
+    return joined(writer_prompt(world, control).messages)
 
 
 async def test_happy_path(tmp_path: Path) -> None:
@@ -202,8 +202,9 @@ STYLE = "jishi"
 """测试里用的文风档位。**文风归控制维度**，不归 meta——它是读者偏好，不是世界属性。"""
 
 
-def make_meta() -> SessionMeta:
-    return SessionMeta(
+def make_world() -> WorldMeta:
+    """题材与语言习惯**跟着 worldbook 走**（D170），不是 session 的属性。"""
+    return WorldMeta(
         genre_tone="悬疑",
         character_voices={"陈": "说话总是绕圈子"},
     )
@@ -211,7 +212,7 @@ def make_meta() -> SessionMeta:
 
 def test_director_never_sees_style_or_prose(tmp_path: Path) -> None:
     """D33 的隔离基础：文风与角色语言习惯只进 writer，正文只进 writer。"""
-    prompt = prompt_for(meta=make_meta())
+    prompt = prompt_for(world=make_world())
 
     assert _real_choice("writer", "prose_style", STYLE) not in prompt
     assert "说话总是绕圈子" not in prompt
@@ -221,7 +222,7 @@ def test_director_never_sees_style_or_prose(tmp_path: Path) -> None:
 
 def test_writer_never_sees_state_or_history(tmp_path: Path) -> None:
     """writer 只承担文风。它拿不到状态值、世界设定、用户原始指令——都已在细纲里。"""
-    prompt = writer_text(make_meta(), ControlDimensions(prose_style=STYLE))
+    prompt = writer_text(make_world(), ControlDimensions(prose_style=STYLE))
 
     assert _real_choice("writer", "prose_style", STYLE) in prompt
     assert "说话总是绕圈子" in prompt
@@ -413,7 +414,7 @@ def test_density_reaches_both_sides_in_opposite_directions() -> None:
         w = _real_choice("writer", "density", value)
         d = _real_choice("director", "event_density", value)
 
-        assert w and w in writer_text(SessionMeta(), control)
+        assert w and w in writer_text(WorldMeta(), control)
         assert d and d in prompt_for(control=control)
         # 两组文本必须不同——一样就说明有一侧被另一侧的措辞污染了。
         assert w != d
@@ -428,7 +429,7 @@ def test_the_writer_never_gets_a_speaking_rule_of_its_own() -> None:
     增加新行为、新决定、新心理」，这条更宽、更严，再单给一条抢话规则就是重复。
     """
     for allowed in (True, False):
-        w = writer_text(make_meta(), ControlDimensions(allow_speaking_for_user=allowed))
+        w = writer_text(make_world(), ControlDimensions(allow_speaking_for_user=allowed))
         assert "抢话" not in w
         assert "不要自行增加" in w
 
@@ -471,8 +472,8 @@ def test_empty_nsfw_injects_nothing_at_all(monkeypatch) -> None:
     real = assembler.load
     monkeypatch.setattr(assembler, "load", lambda name: {**real(name), "nsfw": ""})
 
-    meta = make_meta()
-    for prompt in (writer_text(meta, ControlDimensions()), prompt_for(meta=meta)):
+    world = make_world()
+    for prompt in (writer_text(world, ControlDimensions()), prompt_for(world=world)):
         assert "情色" not in prompt
 
 
@@ -487,8 +488,8 @@ def test_nsfw_and_jailbreak_reach_both_agents(monkeypatch) -> None:
     filled = {"nsfw": "情色指导占位", "jailbreak": "破限占位"}
     monkeypatch.setattr(assembler, "load", lambda name: {**real(name), **filled})
 
-    meta = make_meta()
-    both = (writer_prompt(meta, ControlDimensions()).messages, director_messages(meta=meta))
+    world = make_world()
+    both = (writer_prompt(world, ControlDimensions()).messages, director_messages(world=world))
 
     for messages in both:
         assert "情色指导占位" in joined(messages)
@@ -513,9 +514,9 @@ def test_each_side_gets_its_own_sections_and_none_of_the_others() -> None:
     真正的不变量是 D33：哪一节进哪一侧。写法、措辞、例子都可以随便改，
     但 writer 永远拿不到 director 的推进与转述规则，director 永远拿不到文风。
     """
-    meta = make_meta()
-    w = writer_text(meta, ControlDimensions())
-    d = prompt_for(meta=meta)
+    world = make_world()
+    w = writer_text(world, ControlDimensions())
+    d = prompt_for(world=world)
 
     writer_only = ["input_contract", "creation_guidance", "dialogue"]
     director_only = ["output_contract", "creation_guidance"]
@@ -536,8 +537,8 @@ def test_each_side_gets_its_own_sections_and_none_of_the_others() -> None:
 
 def test_style_and_prose_never_reach_the_director() -> None:
     """D33 的隔离基础，用 session 自己的配置来验——它不随提示词改动而变。"""
-    meta = make_meta()
-    d = prompt_for(meta=meta)
+    world = make_world()
+    d = prompt_for(world=world)
 
     assert _real_choice("writer", "prose_style", STYLE) not in d
     assert "说话总是绕圈子" not in d
@@ -813,12 +814,12 @@ def test_the_player_is_a_character_not_a_fourth_kind() -> None:
         WorldbookEntry(name="陈屿", kind=EntryKind.CHARACTER, voice="说话绕，很少给准话"),
         WorldbookEntry(name="旧货店", kind=EntryKind.WORLD, content="窄巷尽头。"),
     ]
-    meta = SessionMeta()
+    world = WorldMeta()
 
-    assert player_character(meta, book) == "林昭"
+    assert player_character(world, book) == "林昭"
     # 用户扮演的那个也是角色，**语言习惯照样进 writer**——漏掉它的话，
     # 用户的角色会是全场唯一一个不按设定说话的人。
-    voices = render_voices(meta, book)
+    voices = render_voices(world, book)
     assert "林昭：话少，先观察" in voices
     assert "陈屿：说话绕，很少给准话" in voices
     # 世界设定没有语言习惯这回事。
@@ -835,9 +836,9 @@ def test_an_entrys_voice_beats_the_one_in_meta() -> None:
     from agenttavern.models import EntryKind, WorldbookEntry
     from agenttavern.prompting.prompts import render_voices
 
-    meta = SessionMeta(character_voices={"陈屿": "旧写法", "老王": "只在 meta 里"})
+    world = WorldMeta(character_voices={"陈屿": "旧写法", "老王": "只在 meta 里"})
     book = [WorldbookEntry(name="陈屿", kind=EntryKind.CHARACTER, voice="新写法")]
 
-    voices = render_voices(meta, book)
+    voices = render_voices(world, book)
     assert "陈屿：新写法" in voices and "旧写法" not in voices
     assert "老王：只在 meta 里" in voices, "旧写法不该一改就哑"

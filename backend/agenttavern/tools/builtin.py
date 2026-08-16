@@ -298,7 +298,7 @@ async def _worldinfo_read(ctx: RunContext, params: WorldInfoReadParams) -> ToolR
     for ref in params.refs:
         if budget <= 0:
             break
-        entry = ctx.repo.load_worldbook_entry(ref)
+        entry = ctx.repo.book().load_entry(ref)
         if entry is None:
             return error(f"没有这个设定条目：{ref}", label="展开设定失败")
         served.add(ref)
@@ -355,14 +355,14 @@ async def _summarize(ctx: RunContext, params: SummarizeParams) -> ToolResult:
         ctx.repo.save_node(node)
 
     elif kind == "wi":
-        entry = ctx.repo.load_worldbook_entry(ident)
+        entry = ctx.repo.book().load_entry(ident)
         if entry is None:
             return error(f"没有这个设定条目：{ident}", label="压缩失败")
         if entry.summary:
             return ToolResult(content=entry.summary, label="复用了已有摘要")
         summary = await _llm_summarize(ctx, entry.content)
         entry.summary = summary
-        ctx.repo.save_worldbook_entry(entry)
+        ctx.repo.book().save_entry(entry)
 
     else:
         return error(f"source 必须是 run:<id> 或 wi:<ref>，收到：{params.source}", label="压缩失败")

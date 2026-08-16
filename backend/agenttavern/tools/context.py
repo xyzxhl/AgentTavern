@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from ..llm import LLMGateway, OnDelta
-from ..models import Actor, Capabilities, Session, StateDelta, WorldState
+from ..models import Actor, Capabilities, Session, StateDelta, WorldMeta, WorldState
 from ..storage import SessionRepository
 from .inbox import Inbox
 
@@ -31,6 +31,10 @@ class RunContext:
     repo: SessionRepository
     session: Session
     gateway: LLMGateway
+
+    world: WorldMeta = field(default_factory=WorldMeta)
+    """这局故事开在哪个世界上（D170）。**一个 run 读一次**——它跟着 worldbook
+    走，而 worldbook 是一级资产，每处各读一次磁盘只是白费。"""
 
     parent_id: str | None = None
     """本 run 挂在哪个节点下。历史与状态沿这条路径读取（D48）。"""

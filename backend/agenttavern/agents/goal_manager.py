@@ -46,7 +46,6 @@ from ..models import (
     GoalRun,
     InputSource,
     Node,
-    SessionMeta,
     TraceEventType,
 )
 from ..prompting import assemble, titled
@@ -87,7 +86,7 @@ def render_before(nodes: list[Node]) -> str:
 
 
 def _prefix(
-    meta: SessionMeta, goal: Goal, density: ExpansionDensity, before: list[Node]
+    user_character: str, goal: Goal, density: ExpansionDensity, before: list[Node]
 ) -> list[Message]:
     """静态前缀：任务说明 + 用户扮演谁 + 目标 + 节奏 + goal 之前的剧情。
 
@@ -97,11 +96,15 @@ def _prefix(
     从种子输入的措辞里猜人称。猜对是运气——种子恰好是第一人称时它跟着写"我"，
     而那一句本可以是第三人称、也可能根本没有种子（goal 从会话一开始就在）。
     没设这个字段时整节不出现，它退回去猜，和以前一样。
+
+    收的是**已经解析好的名字**而不是整份 `WorldMeta`（D170）：标了 `is_player`
+    的条目优先于那个遗留字段，而那条规则只有一处实现（`player_character`），
+    在这里再判一次迟早会和它分叉。
     """
     return assemble(
         "goal_manager",
         contexts={
-            "user_character": meta.user_character,
+            "user_character": user_character,
             "goal": goal.description,
             "history_outline": render_before(before),
         },
@@ -154,7 +157,7 @@ def plan_snapshot(run: GoalRun) -> Message | None:
 
 
 def sync_conversation(
-    meta: SessionMeta,
+    user_character: str,
     goal: Goal,
     run: GoalRun,
     path: list[Node],
@@ -191,7 +194,7 @@ def sync_conversation(
     start = during_ids.index(seen) + 1 if resumable and not at_cut and seen else 0
 
     if not resumable:
-        run.conversation = _prefix(meta, goal, density, before)
+        run.conversation = _prefix(user_character, goal, density, before)
         snapshot = plan_snapshot(run)
         if snapshot is not None:
             run.conversation.append(snapshot)

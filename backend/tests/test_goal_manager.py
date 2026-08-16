@@ -21,7 +21,6 @@ from agenttavern.models import (
     GoalRun,
     InputSource,
     Node,
-    SessionMeta,
     SubGoal,
     UserInput,
 )
@@ -30,7 +29,9 @@ from agenttavern.tools import GoalContext, ToolRegistry
 from agenttavern.tracing import Tracer
 
 GOAL = Goal(description="写到他们摊牌为止")
-META = SessionMeta(user_character="林昭")
+PLAYER = "林昭"
+"""用户扮演谁。**收的是解析好的名字**（D170）：那条「标了 is_player 的条目
+优先」的规则只有 `player_character` 一处实现，goal_manager 不再自己判一遍。"""
 
 
 def _node(index: int, *, source: InputSource = InputSource.SIMULATED, said: str = "我推开门"):
@@ -58,12 +59,12 @@ def test_the_prefix_is_built_once_and_each_turn_only_appends() -> None:
     run = GoalRun()
     path = [_node(0), _node(1)]
 
-    sync_conversation(META, GOAL, run, path)
+    sync_conversation(PLAYER, GOAL, run, path)
     after_two = len(run.conversation)
     assert "写到他们摊牌为止" in _joined(run)
 
     path.append(_node(2))
-    sync_conversation(META, GOAL, run, path)
+    sync_conversation(PLAYER, GOAL, run, path)
 
     assert len(run.conversation) == after_two + 1, "只该多出第 3 轮那一条"
     assert run.seen_leaf_id == "run_2"
@@ -107,12 +108,12 @@ def test_switching_branches_rebuilds_instead_of_extending() -> None:
     不在当前路径上时，整份重建。
     """
     run = GoalRun(plan=GoalPlan(subgoals=[SubGoal(description="他先松口", done=True)]))
-    sync_conversation(META, GOAL, run, [_node(0), _node(1)])
+    sync_conversation(PLAYER, GOAL, run, [_node(0), _node(1)])
     assert "第1轮的正文。" in _joined(run)
 
     # 切到另一支：run_1 不在这条路径上了
     other = Node(id="run_x", parent_id="run_0", outline="另一支的细纲。", prose="另一支的正文。")
-    sync_conversation(META, GOAL, run, [_node(0), other])
+    sync_conversation(PLAYER, GOAL, run, [_node(0), other])
 
     body = _joined(run)
     assert "另一支的正文。" in body
@@ -129,7 +130,7 @@ def test_before_the_goal_gets_outlines_and_during_gets_prose() -> None:
     "这一步到底有没有发生"，而**细纲只说定了什么，正文才是最终写出来的东西**。
     """
     run = GoalRun(started_at_leaf_id="run_1")
-    sync_conversation(META, GOAL, run, [_node(0), _node(1), _node(2), _node(3)])
+    sync_conversation(PLAYER, GOAL, run, [_node(0), _node(1), _node(2), _node(3)])
     body = _joined(run)
 
     # 之前那两轮：细纲在、正文不在
@@ -142,7 +143,7 @@ def test_before_the_goal_gets_outlines_and_during_gets_prose() -> None:
 def test_a_goal_set_at_session_start_treats_everything_as_during() -> None:
     """`started_at_leaf_id` 为空 = 这个 goal 从会话一开始就在，整条路径都算期间。"""
     run = GoalRun()
-    sync_conversation(META, GOAL, run, [_node(0), _node(1)])
+    sync_conversation(PLAYER, GOAL, run, [_node(0), _node(1)])
     body = _joined(run)
 
     assert "第0轮的正文。" in body and "第1轮的正文。" in body
@@ -247,7 +248,7 @@ async def test_a_round_ends_when_it_stops_calling_tools(tmp_path: Path) -> None:
         text("先推到这里。"),
     )
     run = GoalRun()
-    sync_conversation(META, GOAL, run, [_node(0)])
+    sync_conversation(PLAYER, GOAL, run, [_node(0)])
     before = len(run.conversation)
 
     step = await advance_goal(llm.gateway(), Tracer(_repo(tmp_path), "run_0"), GOAL, run)
@@ -273,7 +274,7 @@ async def test_a_round_that_never_stops_calling_tools_is_cut_off(tmp_path: Path)
     # 脚本只剩一条时会一直重复它——一个永远在调工具、永远不收口的模型。
     llm = ScriptedLLM(tool("plan", subgoals=["甲"]))
     run = GoalRun()
-    sync_conversation(META, GOAL, run, [_node(0)])
+    sync_conversation(PLAYER, GOAL, run, [_node(0)])
     before = len(run.conversation)
 
     step = await advance_goal(
@@ -296,7 +297,7 @@ async def test_finishing_comes_back_as_an_outcome(tmp_path: Path) -> None:
         text("完了。"),
     )
     run = GoalRun()
-    sync_conversation(META, GOAL, run, [_node(0)])
+    sync_conversation(PLAYER, GOAL, run, [_node(0)])
 
     step = await advance_goal(llm.gateway(), Tracer(_repo(tmp_path), "run_0"), GOAL, run)
 
@@ -364,10 +365,10 @@ def test_it_is_told_who_the_user_plays() -> None:
     或者根本没有种子（goal 从会话一开始就在），它就只能瞎猜。
     """
     run = GoalRun()
-    sync_conversation(META, GOAL, run, [_node(0)])
+    sync_conversation(PLAYER, GOAL, run, [_node(0)])
     assert "林昭" in _joined(run)
 
     # 没设这个字段时整节不出现——退回去猜，和以前一样，但不会凭空冒出一个名字。
     blank = GoalRun()
-    sync_conversation(SessionMeta(), GOAL, blank, [_node(0)])
+    sync_conversation("", GOAL, blank, [_node(0)])
     assert "用户扮演的角色" not in _joined(blank)

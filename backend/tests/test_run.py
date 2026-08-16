@@ -408,7 +408,7 @@ async def test_collapsing_a_list_into_a_string_is_flagged(tmp_path: Path) -> Non
         state=dict(set={"沈砚": {"随身": "青锋剑、止血符 ×4", "灵石": "1"}}),
     )
     repo, session, gw, reg = setup(tmp_path, llm)
-    repo.save_worldbook_entry(entry)
+    repo.book().save_entry(entry)
 
     outcome = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我买符"))
     flag = next(n for n in outcome.notes if "另一种形状" in n)
@@ -588,7 +588,7 @@ async def test_a_bare_key_shadowing_a_namespaced_one_is_flagged(tmp_path: Path) 
         state=dict(set={"冷却": "御剑斩剩2回合"}),
     )
     repo, session, gw, reg = setup(tmp_path, llm)
-    repo.save_worldbook_entry(entry)
+    repo.book().save_entry(entry)
 
     outcome = await execute_run(repo, session, gw, reg, user_input=UserInput(text="再来一记"))
     flag = next(n for n in outcome.notes if "只差一层归属" in n)
@@ -609,7 +609,7 @@ async def test_sibling_keys_under_different_owners_are_not_flagged(tmp_path: Pat
         state=dict(append={"陈屿": {"知情": ["她来过"]}}),
     )
     repo, session, gw, reg = setup(tmp_path, llm)
-    repo.save_worldbook_entry(entry)
+    repo.book().save_entry(entry)
 
     outcome = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我走了"))
     assert not any("只差一个前缀" in n for n in outcome.notes)

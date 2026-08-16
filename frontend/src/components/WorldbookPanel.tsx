@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { api } from "../api";
-import type { EntryKind, WorldbookBundle, WorldbookEntry } from "../protocol";
+import type { EntryKind, Worldbook, WorldbookBundle, WorldbookEntry } from "../protocol";
 import { useSession } from "../store";
 import { JsonEditor } from "./JsonEditor";
 
@@ -21,7 +21,11 @@ const KIND_HINT: Record<EntryKind, string> = {
 };
 
 /**
- * 设定管理（worldbook，D90 / D158 / D159）。**用一份 worldbook 开启一个 session。**
+ * 设定管理（worldbook，D158 / D159 / D170）。**它是一级资产，不属于任何 session**——
+ * 一份设定能开出好几个故事。
+ *
+ * 所以这个组件**吃 `worldbookId` 而不是当前会话**：同一个界面既从故事里打开
+ * （改这局开在的那个世界），也从设定库里打开（改任何一份）。
  *
  * 三类条目：世界设定（一段不受限制的文本）、角色设定（正文 + 语言习惯）、
  * 初始状态（一棵键值树）。**用户扮演的角色不是第四类**，它是角色设定加一个标记。
@@ -31,11 +35,23 @@ const KIND_HINT: Record<EntryKind, string> = {
  *
  * **占满主区而不是塞进侧栏**：正文常有几百字，在 320px 的窄栏里编辑很难受。
  */
-export function WorldbookPanel({ onClose }: { onClose: () => void }): JSX.Element {
-  const sessionId = useSession((s) => s.sessionId);
+export function WorldbookPanel({
+  worldbookId,
+  onClose,
+}: {
+  worldbookId: string;
+  onClose: () => void;
+}): JSX.Element {
   const refreshState = useSession((s) => s.refreshState);
-  // 故事一开始，初始状态就冻结了（D158）——之后改条目只影响以后新建的会话。
-  const frozen = useSession((s) => s.session?.initial_state != null);
+  const openSession = useSession((s) => s.sessionId);
+  // 故事一开始，初始状态就冻结了（D158）——之后改条目只影响还没开始的那些故事。
+  // 这里只报**当前打开的这局**：别的故事各自冻结在各自的第一轮，管不着。
+  const frozen = useSession(
+    (s) => s.session?.worldbook_id === worldbookId && s.session?.initial_state != null,
+  );
+
+  const [meta, setMeta] = useState<Worldbook["meta"] | null>(null);
+  const [users, setUsers] = useState<string[]>([]);
 
   const [entries, setEntries] = useState<WorldbookEntry[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -46,14 +62,23 @@ export function WorldbookPanel({ onClose }: { onClose: () => void }): JSX.Elemen
   const file = useRef<HTMLInputElement>(null);
 
   async function reload(): Promise<void> {
-    if (!sessionId) return;
-    setEntries(await api.listWorldbook(sessionId));
+    const got = await api.getWorldbook(worldbookId);
+    setEntries(got.entries);
+    setMeta(got.worldbook.meta ?? null);
+    setUsers(got.sessions);
+  }
+
+  /** 改完把当前会话的 state 拉回来对齐——**故事还没开始时，改初始状态会立刻改变
+   * 它**；不拉的话用户看到的还是旧值，而下一轮模型读到的已经是新的。 */
+  async function settle(): Promise<void> {
+    await reload();
+    if (openSession) await refreshState();
   }
 
   useEffect(() => {
     void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId]);
+  }, [worldbookId]);
 
   function open(entry: WorldbookEntry): void {
     setSelected(entry.id ?? null);
@@ -79,7 +104,7 @@ export function WorldbookPanel({ onClose }: { onClose: () => void }): JSX.Elemen
   }
 
   async function save(): Promise<void> {
-    if (!sessionId || !draft) return;
+    if (!draft) return;
 
     let values: Record<string, unknown> = {};
     if (draft.kind === "state") {
@@ -97,11 +122,8 @@ export function WorldbookPanel({ onClose }: { onClose: () => void }): JSX.Elemen
 
     setBusy(true);
     try {
-      const saved = await api.saveWorldbookEntry(sessionId, { ...draft, values });
-      await reload();
-      // 故事还没开始时，改初始状态会立刻改变当前 state——把侧栏那份拉回来对齐，
-      // 否则用户看到的还是旧值，而下一轮模型读到的已经是新的。
-      await refreshState();
+      const saved = await api.saveEntry(worldbookId, { ...draft, values });
+      await settle();
       open(saved);
     } finally {
       setBusy(false);
@@ -109,7 +131,7 @@ export function WorldbookPanel({ onClose }: { onClose: () => void }): JSX.Elemen
   }
 
   async function remove(entry: WorldbookEntry): Promise<void> {
-    if (!sessionId || !entry.id) return;
+    if (!entry.id) return;
 
     const keys = Object.keys(entry.values ?? {});
     let warning = "";
@@ -122,9 +144,8 @@ export function WorldbookPanel({ onClose }: { onClose: () => void }): JSX.Elemen
 
     setBusy(true);
     try {
-      await api.deleteWorldbookEntry(sessionId, entry.id);
-      await reload();
-      await refreshState();
+      await api.deleteEntry(worldbookId, entry.id);
+      await settle();
       if (selected === entry.id) {
         setSelected(null);
         setDraft(null);
@@ -136,8 +157,7 @@ export function WorldbookPanel({ onClose }: { onClose: () => void }): JSX.Elemen
 
   /** 导出成一个文件。**浏览器里"下载"就是造一个 a 标签点它**，没有别的路。 */
   async function exportFile(): Promise<void> {
-    if (!sessionId) return;
-    const bundle = await api.exportWorldbook(sessionId);
+    const bundle = await api.exportWorldbook(worldbookId);
     const url = URL.createObjectURL(
       new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" }),
     );
@@ -149,7 +169,6 @@ export function WorldbookPanel({ onClose }: { onClose: () => void }): JSX.Elemen
   }
 
   async function importFile(picked: File): Promise<void> {
-    if (!sessionId) return;
     // **替换是破坏性的，问一句**；追加不必问，多几条设定删掉就是。
     const replace = confirm(
       [
@@ -162,9 +181,8 @@ export function WorldbookPanel({ onClose }: { onClose: () => void }): JSX.Elemen
     setBusy(true);
     try {
       const bundle = JSON.parse(await picked.text()) as WorldbookBundle;
-      const done = await api.importWorldbook(sessionId, bundle, replace);
-      await reload();
-      await refreshState();
+      const done = await api.importWorldbook(worldbookId, bundle, replace);
+      await settle();
       setDraft(null);
       setSelected(null);
       alert(
@@ -172,8 +190,11 @@ export function WorldbookPanel({ onClose }: { onClose: () => void }): JSX.Elemen
           `导入了 ${done.imported} 条` +
             (done.removed ? `，替换掉 ${done.removed} 条` : "") +
             "。",
-          // 冻结之后导入初始状态不会改写既有的每一轮，用户必须知道（D158）。
-          done.frozen ? "故事已开始、起点已冻结：初始状态只影响以后新建的会话。" : "",
+          // 冻结之后导入初始状态不会改写既有的每一轮，用户必须知道（D158）。**一份
+          // 设定可以开出好几局故事**（D170），所以报的是有几局已经开始了。
+          done.frozen.length
+            ? `${done.frozen.length} 局故事已开始、起点已冻结：初始状态只对还没开始的那些生效。`
+            : "",
         ]
           .filter(Boolean)
           .join("\n"),
@@ -189,11 +210,13 @@ export function WorldbookPanel({ onClose }: { onClose: () => void }): JSX.Elemen
   return (
     <div className="absolute inset-0 z-10 flex flex-col bg-ink-900">
       <header className="flex items-center gap-2 border-b border-line px-5 py-2.5">
-        <span className="text-sm text-fg">世界设定</span>
+        <span className="text-sm text-fg">{meta?.name || "世界设定"}</span>
         <span className="text-[11px] text-dim">{entries.length} 条</span>
-        {frozen && (
-          <span className="text-[11px] text-dim">· 故事已开始，起点已冻结</span>
+        {/* **一份设定开出好几局故事**（D170）：改它对它们全都生效，这件事得看得见。 */}
+        {users.length > 1 && (
+          <span className="text-[11px] text-accent">· {users.length} 局故事在用</span>
         )}
+        {frozen && <span className="text-[11px] text-dim">· 本局已开始，起点已冻结</span>}
         <div className="flex-1" />
         {KINDS.map((kind) => (
           <button key={kind} className="btn" onClick={() => create(kind)}>

@@ -113,6 +113,9 @@ async def execute_run(
         run_id=run_id,
         repo=repo,
         session=effective,
+        # **一个 run 读一次**：题材、尺度、语言习惯跟着 worldbook 走（D170），
+        # 而 director 和 writer 各要一次。
+        world=repo.world_meta(),
         gateway=gateway,
         parent_id=parent_id,
         ask_user=ask_user,

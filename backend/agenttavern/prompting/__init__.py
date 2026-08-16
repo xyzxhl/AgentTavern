@@ -13,6 +13,7 @@ from .assembler import Prompt, assemble, choice, choices_of, fill, load, text, t
 from .prompts import (
     STATE_INLINE_LIMIT,
     director_prompt,
+    player_character,
     render_delta,
     render_recent,
     render_state,
@@ -28,6 +29,7 @@ __all__ = [
     "choice",
     "choices_of",
     "director_prompt",
+    "player_character",
     "fill",
     "load",
     "render_delta",

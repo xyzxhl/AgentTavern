@@ -38,8 +38,11 @@ const SUMMARIZE: Record<string, string> = { auto: "自动归段", manual: "只�
 /**
  * 会话设置：**元指令 / 控制维度 / 能力开关**三类分开摆。
  *
- * 三者性质不同（D38/D78），混成一张表是概念膨胀的来源：元指令是「这个世界是
+ * 三者性质不同（D38/D78），混成一张表是概念膨胀的来源：元指令是「这局故事是
  * 什么」，控制维度是「怎么写」，能力开关是「系统能做什么」。
+ *
+ * **「这个世界是什么」不在这里**（D170）：题材、尺度、角色语言习惯跟着 worldbook
+ * 走，它是一级资产，一份能开出好几局故事。
  *
  * 文风与视角的档位**从服务端现读**，不在这里写死——它们定义在提示词 YAML 里，
  * 写死一份的话用户加一档就得等谁想起来同步。
@@ -87,22 +90,18 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): JSX.Element
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         <fieldset disabled={busy} className="mx-auto max-w-2xl space-y-7">
-          <Group name="元指令" hint="这个世界是什么。创建时设定，很少改。">
+          <Group name="元指令" hint="这局故事是什么。创建时设定，很少改。">
             <Text
               label="标题"
               value={meta.title ?? ""}
               onChange={(title) => void patch({ meta: { title } })}
             />
-            <Text
-              label="题材与基调"
-              value={meta.genre_tone ?? ""}
-              onChange={(genre_tone) => void patch({ meta: { genre_tone } })}
-            />
-            <Text
-              label="剧情尺度"
-              value={meta.content_scale ?? ""}
-              onChange={(content_scale) => void patch({ meta: { content_scale } })}
-            />
+            {/* **题材与尺度不在这里了**（D170）：它们是这个世界的属性，跟着
+                worldbook 走——换局故事来读也仍然成立，而同一份设定可以开出好几局。 */}
+            <p className="text-[11px] leading-snug text-dim">
+              题材与基调、剧情尺度、角色语言习惯都归<b className="font-medium text-fg">设定</b>
+              ——它们是这个世界的属性，同一份设定开出的每局故事共用一套。
+            </p>
           </Group>
 
           <Group name="控制维度" hint="怎么写。每轮都可以被单轮覆盖。">

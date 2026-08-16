@@ -26,40 +26,41 @@ from ..models import (
     Capabilities,
     ControlDimensions,
     EntryKind,
+    Goal,
     Node,
-    SessionMeta,
     StateDelta,
     WorldbookEntry,
     WorldbookMode,
+    WorldMeta,
     WorldState,
 )
 from .assembler import Prompt, assemble, text
 
 
-def player_character(meta: SessionMeta, worldinfo: Sequence[WorldbookEntry] = ()) -> str:
+def player_character(world: WorldMeta, worldinfo: Sequence[WorldbookEntry] = ()) -> str:
     """用户扮演的是谁。**标了 `is_player` 的角色条目优先**（D158/D159）。
 
-    此前只有 `SessionMeta.user_character` 一个名字，于是「用户扮演谁」和
+    此前只有 `WorldMeta.user_character` 一个名字，于是「用户扮演谁」和
     「这个人是什么样」分在两个地方——改了一处另一处不动，而 writer 两样都要。
-    现在那条条目自己就带着正文，名字从它来；没有这条条目时退回 meta 里的名字。
+    现在那条条目自己就带着正文，名字从它来；没有这条条目时退回那个遗留字段。
     """
     for entry in worldinfo:
         if entry.kind is EntryKind.CHARACTER and entry.is_player:
             return entry.name
-    return meta.user_character
+    return world.user_character
 
 
-def render_voices(meta: SessionMeta, worldinfo: Sequence[WorldbookEntry] = ()) -> str:
+def render_voices(world: WorldMeta, worldinfo: Sequence[WorldbookEntry] = ()) -> str:
     """角色语言习惯。**只进 writer**——它不参与检索，参与每一个 token（D33）。
 
-    优先取角色条目自己的 `voice`（D159）：此前它挂在 `SessionMeta.character_voices`
+    优先取角色条目自己的 `voice`（D159）：此前它挂在 `character_voices`
     这个 `名字 → 说话方式` 的字典里，于是「这个角色是谁」和「他怎么说话」分在
     两个地方，靠名字对上——改个名字就悄悄断了，而断了不会报错，只是那个角色
     忽然不再那样说话。
 
-    `meta` 里那份仍然读，但同名时**条目赢**：它离角色更近。
+    那个遗留字段仍然读，但同名时**条目赢**：它离角色更近。
     """
-    voices = dict(meta.character_voices)
+    voices = dict(world.character_voices)
     for entry in worldinfo:
         if entry.kind is EntryKind.CHARACTER and entry.voice:
             voices[entry.name] = entry.voice
@@ -179,7 +180,7 @@ def render_worldinfo(entries: list[WorldbookEntry], *, expandable: bool = True) 
 
 
 def director_prompt(
-    meta: SessionMeta,
+    world: WorldMeta,
     control: ControlDimensions,
     state: WorldState,
     user_text: str | None,
@@ -187,6 +188,7 @@ def director_prompt(
     history: Sequence[Message] = (),
     capabilities: Capabilities | None = None,
     worldinfo: list[WorldbookEntry] | None = None,
+    goal: Goal | None = None,
 ) -> Prompt:
     """装配 director 收到的整串消息。
 
@@ -204,15 +206,16 @@ def director_prompt(
         "director",
         contexts={
             # 题材与基调是这个故事自己写的话——**数据，不是模板**，所以走 context。
-            "genre_tone": meta.genre_tone,
+            "genre_tone": world.genre_tone,
             "worldinfo": render_worldinfo(worldinfo or [], expandable=caps.worldinfo_read),
             "history": history,
             "state": render_state(state, expandable=caps.state_query) if caps.state else "",
             "user_input": user_text or text("director", "no_user_input"),
         },
         values={
-            "content_scale": meta.content_scale,
-            "goal": meta.goal.description if meta.goal else "",
+            "content_scale": world.content_scale,
+            # 目标是**这局故事**的（D170），所以它单独传，不跟着世界走。
+            "goal": goal.description if goal else "",
         },
         options={
             "narration_and_advancement": control.input_handling.value,
@@ -291,7 +294,7 @@ def state_manager_prompt(
 
 
 def writer_prompt(
-    meta: SessionMeta,
+    world: WorldMeta,
     control: ControlDimensions,
     *,
     outline: str = "",
@@ -306,13 +309,14 @@ def writer_prompt(
     return assemble(
         "writer",
         contexts={
-            "character_voices": render_voices(meta, worldinfo),
+            "character_voices": render_voices(world, worldinfo),
             "upstream": upstream,
             "outline": outline,
         },
-        # 用户扮演谁是**这个故事的设定**（D138 那条判据：换个人来读仍然成立），
-        # 所以它在 meta；第几人称是读者偏好，所以在 control，且已改成选项组。
-        values={"user_character": meta.user_character},
+        # 用户扮演谁是**这个世界的设定**（D138 那条判据：换个人来读、换局故事
+        # 来读都仍然成立），所以它跟着 worldbook 走（D170）；第几人称是读者偏好，
+        # 所以在 control，且已改成选项组。**标了 `is_player` 的条目优先**（D158）。
+        values={"user_character": player_character(world, worldinfo)},
         # **文风与视角都是选项名，不是自由文本**：档位全文写在 writer.yaml 里，
         # 这里只说选哪一档。它们和铺陈程度一样来自 `control`——都是读者这一侧的
         # 偏好，不是这个世界的属性。

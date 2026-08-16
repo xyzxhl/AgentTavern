@@ -51,6 +51,8 @@ def test_shared_models_are_defined_once() -> None:
         "Session",
         "WorldbookEntry",
         "WorldbookBundle",
+        # worldbook 是一级资产（D170），有自己的管理界面，所以它的类型也要生成。
+        "Worldbook",
     }
 
 

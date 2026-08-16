@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from ..agents.writer import DEVIATION_MARKER
 from ..config import Settings, load_settings
 from ..llm import LLMGateway, Message
-from ..models import ControlDimensions, SessionMeta
+from ..models import ControlDimensions, WorldMeta
 from ..prompting import titled, writer_prompt
 from ..storage import Store
 
@@ -67,7 +67,7 @@ class LabResult:
 
 def load_takes(
     settings: Settings, session_id: str, limit: int | None = None
-) -> tuple[SessionMeta, ControlDimensions, list[Take]]:
+) -> tuple[WorldMeta, ControlDimensions, list[Take]]:
     """把一个 session 的每一轮拆成一份固定输入。
 
     `上文` 用**当时落盘的正文**，不是这次重写出来的——否则第 n 轮的输入会随
@@ -86,7 +86,8 @@ def load_takes(
         takes.append(
             Take(index=i + 1, outline=node.outline, upstream=upstream, original=node.prose)
         )
-    return session.meta, session.control, takes[:limit] if limit else takes
+    # 文风实验只关心世界那半边（语言习惯、用户扮演谁）——它跟着 worldbook 走（D170）。
+    return repo.world_meta(), session.control, takes[:limit] if limit else takes
 
 
 TERSE_CRAFT = """用网文的笔法写，像讲给人听，别端着。
@@ -120,14 +121,14 @@ def _terse(messages: list[Message]) -> list[Message]:
 
 async def render_once(
     gateway: LLMGateway,
-    meta: SessionMeta,
+    world: WorldMeta,
     control: ControlDimensions,
     take: Take,
     *,
     thinking: bool | None = None,
     terse: bool = False,
 ) -> Rendering:
-    messages = writer_prompt(meta, control, outline=take.outline, upstream=take.upstream).messages
+    messages = writer_prompt(world, control, outline=take.outline, upstream=take.upstream).messages
     if terse:
         messages = _terse(messages)
 
@@ -153,14 +154,14 @@ async def run_lab(
     thinking: bool | None = None,
     terse: bool = False,
 ) -> LabResult:
-    meta, control, takes = load_takes(settings, session_id, limit)
+    world, control, takes = load_takes(settings, session_id, limit)
     result = LabResult(session_id=session_id, takes=takes)
 
     async with LLMGateway(settings) as gateway:
         for take in takes:
             for attempt in range(repeat):
                 rendering = await render_once(
-                    gateway, meta, control, take, thinking=thinking, terse=terse
+                    gateway, world, control, take, thinking=thinking, terse=terse
                 )
                 rendering.attempt = attempt + 1
                 result.renderings.append(rendering)

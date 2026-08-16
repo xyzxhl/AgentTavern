@@ -22,7 +22,7 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
-from ..models import Session, WorldbookBundle, WorldbookEntry
+from ..models import Session, Worldbook, WorldbookBundle, WorldbookEntry
 from .protocol import ClientMessage, ServerMessage
 
 TITLE = "AgentTavern 协议"
@@ -35,14 +35,16 @@ def export_schema() -> dict[str, Any]:
     到处都用，分开导会生成两套同名不同源的 TS 类型，赋值时报"类型不兼容"，
     而它们本来就是同一个东西。
 
-    `Session` 与 `WorldbookEntry` 走的是 REST 不是 WS，但它们同样是前后端契约的
-    一部分——会话列表、元指令编辑、能力开关、设定管理都读它们。
+    `Session`、`Worldbook` 与 `WorldbookEntry` 走的是 REST 不是 WS，但它们同样是
+    前后端契约的一部分——会话列表、元指令编辑、能力开关、设定管理都读它们。
+    **`Worldbook` 是一级资产**（D170），有自己的管理界面，所以它的类型也要生成。
     """
     client = TypeAdapter(ClientMessage).json_schema(ref_template="#/$defs/{model}")
     server = TypeAdapter(ServerMessage).json_schema(ref_template="#/$defs/{model}")
     session = TypeAdapter(Session).json_schema(ref_template="#/$defs/{model}")
     worldbook = TypeAdapter(WorldbookEntry).json_schema(ref_template="#/$defs/{model}")
     bundle = TypeAdapter(WorldbookBundle).json_schema(ref_template="#/$defs/{model}")
+    book = TypeAdapter(Worldbook).json_schema(ref_template="#/$defs/{model}")
 
     defs: dict[str, Any] = {}
     defs.update(client.pop("$defs", {}))
@@ -50,9 +52,11 @@ def export_schema() -> dict[str, Any]:
     defs.update(session.pop("$defs", {}))
     defs.update(worldbook.pop("$defs", {}))
     defs.update(bundle.pop("$defs", {}))
+    defs.update(book.pop("$defs", {}))
     defs["Session"] = session
     defs["WorldbookEntry"] = worldbook
     defs["WorldbookBundle"] = bundle
+    defs["Worldbook"] = book
 
     # **两个联合本身也进 `$defs`**，根对象只 `$ref` 过去。生成器按 `$defs` 的键
     # 命名类型；写成根的内联属性的话，它们会变成 `Protocol["ClientMessage"]`
@@ -70,6 +74,7 @@ def export_schema() -> dict[str, Any]:
             "Session": {"$ref": "#/$defs/Session"},
             "WorldbookEntry": {"$ref": "#/$defs/WorldbookEntry"},
             "WorldbookBundle": {"$ref": "#/$defs/WorldbookBundle"},
+            "Worldbook": {"$ref": "#/$defs/Worldbook"},
         },
         "required": [
             "ClientMessage",
@@ -77,6 +82,7 @@ def export_schema() -> dict[str, Any]:
             "Session",
             "WorldbookEntry",
             "WorldbookBundle",
+            "Worldbook",
         ],
         "additionalProperties": False,
         "$defs": defs,

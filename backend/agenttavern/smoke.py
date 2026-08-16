@@ -30,7 +30,7 @@ from .storage import Store
 # 场景——与回归集共用同一批素材，避免两处漂移
 # --------------------------------------------------------------------------
 
-WORLDS = {name: (s.make_session, s.worldbook) for name, s in SCENARIOS.items()}
+WORLDS = {name: (s.make_session, s.worldbook, s.world) for name, s in SCENARIOS.items()}
 
 
 # --------------------------------------------------------------------------
@@ -159,11 +159,14 @@ async def run_once(args: argparse.Namespace) -> int:
         repo = store.session(args.session)
         session = repo.load_session()
     else:
-        make_session, worldbook = WORLDS[args.world]
+        make_session, worldbook, world = WORLDS[args.world]
         session = make_session()
         repo = store.create_session(session)
+        # 设定是一级资产（D170）：世界那半边和条目一起建。
+        book = repo.book()
+        book.save(book.load().model_copy(update={"meta": world}))
         for entry in worldbook:
-            repo.save_worldbook_entry(entry)
+            book.save_entry(entry)
 
     gateway = RecordingGateway(settings)
     events: list[TraceEvent] = []
