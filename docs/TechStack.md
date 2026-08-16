@@ -61,11 +61,13 @@ SSE 三条都不满足。不用 socket.io——不需要它的房间与 fallback
 
 ```
 data/worldbooks/<worldbook_id>/
-  worldbook.json            名字、题材与基调、剧情尺度
+  worldbook.json            只有名字——**它没有字段**（D175）
   entries/<entry_id>.json   一条设定一个文件（世界 / 角色 / 初始状态）
+                            题材与基调、剧情尺度也是 world 条目
 
 data/sessions/<session_id>/
-  session.json              worldbook_id、标题、goal、控制维度默认值、冻结的初始状态
+  session.json              worldbook_id、标题、goal、time_driven、冻结的初始状态
+                            **没有配置**——控制维度与能力开关都在提示词里（D174）
   nodes/<node_id>.json      一个 run 一个节点：细纲、正文、state_delta、偏离报告、parent
   trace/<run_id>.jsonl      append-only，每 run 一个文件（匹配归因分析的粒度）
 ```

@@ -1,6 +1,7 @@
 # worldbook 交换格式
 
-> 导入 / 导出的文件长什么样。对应 [Decisions.md](../Decisions.md) D90 / D157 / D158 / D170。
+> 导入 / 导出的文件长什么样。对应 [Decisions.md](../Decisions.md) D90 / D157 / D158 /
+> D170 / D175。
 >
 > worldbook 是**用户写的唯一输入**，所以它是这个项目里唯一值得单独定格式的东西——
 > 别的（节点树、trace、state）都是跑出来的产物。
@@ -8,8 +9,10 @@
 > **一份 worldbook 可以开出好几个 session**（D170 推翻了 D92 的一对一）。它是一级
 > 资产，存在 `data/worldbooks/<id>/` 下，不在任何 session 目录里；接口是
 > `GET|POST /worldbooks`、`/worldbooks/{id}/entries`、`/worldbooks/{id}/export|import`。
-> 因此包里还带着**整份设定的属性**（`meta`：题材与基调、尺度、名字）——它们和条目
-> 一样是这个世界的事，以前挂在 session 上，导出方够不着。
+>
+> **它只有条目，没有字段**（D175）。题材与基调、剧情尺度都是 `world` 条目——
+> 它们和「旧货店在哪」是同一种东西，一段关于这个世界的字。所以包里除了名字
+> 只有 `entries`。
 
 ## 1. 形状
 
@@ -17,9 +20,15 @@
 {
   "format": "agenttavern.worldbook",
   "version": 1,
+  "name": "雨夜",
   "note": "给读到这份文件的人看的一句话，不是设定的一部分",
-  "meta": { "name": "雨夜", "genre_tone": "现代，悬疑，克制", "content_scale": "克制" },
   "entries": [
+    {
+      "name": "题材与基调",
+      "kind": "world",
+      "mode": "always",
+      "content": "现代，悬疑，克制。"
+    },
     {
       "name": "陈屿",
       "kind": "character",

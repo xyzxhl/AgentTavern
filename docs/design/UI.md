@@ -207,7 +207,12 @@ D45 曾要求把单轮覆盖做成快捷方式（`/只转述`）。**那条已�
 三类**统一可上下拖动排序**。`context` 是纯占位：它的内容是数据，不是提示词。
 
 `{{var}}` 与 `context` 的分界是**体量与位置**：前者是嵌在句子里的单值
-（`题材与基调：{{genre_tone}}`），后者是独占一条消息的一大块。两个都要，不能合并。
+（`本次目标：{{goal}}`、`用户扮演：{{user_character}}`），后者是独占一条消息的
+一大块。两个都要，不能合并。
+
+D175 之后 `{{var}}` 只剩这两个用户——题材与尺度都变成 worldbook 条目、跟着
+`worldinfo` 那一大块走了。**类型仍然要留**：剩下这两个恰好是"必须嵌在句子里"的
+典型（光给一个名字没有意义，得说"用户扮演的是他"）。
 
 ### 装配器要移除的东西
 
@@ -363,7 +368,7 @@ worldbook 装名字和条目。所有配置项都归 agent 管理，个别几项
 | `prose_style` / `pov` | ControlDimensions | writer 的两个 choice |
 | `expansion_density` | ControlDimensions | **拆成三个独立的 choice**（见下） |
 | `model_authority` | ControlDimensions | director 的 `ask_question` **工具描述**那个 choice（D140② 已经搬过去了） |
-| `genre_tone` / `content_scale` | WorldMeta | director 上下文里两条 `text`（`{{var}}` 变成直接写字） |
+| `genre_tone` / `content_scale` | WorldMeta | **worldbook 的两条 `world` 条目**（D175）——不是配置，是这个世界写的字 |
 | `nudge` | Capabilities | director「特殊」里**空回催促那条的开关** |
 | `summarize` auto/manual | Capabilities | director「特殊」里**归段追问那条的开关** |
 | `state` | Capabilities | **state_manager 这个 agent 的开关**（左栏上） |
@@ -372,21 +377,21 @@ worldbook 装名字和条目。所有配置项都归 agent 管理，个别几项
 | `state_recent_runs` | Capabilities | state_manager 上下文里 `recent` 那条 `context` 的参数 |
 | `trace` | Capabilities | **服务**（见下） |
 | `stream` | Capabilities | **服务**（见下） |
-| `time_driven` | SessionModes | **服务**（见下） |
+| `time_driven` | SessionModes | **留在 session**（见下） |
 
 **几乎每一项都落成"某个具体条目上的开关或参数"** —— 这本身就是它归 agent 管理的
 证据：它们从来不是独立的配置，是某条提示词、某个工具、某段 context 的属性。
 
-### 三项不是 agent 行为
+### 三项不是 agent 行为，但去处不同
 
-| | 为什么 |
-|---|---|
-| `stream` | **它关于交付，不关于能力** —— D160 自己就是这么写的（"这是这组里唯一一条关于交付而不是关于能力的"）。开关它不改变模型收到什么，也不改变产出，只改变用户什么时候看到 |
-| `trace` | 运维。落不落盘跟模型完全无关，D156 已经把采集降为开发者模式 |
-| `time_driven` | 它改的是**触发源**（没有用户输入时会不会跑），不是任何一个 agent 的行为。尚未实现 |
+| | 去哪 | 为什么 |
+|---|---|---|
+| `stream` | 服务 | **它关于交付，不关于能力** —— D160 自己就是这么写的（"这是这组里唯一一条关于交付而不是关于能力的"）。开关它不改变模型收到什么，也不改变产出，只改变用户什么时候看到 |
+| `trace` | 服务 | 运维。落不落盘跟模型完全无关，D156 已经把采集降为开发者模式 |
+| `time_driven` | **session** | 它改的是**触发源**——「**这局故事**没人说话时要不要自己往前跑」。那和 goal 的自动续跑是同一类东西，两者回答的都是"这局故事怎么自己往前走"，所以它和 goal 并列留在 session。尚未实现 |
 
 所以**全局设置分两组**：**界面**（字体、色彩模式）与**服务**（流式、trace、开发者模式）。
-后者本来就是服务级的性质，只是当前错放在 session 上。
+后两组本来就是服务级的性质，只是当前错放在 session 上。
 
 ### 三处代价，都要写在明处
 
@@ -409,7 +414,17 @@ worldbook 装名字和条目。所有配置项都归 agent 管理，个别几项
 D115 那条不是开关而是**渲染规则**，必须保留在代码里（它不是"要不要注册工具"，
 是"注入时截不截断"）。
 
-**③ 两局故事不能再有不同的文风、尺度、题材。** §6 已述。
+**③ 两局故事不能再有不同的文风。** 题材与尺度不受影响——它们是 worldbook 条目
+（D175），跟着世界走。换一套配置的做法是**去 agent 管理改**：那是配置层面的动作，
+不是每轮的动作。
+
+**④ 回归集与消融的代价照单收下。** 五个场景各有各的文风（`wangwen` / `gufeng` /
+`jishi`），P19 又要求同一批素材跑多档——上调之后一次 bench 只能跑一种文风，
+消融改成手动改 YAML。**不为此开一个 `overrides` 后门**：一个"只有程序能用"的
+第二取值入口，迟早会有第二个调用者。
+
+文风实验本身没丢：`writer_lab` 走的是**装配之后动消息**那条路（`_terse()` 已经
+这么干了），和配置无关。
 
 ## 8. YAML 的新形状
 
@@ -439,11 +454,12 @@ sections:
   - type: text
     role: user
     body: |
-      题材与基调：{{genre_tone}}           # 单值占位，值为空就删掉这一行
+      本次目标：{{goal}}                    # 单值占位，值为空就删掉这一行
 
   - type: context
     role: user
     source: worldinfo                      # 只有位置可调，内容是数据
+                                           # 题材与尺度也在这里面（D175）
 
   - type: context
     source: history                        # 前情是一串消息，各自带 role，所以不写 role
@@ -516,9 +532,13 @@ agent 管理那一页另外要：
 | **3b** | agent 管理页（左 agent 列表 / 右 上下文 + 工具 + 特殊，拖动排序） | |
 | **4** | 归段、token 显示、采样标记、全局设置（字体 / 色彩 / 服务三项） | 零碎 |
 
-**3a 会同时删掉 `ControlDimensions`、`Capabilities`、`SessionModes`、`WorldMeta` 里的
-配置字段**——那是这一批体量最大的部分，比 YAML 本身大。它也会让 `SettingsPanel`
-整个消失（剩下的标题改名可以并进会话列表）。
+**3a 会同时删掉 `ControlDimensions`、`Capabilities`、`WorldMeta` 三个类**——那是这
+一批体量最大的部分，比 YAML 本身大。`SessionModes` 保留（`time_driven` 留在
+session）。它也会让 `SettingsPanel` 整个消失（剩下的标题改名并进会话列表）。
+
+**旧数据迁移**：`genre_tone` / `content_scale` 各转成一条 `world` 条目（同 D171 对
+`character_voices` 的做法：换形状，不留兼容读法）；控制维度与能力开关的当前取值
+写进各自 agent 的 YAML。
 
 **3a 单独一批、且先做**，是因为它会碰几乎每一份提示词和 `prompts.py` 的每个装配
 调用，而那是一次**行为不该改变**的重构——测试要在前后都绿，装配出来的消息串
