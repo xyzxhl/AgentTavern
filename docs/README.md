@@ -58,6 +58,7 @@ state_manager（tool loop，run 末）
 | [Branching.md](design/Branching.md) | 分支树；"状态是路径的函数" |
 | [NonTurnBased.md](design/NonTurnBased.md) | 创新点 (b)：非轮次形态的生成器与统一机制 |
 | [Optional.md](design/Optional.md) | 真实性与戏剧性的取舍、强度旋钮 |
+| [UI.md](design/UI.md) | 界面形态与信息架构；**第一版缺了「回头」整个方向**的审计与补法 |
 
 ## 状态
 
