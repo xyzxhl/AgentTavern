@@ -71,43 +71,27 @@ class Scenario:
 
 NOIR_WORLD = WorldMeta(
     name="回归·悬疑",
-    # `user_character` 与 `character_voices` 都搬到角色条目上了（D159）。
-    # 别的场景仍用旧写法——`render_voices` 两边都读，正好覆盖到那一路。
     genre_tone="现代，悬疑，克制",
 )
 
 DATA_WORLD = WorldMeta(
     name="回归·数据化",
-    user_character="沈砚",
     genre_tone="修真，带明确的数值系统。资源、冷却、伤势都是硬约束，不能含糊带过。",
-    character_voices={"柜台执事": "公事公办，只认规矩和价钱"},
 )
 
 PULP_WORLD = WorldMeta(
     name="回归·网文",
-    user_character="周野",
     genre_tone="都市异能，节奏快，爽感优先。冲突直给，不绕弯子。",
-    character_voices={
-        "赵铖": "居高临下，说话带刺，习惯用反问压人",
-        "小满": "语速快，爱插话，情绪都在脸上",
-    },
 )
 
 GUFENG_WORLD = WorldMeta(
     name="回归·古风",
-    user_character="沈玉茹",
     genre_tone="架空古代，宫廷。含蓄，话里有话，礼数是武器。",
-    character_voices={
-        "沈玉茹": "话不说满，越紧张越客气",
-        "崔嬷嬷": "句句合规矩，规矩就是她的刀",
-    },
 )
 
 XIHUAN_WORLD = WorldMeta(
     name="回归·西幻",
-    user_character="卡伦",
     genre_tone="低魔西幻，边境小镇。冷硬，务实，魔法昂贵且有代价。",
-    character_voices={"教士艾德蒙": "引经据典，但话里全是价钱"},
 )
 
 
@@ -305,6 +289,8 @@ def _data_session() -> Session:
 DATA_WORLDBOOK = [
     WorldbookEntry(
         name="沈砚",
+        kind=EntryKind.CHARACTER,
+        is_player=True,
         mode=WorldbookMode.ALWAYS,
         content="炼气八层散修，二十四岁。用剑，也会几个符法。行事谨慎，宁可绕路不肯赊账。",
     ),
@@ -322,6 +308,13 @@ DATA_WORLDBOOK = [
                 "冷却": {},
             },
         },
+    ),
+    WorldbookEntry(
+        name="柜台执事",
+        kind=EntryKind.CHARACTER,
+        mode=WorldbookMode.ALWAYS,
+        content="青石镇坊市柜台的执事。只认规矩和价钱。",
+        voice="公事公办，只认规矩和价钱",
     ),
     WorldbookEntry(
         name="法术",
@@ -519,6 +512,8 @@ def _pulp_session() -> Session:
 PULP_WORLDBOOK = [
     WorldbookEntry(
         name="周野",
+        kind=EntryKind.CHARACTER,
+        is_player=True,
         mode=WorldbookMode.ALWAYS,
         content="二十三岁，城中村送外卖。三个月前一场车祸后能"
         "「听见」三秒后的声音——够他躲开一拳，不够他躲开一颗子弹。没告诉过任何人。",
@@ -537,6 +532,8 @@ PULP_WORLDBOOK = [
     ),
     WorldbookEntry(
         name="赵铖",
+        kind=EntryKind.CHARACTER,
+        voice="居高临下，说话带刺，习惯用反问压人",
         mode=WorldbookMode.ALWAYS,
         content="裕丰快递站站长。三十五岁，手里攥着站里所有人的排班和罚款。"
         "看不起送外卖的，尤其看不起欠钱的。",
@@ -548,6 +545,8 @@ PULP_WORLDBOOK = [
     ),
     WorldbookEntry(
         name="小满",
+        kind=EntryKind.CHARACTER,
+        voice="语速快，爱插话，情绪都在脸上",
         mode=WorldbookMode.ALWAYS,
         content="十九岁，同站点的骑手。周野的邻居，从小一起长大。藏不住话。",
     ),
@@ -607,6 +606,9 @@ def _gufeng_session() -> Session:
 GUFENG_WORLDBOOK = [
     WorldbookEntry(
         name="沈玉茹",
+        kind=EntryKind.CHARACTER,
+        is_player=True,
+        voice="话不说满，越紧张越客气",
         mode=WorldbookMode.ALWAYS,
         content="十七岁，新入宫的选侍，父亲是外放的六品小官。识字，会画，不谙宫里的规矩。",
     ),
@@ -623,6 +625,8 @@ GUFENG_WORLDBOOK = [
     ),
     WorldbookEntry(
         name="崔嬷嬷",
+        kind=EntryKind.CHARACTER,
+        voice="句句合规矩，规矩就是她的刀",
         mode=WorldbookMode.ALWAYS,
         content="掌事嬷嬷，在宫里三十二年。管教新人，也替上头递话。从不说重话，也从不放过错处。",
     ),
@@ -680,6 +684,8 @@ def _xihuan_session() -> Session:
 XIHUAN_WORLDBOOK = [
     WorldbookEntry(
         name="卡伦",
+        kind=EntryKind.CHARACTER,
+        is_player=True,
         mode=WorldbookMode.ALWAYS,
         content="三十岁，退役边境兵，如今替人跑腿收账。左手缺两指。不信神，但会照规矩画十字。",
     ),
@@ -696,6 +702,8 @@ XIHUAN_WORLDBOOK = [
     ),
     WorldbookEntry(
         name="教士艾德蒙",
+        kind=EntryKind.CHARACTER,
+        voice="引经据典，但话里全是价钱",
         mode=WorldbookMode.ALWAYS,
         content="镇上唯一的教士，也是唯一能验魔物的人。收费从不明说，只说「随心奉献」。",
     ),

@@ -18,8 +18,10 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from typing import Any
 
 from ..models import (
+    EntryKind,
     Node,
     RunDraft,
     Session,
@@ -299,8 +301,6 @@ class Store:
                     name=meta.get("title") or "未命名",
                     content_scale=meta.get("content_scale") or "",
                     genre_tone=meta.get("genre_tone") or "",
-                    character_voices=meta.get("character_voices") or {},
-                    user_character=meta.get("user_character") or "",
                 )
             )
             book_repo = self.create_worldbook(book)
@@ -312,9 +312,41 @@ class Store:
                     shutil.move(str(path), str(book_repo.entries_dir / path.name))
                 shutil.rmtree(old_entries, ignore_errors=True)
 
+            _lift_voices(book_repo, meta)
+
             raw["worldbook_id"] = book.id
             repo.session_path.write_text(
                 json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
             )
             moved += 1
         return moved
+
+
+def _lift_voices(book: WorldbookRepository, meta: dict[str, Any]) -> None:
+    """把旧的 `character_voices` / `user_character` 转成角色条目（D170/D171）。
+
+    **这是迁移，不是兼容。** 那两个字段已经从 `WorldMeta` 上删掉了，代码里
+    没有第二条读法——所以数据必须在这里被抬到新形状上，否则「柜台执事怎么说话」
+    就静默消失了，而消失的症状是那个角色忽然不那样说话，没人会想到去查迁移。
+
+    同名的条目**就地补字段**，不新建：那个角色多半已经有一条设定了，再造一条
+    会让同一个人在 worldinfo 里出现两次。找不到才新建一条只有名字和语言习惯的。
+    """
+    voices: dict[str, str] = meta.get("character_voices") or {}
+    player: str = meta.get("user_character") or ""
+    if not voices and not player:
+        return
+
+    by_name = {e.name: e for e in book.entries()}
+    for name in {*voices, *([player] if player else [])}:
+        entry = by_name.get(name) or WorldbookEntry(name=name)
+        book.save_entry(
+            entry.model_copy(
+                update={
+                    # 有语言习惯或者是用户扮演的，它就**是个角色**，不再是 `world`。
+                    "kind": EntryKind.CHARACTER,
+                    "voice": voices.get(name, entry.voice),
+                    "is_player": entry.is_player or name == player,
+                }
+            )
+        )

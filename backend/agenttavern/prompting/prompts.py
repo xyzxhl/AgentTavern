@@ -37,34 +37,29 @@ from ..models import (
 from .assembler import Prompt, assemble, text
 
 
-def player_character(world: WorldMeta, worldinfo: Sequence[WorldbookEntry] = ()) -> str:
-    """用户扮演的是谁。**标了 `is_player` 的角色条目优先**（D158/D159）。
+def player_character(worldinfo: Sequence[WorldbookEntry] = ()) -> str:
+    """用户扮演的是谁：**标了 `is_player` 的那条角色条目**（D158/D159）。
 
-    此前只有 `WorldMeta.user_character` 一个名字，于是「用户扮演谁」和
-    「这个人是什么样」分在两个地方——改了一处另一处不动，而 writer 两样都要。
-    现在那条条目自己就带着正文，名字从它来；没有这条条目时退回那个遗留字段。
+    此前另有一个 `user_character` 字段，于是「用户扮演谁」和「这个人是什么样」
+    分在两个地方——改了一处另一处不动，而 writer 两样都要。那个字段已经删了
+    （D171）：条目自己就带着正文，名字从它来，没有第二个入口可对不上。
     """
     for entry in worldinfo:
         if entry.kind is EntryKind.CHARACTER and entry.is_player:
             return entry.name
-    return world.user_character
+    return ""
 
 
-def render_voices(world: WorldMeta, worldinfo: Sequence[WorldbookEntry] = ()) -> str:
+def render_voices(worldinfo: Sequence[WorldbookEntry] = ()) -> str:
     """角色语言习惯。**只进 writer**——它不参与检索，参与每一个 token（D33）。
 
-    优先取角色条目自己的 `voice`（D159）：此前它挂在 `character_voices`
-    这个 `名字 → 说话方式` 的字典里，于是「这个角色是谁」和「他怎么说话」分在
-    两个地方，靠名字对上——改个名字就悄悄断了，而断了不会报错，只是那个角色
-    忽然不再那样说话。
-
-    那个遗留字段仍然读，但同名时**条目赢**：它离角色更近。
+    取的是角色条目自己的 `voice`（D159）。此前另有一个 `名字 → 说话方式` 的字典，
+    于是「这个角色是谁」和「他怎么说话」分在两个地方、靠名字对上——改个名字就
+    悄悄断了，而断了不报错，只是那个角色忽然不再那样说话。那个字段已经删了（D171）。
     """
-    voices = dict(world.character_voices)
-    for entry in worldinfo:
-        if entry.kind is EntryKind.CHARACTER and entry.voice:
-            voices[entry.name] = entry.voice
-    return "\n".join(f"- {name}：{how}" for name, how in voices.items())
+    return "\n".join(
+        f"- {e.name}：{e.voice}" for e in worldinfo if e.kind is EntryKind.CHARACTER and e.voice
+    )
 
 
 def _speaking(allowed: bool) -> str:
@@ -294,7 +289,6 @@ def state_manager_prompt(
 
 
 def writer_prompt(
-    world: WorldMeta,
     control: ControlDimensions,
     *,
     outline: str = "",
@@ -305,18 +299,21 @@ def writer_prompt(
 
     它拿不到 state 的值、拿不到世界设定、拿不到用户原始指令，那些都已经在细纲里了。
     它的职责是改写，不是补充。
+
+    **它不吃 `WorldMeta`**（D171）：题材与尺度是给 director 的，而语言习惯和
+    用户扮演谁都在角色条目上。于是这一层完全由「控制维度 + 条目」决定。
     """
     return assemble(
         "writer",
         contexts={
-            "character_voices": render_voices(world, worldinfo),
+            "character_voices": render_voices(worldinfo),
             "upstream": upstream,
             "outline": outline,
         },
         # 用户扮演谁是**这个世界的设定**（D138 那条判据：换个人来读、换局故事
-        # 来读都仍然成立），所以它跟着 worldbook 走（D170）；第几人称是读者偏好，
-        # 所以在 control，且已改成选项组。**标了 `is_player` 的条目优先**（D158）。
-        values={"user_character": player_character(world, worldinfo)},
+        # 来读都仍然成立），所以它跟着 worldbook 走（D170）——具体说，跟着那条
+        # 标了 `is_player` 的角色条目走；第几人称才是读者偏好，在 control。
+        values={"user_character": player_character(worldinfo)},
         # **文风与视角都是选项名，不是自由文本**：档位全文写在 writer.yaml 里，
         # 这里只说选哪一档。它们和铺陈程度一样来自 `control`——都是读者这一侧的
         # 偏好，不是这个世界的属性。

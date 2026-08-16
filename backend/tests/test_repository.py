@@ -6,6 +6,7 @@ import pytest
 
 from agenttavern.models import (
     Actor,
+    EntryKind,
     Node,
     Session,
     StateDelta,
@@ -249,12 +250,19 @@ def test_migration_lifts_the_worldbook_out_of_the_session(tmp_path: Path) -> Non
     assert session.meta.title == "雨夜", "故事的标题留在 session 上"
 
     book = store.worldbook(session.worldbook_id)
-    assert [e.name for e in book.entries()] == ["教团"]
     meta = book.load().meta
     assert meta.genre_tone == "现代，悬疑"
     assert meta.content_scale == "克制"
-    assert meta.user_character == "林昭"
-    assert meta.character_voices == {"陈屿": "话少"}
+
+    # **语言习惯和「用户扮演谁」被抬成角色条目**（D171）：那两个字段已经从
+    # `WorldMeta` 上删了，代码里没有第二条读法，所以数据必须在迁移时换形状——
+    # 否则「陈屿怎么说话」静默消失，而症状是他忽然不那样说话，没人会想到查迁移。
+    lifted = {e.name: e for e in book.entries()}
+    assert set(lifted) == {"教团", "林昭", "陈屿"}
+    assert lifted["陈屿"].kind is EntryKind.CHARACTER
+    assert lifted["陈屿"].voice == "话少"
+    assert lifted["林昭"].kind is EntryKind.CHARACTER and lifted["林昭"].is_player
+    assert lifted["教团"].content == "总部在旧城区。", "本来就有的条目原样留着"
     # 旧目录搬空了，不留一份会被人误改的副本。
     assert not (old / "worldinfo").exists()
 

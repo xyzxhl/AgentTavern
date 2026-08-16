@@ -258,7 +258,6 @@ export type Note = string;
 export type Name3 = string;
 export type ContentScale = string;
 export type GenreTone = string;
-export type UserCharacter = string;
 export type Entries = WorldbookEntry[];
 export type Id4 = string;
 
@@ -811,11 +810,6 @@ export interface WorldMeta {
   name?: Name3;
   content_scale?: ContentScale;
   genre_tone?: GenreTone;
-  character_voices?: CharacterVoices;
-  user_character?: UserCharacter;
-}
-export interface CharacterVoices {
-  [k: string]: string;
 }
 /**
  * 一份设定，**一级资产**（D170）：不属于任何 session，可以开出好几个。

@@ -128,7 +128,7 @@ async def render_once(
     thinking: bool | None = None,
     terse: bool = False,
 ) -> Rendering:
-    messages = writer_prompt(world, control, outline=take.outline, upstream=take.upstream).messages
+    messages = writer_prompt(control, outline=take.outline, upstream=take.upstream).messages
     if terse:
         messages = _terse(messages)
 

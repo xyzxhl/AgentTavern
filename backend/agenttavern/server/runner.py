@@ -476,9 +476,9 @@ class SessionRunner:
         # 事件密度是 goal_manager 唯一读的控制维度：它决定阶段拆多细、
         # 一条输入推多远（D93 那条投影的第三面）。
         sync_conversation(
-            # 用户扮演谁跟着 worldbook 走（D170），而"标了 is_player 的条目优先"
-            # 那条规则只有一处实现（D158）。
-            player_character(self._repo.world_meta(), self._repo.worldbook()),
+            # 用户扮演谁**就是那条标了 is_player 的角色条目**（D158/D171），
+            # 而那条规则只有一处实现。
+            player_character(self._repo.worldbook()),
             goal,
             run,
             self._repo.path_to(leaf_id) if leaf_id else [],

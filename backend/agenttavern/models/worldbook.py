@@ -156,12 +156,13 @@ class WorldMeta(BaseModel):
     genre_tone: str = ""
     """题材与基调。"""
 
-    character_voices: dict[str, str] = Field(default_factory=dict)
-    """遗留：角色语言习惯，`名字 → 说话方式`。**新的写法是 `character` 条目上的
-    `voice`**（D159），同名时条目赢。留着只为不让既有会话一改就哑。"""
-
-    user_character: str = ""
-    """遗留：用户扮演谁。**新的写法是 `character` 条目上的 `is_player`**（D158）。"""
+    # `character_voices` / `user_character` **已删除**（D171）。它们是 D158/D159
+    # 之前的写法：「这个角色是谁」和「他怎么说话」分在两个地方、靠名字对上，
+    # 改个名字就悄悄断了。新写法是 `character` 条目上的 `voice` 与 `is_player`。
+    #
+    # 留着一份「同名时条目赢」的兼容读法，等于让同一件事永远有两个入口——
+    # 而两个入口迟早对不上，且对不上的时候不报错，只是那个角色忽然不那样说话了。
+    # 旧数据由 `Store.migrate` 一次性转成条目（D170），不留代码路径。
 
 
 class Worldbook(BaseModel):

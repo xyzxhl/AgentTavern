@@ -291,7 +291,7 @@ async def _drive_goal(
     tracer = Tracer(repo, leaf_id, events.append, persist=session.capabilities.trace)
 
     sync_conversation(
-        player_character(repo.world_meta(), repo.worldbook()),
+        player_character(repo.worldbook()),
         goal,
         run,
         repo.path_to(leaf_id),
