@@ -74,7 +74,8 @@ class WorldbookEntry(BaseModel):
     做成独立的一类，就得在每一处 `CHARACTER` 分支旁边记得再写一个 `PLAYER`——
     而那种「记得」迟早会漏。
 
-    一份 worldbook 里至多一条为真。`SessionMeta.user_character` 从它取名字。
+    一份 worldbook 里至多一条为真。「用户扮演谁」**只从它取**（D171 删掉了那个
+    同名字段，不留第二个入口）。
     """
 
     values: dict[str, Any] = Field(default_factory=dict)
@@ -134,43 +135,28 @@ class WorldbookEntry(BaseModel):
         return head + "…" if len(self.content) > head_chars else head
 
 
-class WorldMeta(BaseModel):
-    """**这个世界是什么**——不是这局故事是什么（D170）。
+class Worldbook(BaseModel):
+    """一份设定，**一级资产**（D170）：不属于任何 session，可以开出好几个。
 
-    这几个字段以前叫 `SessionMeta`，挂在 session 上。它们从一开始就写着自己的
-    判别式：「换个人来读还成不成立」——题材与基调、尺度是世界自己的属性，换谁
-    来读都一样。**那条判别式同样答得出「换局故事还成不成立」**，而答案也是成立。
-    所以它们本来就该跟着 worldbook 走，只是当时 worldbook 还不是独立的东西
-    （D92：一份 worldbook 开启一个 session），两者的区别没有着落。
+    **它只有名字，没有别的字段**（D175）。题材与基调、剧情尺度曾经是这里的两个
+    字段（D170 刚把它们从 session 搬过来），现在是两条 `WORLD` 条目——
 
-    留在 session 上的只剩这局故事自己的：标题、目标。
+    > `WORLD` 的定义本来就是「一段不受限制的文本」，而"现代，悬疑，克制"和
+    > "旧货店在老城区一条窄巷尽头"是同一种东西：**一段关于这个世界的字**。
+    > 凭什么一个要特殊处理。
+
+    买到的是**一种东西、一个编辑器**：设定页不再分成"上面一个属性表单 + 下面一个
+    条目列表"，只有条目。代价是题材与尺度不再是独立可挪的一节，位置由
+    `render_worldinfo` 决定——那正是「不特殊处理」的定义本身带来的。
+
+    `character_voices` / `user_character` 更早一步走的同一条路（D171）：它们成了
+    `CHARACTER` 条目上的 `voice` 与 `is_player`。
+
+    条目不在这个模型里——它们一条一个文件，由 `WorldbookRepository` 管。
     """
+
+    id: str = Field(default_factory=lambda: new_id("wb"))
 
     name: str = "未命名"
     """这份设定叫什么。**和 session 的 `title` 不是一回事**：一个是世界的名字，
     一个是故事的名字；同一个世界底下可以有好几个故事。"""
-
-    content_scale: str = ""
-    """剧情尺度：暴力、性、黑暗程度。"""
-
-    genre_tone: str = ""
-    """题材与基调。"""
-
-    # `character_voices` / `user_character` **已删除**（D171）。它们是 D158/D159
-    # 之前的写法：「这个角色是谁」和「他怎么说话」分在两个地方、靠名字对上，
-    # 改个名字就悄悄断了。新写法是 `character` 条目上的 `voice` 与 `is_player`。
-    #
-    # 留着一份「同名时条目赢」的兼容读法，等于让同一件事永远有两个入口——
-    # 而两个入口迟早对不上，且对不上的时候不报错，只是那个角色忽然不那样说话了。
-    # 旧数据由 `Store.migrate` 一次性转成条目（D170），不留代码路径。
-
-
-class Worldbook(BaseModel):
-    """一份设定，**一级资产**（D170）：不属于任何 session，可以开出好几个。
-
-    条目不在这里——它们一条一个文件，由 `WorldbookRepository` 管。这个模型只装
-    整份设定的属性，好让 `worldbook.json` 是一份能单独读懂的东西。
-    """
-
-    id: str = Field(default_factory=lambda: new_id("wb"))
-    meta: WorldMeta = Field(default_factory=WorldMeta)

@@ -27,7 +27,6 @@ from ..models import (
     SessionMeta,
     WorldbookEntry,
     WorldbookMode,
-    WorldMeta,
 )
 
 
@@ -36,10 +35,12 @@ class Scenario:
     name: str
     make_session: Callable[[], Session]
     worldbook: list[WorldbookEntry]
-    world: WorldMeta = field(default_factory=WorldMeta)
-    """这个场景开在什么样的世界上（D170）：题材与基调、尺度、语言习惯。
+    """整份设定（D170/D175）：**只有条目，没有字段**。题材与基调也是一条
+    `WORLD` 条目——它和「旧货店在哪」是同一种东西。设定不属于 session。"""
 
-    和 `worldbook` 一起构成整份设定——它们是一级资产的两半，不属于 session。"""
+    world_name: str = "未命名"
+    """这份设定叫什么。worldbook 上**唯一**的字段（D175）。"""
+
     inputs: list[str] = field(default_factory=list)
     """按顺序喂给同一个 session 的多轮输入。**每一项是独立的一轮**（D40）。"""
 
@@ -66,33 +67,20 @@ class Scenario:
         return cuts
 
 
-# 世界那半边的属性跟着 worldbook 走（D170）——题材、尺度、语言习惯换局故事
-# 来读也仍然成立，所以它们不在 session 上。
+# 题材与基调是**一条 `WORLD` 条目**（D175）：它和「旧货店在老城区一条窄巷
+# 尽头」是同一种东西，一段关于这个世界的字，凭什么要特殊处理。
 
-NOIR_WORLD = WorldMeta(
-    name="回归·悬疑",
-    genre_tone="现代，悬疑，克制",
-)
 
-DATA_WORLD = WorldMeta(
-    name="回归·数据化",
-    genre_tone="修真，带明确的数值系统。资源、冷却、伤势都是硬约束，不能含糊带过。",
-)
+def _tone(body: str) -> WorldbookEntry:
+    """题材与基调那一条。**常驻**——它每轮都该在眼前，按需展开对它没有意义。"""
+    return WorldbookEntry(name="题材与基调", kind=EntryKind.WORLD, content=body)
 
-PULP_WORLD = WorldMeta(
-    name="回归·网文",
-    genre_tone="都市异能，节奏快，爽感优先。冲突直给，不绕弯子。",
-)
 
-GUFENG_WORLD = WorldMeta(
-    name="回归·古风",
-    genre_tone="架空古代，宫廷。含蓄，话里有话，礼数是武器。",
-)
-
-XIHUAN_WORLD = WorldMeta(
-    name="回归·西幻",
-    genre_tone="低魔西幻，边境小镇。冷硬，务实，魔法昂贵且有代价。",
-)
+NOIR_TONE = _tone("现代，悬疑，克制。")
+DATA_TONE = _tone("修真，带明确的数值系统。资源、冷却、伤势都是硬约束，不能含糊带过。")
+PULP_TONE = _tone("都市异能，节奏快，爽感优先。冲突直给，不绕弯子。")
+GUFENG_TONE = _tone("架空古代，宫廷。含蓄，话里有话，礼数是武器。")
+XIHUAN_TONE = _tone("低魔西幻，边境小镇。冷硬，务实，魔法昂贵且有代价。")
 
 
 # -- noir ------------------------------------------------------------------
@@ -107,6 +95,7 @@ def _noir_session() -> Session:
 
 
 NOIR_WORLDBOOK = [
+    NOIR_TONE,
     # 静态部分（性格、身份）留在 content；会变的部分（在哪、知道什么、关系）
     # 作为 seeds 迁移进 state——模型因此不必把设定抄过去（D90）。
     WorldbookEntry(
@@ -167,7 +156,7 @@ NOIR = Scenario(
     name="noir",
     make_session=_noir_session,
     worldbook=NOIR_WORLDBOOK,
-    world=NOIR_WORLD,
+    world_name="回归·悬疑",
     inputs=[
         "我推开门走进钟表铺，柜台后面没有人。",
         "林昭没有立刻回答。她把那张照片从包里拿出来，正面朝下扣在柜台上。",
@@ -215,7 +204,7 @@ NOIR_GOAL = Scenario(
     name="noir_goal",
     make_session=_noir_goal_session,
     worldbook=NOIR_WORLDBOOK,
-    world=NOIR_WORLD,
+    world_name="回归·悬疑",
     inputs=["我推开门走进钟表铺，柜台后面没有人。"],
     note="goal 驱动：只给种子输入，其余每轮由 goal_manager 写。查拆状态、重给、过早收尾。",
 )
@@ -267,7 +256,7 @@ NOIR_IMPOSSIBLE = Scenario(
     name="noir_impossible",
     make_session=_noir_impossible_session,
     worldbook=[*NOIR_WORLDBOOK, PING],
-    world=NOIR_WORLD,
+    world_name="回归·悬疑",
     inputs=[
         "我把那张照片放在柜台上。“许平三年前就烧死了，这我知道。我想知道的是——这张照片，是谁拍的。”"
     ],
@@ -287,6 +276,7 @@ def _data_session() -> Session:
 
 
 DATA_WORLDBOOK = [
+    DATA_TONE,
     WorldbookEntry(
         name="沈砚",
         kind=EntryKind.CHARACTER,
@@ -354,7 +344,7 @@ DATA = Scenario(
     name="data",
     make_session=_data_session,
     worldbook=DATA_WORLDBOOK,
-    world=DATA_WORLD,
+    world_name="回归·数据化",
     inputs=[
         "我走到聚宝铺子的柜台前，把袋子里的三块灵石倒在台面上，问执事：「止血符还有么，我要两张。」",
         # 逼它面对余额：买完只剩 1 石，而客栈一夜要 2 石。
@@ -410,7 +400,7 @@ LONG = Scenario(
     name="noir_long",
     make_session=_long_session,
     worldbook=NOIR_WORLDBOOK,
-    world=NOIR_WORLD,
+    world_name="回归·悬疑",
     inputs=[
         "我推开门走进钟表铺，柜台后面没有人。",
         # 埋点：一行台账。它**当时完全不要紧**——不是人物、不是地点、不是关键事件，
@@ -462,7 +452,7 @@ CHAPTERS = Scenario(
     name="chapters",
     make_session=_chapters_session,
     worldbook=NOIR_WORLDBOOK,
-    world=NOIR_WORLD,
+    world_name="回归·悬疑",
     inputs=[
         # 第一段：店里的对峙（3 轮）。以林昭拿出照片、被赶出来收束。
         "我推开门走进钟表铺，柜台后面没有人。",
@@ -510,6 +500,7 @@ def _pulp_session() -> Session:
 
 
 PULP_WORLDBOOK = [
+    PULP_TONE,
     WorldbookEntry(
         name="周野",
         kind=EntryKind.CHARACTER,
@@ -574,7 +565,7 @@ PULP = Scenario(
     name="pulp",
     make_session=_pulp_session,
     worldbook=PULP_WORLDBOOK,
-    world=PULP_WORLD,
+    world_name="回归·网文",
     inputs=[
         "我推开卷帘门走进站里，赵铖正站在白板前面，手里拿着笔。",
         "「我这个月的罚款怎么算到一千二了。」",
@@ -604,6 +595,7 @@ def _gufeng_session() -> Session:
 
 
 GUFENG_WORLDBOOK = [
+    GUFENG_TONE,
     WorldbookEntry(
         name="沈玉茹",
         kind=EntryKind.CHARACTER,
@@ -653,7 +645,7 @@ GUFENG = Scenario(
     name="gufeng",
     make_session=_gufeng_session,
     worldbook=GUFENG_WORLDBOOK,
-    world=GUFENG_WORLD,
+    world_name="回归·古风",
     inputs=[
         "我把那支断簪收进袖子，推门出去。",
         "崔嬷嬷已经站在院里了。我上前行礼。",
@@ -682,6 +674,7 @@ def _xihuan_session() -> Session:
 
 
 XIHUAN_WORLDBOOK = [
+    XIHUAN_TONE,
     WorldbookEntry(
         name="卡伦",
         kind=EntryKind.CHARACTER,
@@ -730,7 +723,7 @@ XIHUAN = Scenario(
     name="xihuan",
     make_session=_xihuan_session,
     worldbook=XIHUAN_WORLDBOOK,
-    world=XIHUAN_WORLD,
+    world_name="回归·西幻",
     inputs=[
         "我推开教堂的门，把木匣放在长凳上。",
         "「验一下。」",
@@ -774,7 +767,7 @@ FORKS = Scenario(
     name="forks",
     make_session=_forks_session,
     worldbook=NOIR_WORLDBOOK,
-    world=NOIR_WORLD,
+    world_name="回归·悬疑",
     inputs=[
         # 1. 留白：没说怎么开口，也没说来意。方向不明。
         "我推开门走进旧货店。",

@@ -198,10 +198,10 @@ async def run_scenario(
     store = Store(settings.data_dir)
     session = variant.apply(scenario.make_session())
     repo = store.create_session(session)
-    # 设定是**一级资产**（D170）：场景把整份都建起来——世界那半边（题材、尺度、
-    # 语言习惯）和条目一样不属于 session。
+    # 设定是**一级资产**（D170）：场景把整份都建起来。**它只有条目**（D175）——
+    # 题材与基调也是其中一条，worldbook 上除了名字没有别的字段。
     book = repo.book()
-    book.save(book.load().model_copy(update={"meta": scenario.world}))
+    book.save(book.load().model_copy(update={"name": scenario.world_name}))
     for entry in scenario.worldbook:
         book.save_entry(entry)
 

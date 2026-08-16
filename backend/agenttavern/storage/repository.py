@@ -29,7 +29,6 @@ from ..models import (
     TraceEvent,
     Worldbook,
     WorldbookEntry,
-    WorldMeta,
     WorldState,
 )
 from .jsonfile import append_jsonl, read_jsonl, read_model, read_model_or_none, write_model
@@ -195,9 +194,8 @@ class SessionRepository:
         """这个 session 看得见的全部设定条目。**不做预筛选**（D62/D63）。"""
         return self.book().entries()
 
-    def world_meta(self) -> WorldMeta:
-        """题材、尺度、名字——**世界自己的属性**，跟着 worldbook 走（D170）。"""
-        return self.book().load().meta
+    # `world_meta()` **已删除**（D175）：worldbook 上没有字段了，题材与尺度都是
+    # `WORLD` 条目，跟着 `worldbook()` 一起来。
 
     # -- trace --------------------------------------------------------------
 
@@ -300,14 +298,8 @@ class Store:
                 continue
 
             meta = raw.get("meta") or {}
-            book = Worldbook(
-                meta=WorldMeta(
-                    # 旧的 session 标题同时是世界的名字——那时两者没分开。
-                    name=meta.get("title") or "未命名",
-                    content_scale=meta.get("content_scale") or "",
-                    genre_tone=meta.get("genre_tone") or "",
-                )
-            )
+            # 旧的 session 标题同时是世界的名字——那时两者没分开。
+            book = Worldbook(name=meta.get("title") or "未命名")
             book_repo = self.create_worldbook(book)
 
             old_entries = repo.dir / "worldinfo"
@@ -318,6 +310,7 @@ class Store:
                 shutil.rmtree(old_entries, ignore_errors=True)
 
             _lift_voices(book_repo, meta)
+            _lift_world_text(book_repo, meta)
 
             raw["worldbook_id"] = book.id
             repo.session_path.write_text(
@@ -355,3 +348,21 @@ def _lift_voices(book: WorldbookRepository, meta: dict[str, Any]) -> None:
                 }
             )
         )
+
+
+_WORLD_TEXT = {"genre_tone": "题材与基调", "content_scale": "剧情尺度"}
+
+
+def _lift_world_text(book: WorldbookRepository, meta: dict[str, Any]) -> None:
+    """把旧的 `genre_tone` / `content_scale` 转成 `WORLD` 条目（D175）。
+
+    **这是迁移，不是兼容。** 那两个字段已经从 `Worldbook` 上删掉了——它们本来
+    就和「旧货店在老城区一条窄巷尽头」是同一种东西：一段关于这个世界的字。
+    不搬的话它们静默消失，而症状是模型忽然不知道这是个悬疑故事。
+
+    条目标记为 `ALWAYS`：题材与尺度每轮都该在眼前，按需展开对它们没有意义。
+    """
+    for field, name in _WORLD_TEXT.items():
+        body = (meta.get(field) or "").strip()
+        if body:
+            book.save_entry(WorldbookEntry(name=name, kind=EntryKind.WORLD, content=body))

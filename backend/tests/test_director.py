@@ -21,7 +21,6 @@ from agenttavern.models import (
     UserInput,
     WorldbookEntry,
     WorldbookMode,
-    WorldMeta,
     WorldState,
     replay,
 )
@@ -57,14 +56,12 @@ def joined(messages: list[Message]) -> str:
 
 
 def director_messages(
-    world: WorldMeta | None = None,
     control: ControlDimensions | None = None,
     state: WorldState | None = None,
     capabilities: Capabilities | None = None,
     worldinfo: list[WorldbookEntry] | None = None,
 ) -> list[Message]:
     return director_prompt(
-        world or WorldMeta(),
         control or ControlDimensions(),
         state or WorldState(),
         None,
@@ -203,19 +200,18 @@ STYLE = "jishi"
 """测试里用的文风档位。**文风归控制维度**，不归 meta——它是读者偏好，不是世界属性。"""
 
 
-def make_world() -> WorldMeta:
-    """题材**跟着 worldbook 走**（D170），不是 session 的属性。"""
-    return WorldMeta(genre_tone="悬疑")
-
-
 def make_book() -> list[WorldbookEntry]:
-    """语言习惯在**角色条目**上（D159/D171），不再有第二个入口。"""
-    return [WorldbookEntry(name="陈", kind=EntryKind.CHARACTER, voice="说话总是绕圈子")]
+    """整份设定就是**一串条目**（D175）：题材是 `WORLD` 条目，语言习惯在
+    `CHARACTER` 条目的 `voice` 上（D159/D171）——两样都没有第二个入口。"""
+    return [
+        WorldbookEntry(name="题材与基调", kind=EntryKind.WORLD, content="悬疑"),
+        WorldbookEntry(name="陈", kind=EntryKind.CHARACTER, voice="说话总是绕圈子"),
+    ]
 
 
 def test_director_never_sees_style_or_prose(tmp_path: Path) -> None:
     """D33 的隔离基础：文风与角色语言习惯只进 writer，正文只进 writer。"""
-    prompt = prompt_for(world=make_world(), worldinfo=make_book())
+    prompt = prompt_for(worldinfo=make_book())
 
     assert _real_choice("writer", "prose_style", STYLE) not in prompt
     assert "说话总是绕圈子" not in prompt
@@ -231,7 +227,7 @@ def test_writer_never_sees_state_or_history(tmp_path: Path) -> None:
 
     assert _real_choice("writer", "prose_style", STYLE) in prompt
     assert "说话总是绕圈子" in prompt
-    # 题材是 director 的事——writer 连 `WorldMeta` 都不吃了（D171）。
+    # 题材是 director 的事——它是 `WORLD` 条目，只进 worldinfo（D175）。
     assert "悬疑" not in prompt
     assert "state" not in prompt.lower()
 
@@ -478,8 +474,7 @@ def test_empty_nsfw_injects_nothing_at_all(monkeypatch) -> None:
     real = assembler.load
     monkeypatch.setattr(assembler, "load", lambda name: {**real(name), "nsfw": ""})
 
-    world = make_world()
-    for prompt in (writer_text(ControlDimensions()), prompt_for(world=world)):
+    for prompt in (writer_text(ControlDimensions()), prompt_for(worldinfo=make_book())):
         assert "情色" not in prompt
 
 
@@ -494,8 +489,7 @@ def test_nsfw_and_jailbreak_reach_both_agents(monkeypatch) -> None:
     filled = {"nsfw": "情色指导占位", "jailbreak": "破限占位"}
     monkeypatch.setattr(assembler, "load", lambda name: {**real(name), **filled})
 
-    world = make_world()
-    both = (writer_prompt(ControlDimensions()).messages, director_messages(world=world))
+    both = (writer_prompt(ControlDimensions()).messages, director_messages())
 
     for messages in both:
         assert "情色指导占位" in joined(messages)
@@ -520,9 +514,8 @@ def test_each_side_gets_its_own_sections_and_none_of_the_others() -> None:
     真正的不变量是 D33：哪一节进哪一侧。写法、措辞、例子都可以随便改，
     但 writer 永远拿不到 director 的推进与转述规则，director 永远拿不到文风。
     """
-    world = make_world()
     w = writer_text(ControlDimensions())
-    d = prompt_for(world=world)
+    d = prompt_for(worldinfo=make_book())
 
     writer_only = ["input_contract", "creation_guidance", "dialogue"]
     director_only = ["output_contract", "creation_guidance"]
@@ -543,8 +536,7 @@ def test_each_side_gets_its_own_sections_and_none_of_the_others() -> None:
 
 def test_style_and_prose_never_reach_the_director() -> None:
     """D33 的隔离基础，用 session 自己的配置来验——它不随提示词改动而变。"""
-    world = make_world()
-    d = prompt_for(world=world)
+    d = prompt_for(worldinfo=make_book())
 
     assert _real_choice("writer", "prose_style", STYLE) not in d
     assert "说话总是绕圈子" not in d
@@ -846,5 +838,7 @@ def test_voices_have_exactly_one_source(monkeypatch) -> None:
     assert render_voices([WorldbookEntry(name="旧货店", voice="不该被读到")]) == "", (
         "只有角色条目有语言习惯这回事"
     )
-    assert not hasattr(WorldMeta(), "character_voices"), "那个字段已经删了，别又长回来"
-    assert not hasattr(WorldMeta(), "user_character")
+    from agenttavern.models import Worldbook
+
+    assert not hasattr(Worldbook(), "meta"), "worldbook 上没有字段了（D175）"
+    assert set(Worldbook.model_fields) == {"id", "name"}

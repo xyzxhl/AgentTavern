@@ -22,7 +22,6 @@ from agenttavern.models import (
     StateDelta,
     UserInput,
     WorldbookEntry,
-    WorldMeta,
 )
 from agenttavern.orchestration import execute_run
 from agenttavern.storage import Store
@@ -61,9 +60,9 @@ async def test_it_does_not_read_the_world_or_the_goal(tmp_path: Path) -> None:
     """它不创作，所以不给它任何"该写什么"的依据——只给"发生了什么"。"""
     llm = ScriptedLLM(text("无变化。"), auto_state=False)
     ctx, tracer, reg = _ctx(tmp_path, llm, Session())
-    # 题材跟着 worldbook 走（D170），设定条目也是——两样都不该到它手里。
+    # 题材和设定都是 worldbook 条目（D175）——两样都不该到它手里。
     book = ctx.repo.book()
-    book.save(book.load().model_copy(update={"meta": WorldMeta(genre_tone="低魔悬疑")}))
+    book.save_entry(WorldbookEntry(name="题材与基调", content="低魔悬疑"))
     book.save_entry(WorldbookEntry(name="教团", content="总部在旧城区。"))
 
     await run_state_manager(ctx, reg, tracer, outline="她推开门。", prose="门开了。")

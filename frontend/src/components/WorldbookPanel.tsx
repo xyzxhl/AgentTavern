@@ -50,7 +50,7 @@ export function WorldbookPanel({
     (s) => s.session?.worldbook_id === worldbookId && s.session?.initial_state != null,
   );
 
-  const [meta, setMeta] = useState<Worldbook["meta"] | null>(null);
+  const [book, setBook] = useState<Worldbook | null>(null);
   const [users, setUsers] = useState<string[]>([]);
 
   const [entries, setEntries] = useState<WorldbookEntry[]>([]);
@@ -64,7 +64,7 @@ export function WorldbookPanel({
   async function reload(): Promise<void> {
     const got = await api.getWorldbook(worldbookId);
     setEntries(got.entries);
-    setMeta(got.worldbook.meta ?? null);
+    setBook(got.worldbook);
     setUsers(got.sessions);
   }
 
@@ -163,7 +163,7 @@ export function WorldbookPanel({
     );
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${bundle.meta?.name || "worldbook"}.worldbook.json`;
+    link.download = `${bundle.name || "worldbook"}.worldbook.json`;
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -210,7 +210,7 @@ export function WorldbookPanel({
   return (
     <div className="absolute inset-0 z-10 flex flex-col bg-ink-900">
       <header className="flex items-center gap-2 border-b border-line px-5 py-2.5">
-        <span className="text-sm text-fg">{meta?.name || "世界设定"}</span>
+        <span className="text-sm text-fg">{book?.name || "世界设定"}</span>
         <span className="text-[11px] text-dim">{entries.length} 条</span>
         {/* **一份设定开出好几局故事**（D170）：改它对它们全都生效，这件事得看得见。 */}
         {users.length > 1 && (

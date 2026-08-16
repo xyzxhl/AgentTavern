@@ -3,15 +3,16 @@
 worldbook 是**用户写的唯一输入**，所以它是这个项目里唯一值得单独定格式的
 东西——别的（节点树、trace、state）都是跑出来的产物。
 
-**一份 worldbook 可以开出好几个 session**（D170 推翻了 D92 的一对一），
-所以包里带上整份设定的属性（题材、尺度、名字），不再从 session 的标题借。
+**一份 worldbook 可以开出好几个 session**（D170 推翻了 D92 的一对一）。
+**而它只有条目，没有字段**（D175）：题材与基调、剧情尺度都是 `WORLD` 条目，
+所以包里除了名字只有 `entries`。
 """
 
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from .worldbook import WorldbookEntry, WorldMeta
+from .worldbook import WorldbookEntry
 
 FORMAT = "agenttavern.worldbook"
 VERSION = 1
@@ -23,18 +24,12 @@ class WorldbookBundle(BaseModel):
     format: str = FORMAT
     version: int = VERSION
 
+    name: str = ""
+    """这份设定叫什么。**包里只剩它一个属性**（D175）——题材与基调、剧情尺度
+    都是条目了，跟着 `entries` 走。"""
+
     note: str = ""
-    """给读到这份文件的人看的一句话。**不是设定的一部分**，所以它不在 `meta` 里。"""
-
-    meta: WorldMeta = Field(default_factory=WorldMeta)
-    """整份设定的属性：名字、题材与基调、尺度（D170）。
-
-    **它们得跟着走**——它们和条目一样是这个世界的事，而不是某局故事的。
-    以前不在包里，是因为那时它们挂在 session 上，导出方根本够不着。
-
-    **名字只在这里，包上不再单放一个 `name`**：那会是同一件事的第二个入口，
-    而两个入口迟早对不上（同 D171）。
-    """
+    """给读到这份文件的人看的一句话。**不是设定的一部分**，所以它不进 worldbook。"""
 
     entries: list[WorldbookEntry] = Field(default_factory=list)
 
@@ -43,8 +38,8 @@ class WorldbookBundle(BaseModel):
         cls,
         entries: list[WorldbookEntry],
         *,
+        name: str = "",
         note: str = "",
-        meta: WorldMeta | None = None,
     ) -> WorldbookBundle:
         """打包。**去掉 `id` 与 `summary`**（见文档 §2）。
 
@@ -55,8 +50,8 @@ class WorldbookBundle(BaseModel):
           **缓存不该跨机器传播。**
         """
         return cls(
+            name=name,
             note=note,
-            meta=meta or WorldMeta(),
             entries=[entry.model_copy(update={"id": "", "summary": None}) for entry in entries],
         )
 

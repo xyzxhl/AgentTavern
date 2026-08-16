@@ -114,13 +114,13 @@ def test_a_worldbook_can_open_several_sessions(client_for) -> None:
     第一轮就冻结了（D158），互不影响。
     """
     client = client_for(happy_llm())
-    book = client.post("/worldbooks", json={"meta": {"name": "旧城区"}}).json()["id"]
+    book = client.post("/worldbooks", json={"name": "旧城区"}).json()["id"]
     client.put(f"/worldbooks/{book}/entries", json={"name": "教团", "content": "总部在旧城区。"})
 
     ids = [client.post("/sessions", json={"worldbook_id": book}).json()["id"] for _ in range(2)]
 
     listed = client.get("/worldbooks").json()[0]
-    assert listed["worldbook"]["meta"]["name"] == "旧城区"
+    assert listed["worldbook"]["name"] == "旧城区"
     assert sorted(listed["sessions"]) == sorted(ids), "得看得见谁在用"
     assert listed["entries"] == 1
 
@@ -261,10 +261,10 @@ def test_an_unknown_format_is_refused_instead_of_read_best_effort(client_for) ->
 def test_a_round_trip_keeps_the_kinds_and_the_expansion_settings(client_for) -> None:
     """三类条目、可展开开关、展开层级都要原样过一遍（D158）。"""
     client = client_for(happy_llm())
-    a = client.post("/worldbooks", json={"meta": {"name": "旧城区", "genre_tone": "悬疑"}}).json()[
-        "id"
-    ]
+    a = client.post("/worldbooks", json={"name": "旧城区"}).json()["id"]
     for entry in (
+        # **题材也是一条条目**（D175）：worldbook 上没有字段了。
+        {"name": "题材与基调", "kind": "world", "content": "悬疑"},
         {
             "name": "旧货店",
             "kind": "world",
@@ -301,12 +301,10 @@ def test_a_round_trip_keeps_the_kinds_and_the_expansion_settings(client_for) -> 
     # 初始状态跟着过来；开在这份设定上的会话还没开始，所以立刻生效。
     landed_session = client.post("/sessions", json={"worldbook_id": b}).json()["id"]
     assert client.get(f"/sessions/{landed_session}").json()["state"] == {"陈屿": {"在场": True}}
-    # **世界那半边也跟着走**（D170）：名字、题材、尺度都是这个世界的事，不是
-    # 某局故事的。名字**只在 meta 里**——包上不再单放一个 name（D171 的同一条理由）。
-    landed_meta = client.get(f"/worldbooks/{b}").json()["worldbook"]["meta"]
-    assert landed_meta["genre_tone"] == "悬疑"
-    assert landed_meta["name"] == "旧城区"
-    assert "name" not in _bundle(client, a), "名字只有一个入口"
+    # **题材跟着条目走**（D175）：worldbook 上除了名字没有别的字段，所以它必然
+    # 和别的设定同路——这正是"不特殊处理"买到的东西。
+    assert landed["题材与基调"]["content"] == "悬疑"
+    assert client.get(f"/worldbooks/{b}").json()["worldbook"]["name"] == "旧城区"
 
 
 # -- WebSocket：一个完整 run --------------------------------------------------

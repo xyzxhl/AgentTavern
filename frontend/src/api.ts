@@ -31,6 +31,14 @@ async function json<T>(input: string, init?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", ...init?.headers },
   });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  // **状态码 200 不等于拿到了 JSON**（D172）。开发时漏配一条代理前缀，Vite 会
+  // 把请求当成前端路由、回一份 `index.html` 且状态码 200——于是异常一路拖到
+  // `res.json()` 才发生，而那时的报错（`Unexpected token '<'`）离原因很远。
+  // 在这儿认出来，说得出是哪个地址。
+  const kind = res.headers.get("content-type") ?? "";
+  if (!kind.includes("json")) {
+    throw new Error(`${input} 没有返回 JSON（content-type: ${kind || "无"}）——检查代理配置`);
+  }
   return (await res.json()) as T;
 }
 
@@ -63,8 +71,9 @@ export const api = {
       sessions: string[];
       initial_state: Record<string, unknown>;
     }>(`/worldbooks/${id}`),
-  patchWorldbook: (id: string, meta: Worldbook["meta"]) =>
-    json<Worldbook>(`/worldbooks/${id}`, { method: "PATCH", body: JSON.stringify(meta) }),
+  /** **只能改名**——worldbook 上没有别的字段了（D175），题材与尺度都是条目。 */
+  patchWorldbook: (id: string, name: string) =>
+    json<Worldbook>(`/worldbooks/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
   /** 有故事开在上面时服务端返回 409——删掉的话那几局会当场失忆。 */
   deleteWorldbook: (id: string) =>
     json<{ deleted: string }>(`/worldbooks/${id}`, { method: "DELETE" }),

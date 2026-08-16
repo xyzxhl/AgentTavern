@@ -31,7 +31,6 @@ from ..models import (
     StateDelta,
     WorldbookEntry,
     WorldbookMode,
-    WorldMeta,
     WorldState,
 )
 from .assembler import Prompt, assemble, text
@@ -175,7 +174,6 @@ def render_worldinfo(entries: list[WorldbookEntry], *, expandable: bool = True) 
 
 
 def director_prompt(
-    world: WorldMeta,
     control: ControlDimensions,
     state: WorldState,
     user_text: str | None,
@@ -200,18 +198,20 @@ def director_prompt(
     return assemble(
         "director",
         contexts={
-            # 题材与基调是这个故事自己写的话——**数据，不是模板**，所以走 context。
-            "genre_tone": world.genre_tone,
+            # **题材与基调、剧情尺度不在这里了**（D175）：它们是 `WORLD` 条目，
+            # 跟着 `worldinfo` 这一整块进来。`WORLD` 的定义就是「一段关于这个
+            # 世界的字」，而它们正是那个——凭什么要特殊处理。
             "worldinfo": render_worldinfo(worldinfo or [], expandable=caps.worldinfo_read),
             "history": history,
             "state": render_state(state, expandable=caps.state_query) if caps.state else "",
             "user_input": user_text or text("director", "no_user_input"),
         },
-        values={
-            "content_scale": world.content_scale,
-            # 目标是**这局故事**的（D170），所以它单独传，不跟着世界走。
-            "goal": goal.description if goal else "",
-        },
+        # **`{{goal}}` 现在没人用**：`director.yaml` 里一个引用都没有，因为
+        # director 不该读目标（D148——模拟输入和真输入在它眼里必须一模一样，
+        # 而知道目标会让它对前者区别对待）。值留着是**一个可选的接口**：
+        # 想让它看见，在 YAML 里写一句 `{{goal}}` 即可；不写就什么也不发生。
+        # 不留的话那一句会直接报 KeyError，而那是个坏得多的发现方式。
+        values={"goal": goal.description if goal else ""},
         options={
             "narration_and_advancement": control.input_handling.value,
             "input_handling": control.input_handling.value,

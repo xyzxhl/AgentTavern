@@ -17,7 +17,8 @@ sections:
   - {role: user, title: 输出契约, key: output_contract}
   - {role: user, title: 创作指导, key: creation_guidance}
   - {role: user, title: 情色剧情, key: nsfw}
-  - {role: user, title: 题材与基调, context: genre_tone}
+  # 题材与基调、剧情尺度**都在世界设定里面**了（D175）——它们是 `world` 条目，
+  # 和「旧货店在哪」同一种东西，不再单占一节。
   - {role: user, title: 世界设定, context: worldinfo}
 
   - role: user

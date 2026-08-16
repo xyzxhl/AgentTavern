@@ -25,7 +25,6 @@ from ..models import (
     Worldbook,
     WorldbookBundle,
     WorldbookEntry,
-    WorldMeta,
     new_id,
 )
 from ..orchestration import close_segment
@@ -244,16 +243,16 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
             "initial_state": repo.compose_initial_state().values,
         }
 
-    @app.patch("/worldbooks/{worldbook_id}")
-    def patch_worldbook(worldbook_id: str, meta: WorldMeta) -> Worldbook:
-        """改整份设定的属性（名字、题材、尺度）。
+    class Rename(BaseModel):
+        name: str
 
-        **它立刻对所有正在跑的故事生效**——那是对的，这些是"这个世界是什么"，
-        改它等于改角色卡。已经发生过的剧情所依赖的事实是另一回事，那部分在
-        第一轮就冻结了（`Session.initial_state`，D158）。
+    @app.patch("/worldbooks/{worldbook_id}")
+    def patch_worldbook(worldbook_id: str, patch: Rename) -> Worldbook:
+        """改名。**只有名字可改**——worldbook 上没有别的字段了（D175），
+        题材与尺度都是 `WORLD` 条目，走 `/entries`。
         """
         repo = book_of(worldbook_id)
-        book = repo.load().model_copy(update={"meta": meta})
+        book = repo.load().model_copy(update={"name": patch.name})
         repo.save(book)
         return book
 
@@ -285,8 +284,7 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
     def export_worldbook(worldbook_id: str) -> WorldbookBundle:
         """导出成一份可以拷走的文件。格式见 docs/design/WorldbookFormat.md。"""
         repo = book_of(worldbook_id)
-        meta = repo.load().meta
-        return WorldbookBundle.of(repo.entries(), meta=meta)
+        return WorldbookBundle.of(repo.entries(), name=repo.load().name)
 
     @app.post("/worldbooks/{worldbook_id}/import")
     def import_worldbook(
@@ -308,9 +306,10 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
 
         repo = book_of(worldbook_id)
         removed = repo.clear() if replace else 0
-        if replace:
-            # 整份换掉时世界那半边也一起换：它和条目是同一份设定的两半。
-            repo.save(repo.load().model_copy(update={"meta": bundle.meta}))
+        if replace and bundle.name:
+            # 整份换掉时名字也跟着换。**只剩名字要换**——题材与尺度是条目
+            # （D175），它们随 `entries` 一起进来。
+            repo.save(repo.load().model_copy(update={"name": bundle.name}))
         for entry in bundle.entries:
             repo.save_entry(entry.model_copy(update={"id": new_id("wi")}))
         return {

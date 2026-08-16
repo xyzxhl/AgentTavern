@@ -42,7 +42,7 @@ export function WorldbookLibrary({ onClose }: { onClose: () => void }): JSX.Elem
   async function create(): Promise<void> {
     setBusy(true);
     try {
-      const book = await api.createWorldbook({ meta: { name: "新的设定" } });
+      const book = await api.createWorldbook({ name: "新的设定" });
       await reload();
       setEditing(book.id ?? null);
     } finally {
@@ -58,9 +58,9 @@ export function WorldbookLibrary({ onClose }: { onClose: () => void }): JSX.Elem
   }
 
   async function rename(card: WorldbookCard): Promise<void> {
-    const name = prompt("设定叫什么？", card.worldbook.meta?.name ?? "");
+    const name = prompt("设定叫什么？", card.worldbook.name ?? "");
     if (name === null) return;
-    await api.patchWorldbook(card.worldbook.id ?? "", { ...card.worldbook.meta, name });
+    await api.patchWorldbook(card.worldbook.id ?? "", name);
     await reload();
   }
 
@@ -70,7 +70,7 @@ export function WorldbookLibrary({ onClose }: { onClose: () => void }): JSX.Elem
       alert(`还有 ${card.sessions.length} 局故事开在这份设定上。先删掉那些故事。`);
       return;
     }
-    if (!confirm(`删除「${card.worldbook.meta?.name || "未命名"}」？`)) return;
+    if (!confirm(`删除「${card.worldbook.name || "未命名"}」？`)) return;
     await api.deleteWorldbook(card.worldbook.id ?? "");
     await reload();
   }
@@ -104,14 +104,10 @@ export function WorldbookLibrary({ onClose }: { onClose: () => void }): JSX.Elem
             >
               <div className="flex items-baseline gap-2">
                 <h3 className="min-w-0 flex-1 truncate text-sm text-fg">
-                  {card.worldbook.meta?.name || "未命名"}
+                  {card.worldbook.name || "未命名"}
                 </h3>
                 <span className="shrink-0 font-mono text-[11px] text-dim">{card.entries} 条</span>
               </div>
-
-              {card.worldbook.meta?.genre_tone && (
-                <p className="mt-1 truncate text-[11px] text-dim">{card.worldbook.meta.genre_tone}</p>
-              )}
 
               {/* **谁在用**：改设定对它们全都生效，删之前更得看得见（D170）。 */}
               <p className="mt-1 text-[11px] text-dim">

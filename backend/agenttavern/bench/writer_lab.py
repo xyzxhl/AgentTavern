@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from ..agents.writer import DEVIATION_MARKER
 from ..config import Settings, load_settings
 from ..llm import LLMGateway, Message
-from ..models import ControlDimensions, WorldMeta
+from ..models import ControlDimensions, WorldbookEntry
 from ..prompting import titled, writer_prompt
 from ..storage import Store
 
@@ -67,7 +67,7 @@ class LabResult:
 
 def load_takes(
     settings: Settings, session_id: str, limit: int | None = None
-) -> tuple[WorldMeta, ControlDimensions, list[Take]]:
+) -> tuple[list[WorldbookEntry], ControlDimensions, list[Take]]:
     """把一个 session 的每一轮拆成一份固定输入。
 
     `上文` 用**当时落盘的正文**，不是这次重写出来的——否则第 n 轮的输入会随
@@ -86,8 +86,9 @@ def load_takes(
         takes.append(
             Take(index=i + 1, outline=node.outline, upstream=upstream, original=node.prose)
         )
-    # 文风实验只关心世界那半边（语言习惯、用户扮演谁）——它跟着 worldbook 走（D170）。
-    return repo.world_meta(), session.control, takes[:limit] if limit else takes
+    # 文风实验要的是角色语言习惯与用户扮演谁——两样都在**条目**上（D159/D171），
+    # worldbook 已经没有字段了（D175）。
+    return repo.worldbook(), session.control, takes[:limit] if limit else takes
 
 
 TERSE_CRAFT = """用网文的笔法写，像讲给人听，别端着。
@@ -121,14 +122,16 @@ def _terse(messages: list[Message]) -> list[Message]:
 
 async def render_once(
     gateway: LLMGateway,
-    world: WorldMeta,
+    worldinfo: list[WorldbookEntry],
     control: ControlDimensions,
     take: Take,
     *,
     thinking: bool | None = None,
     terse: bool = False,
 ) -> Rendering:
-    messages = writer_prompt(control, outline=take.outline, upstream=take.upstream).messages
+    messages = writer_prompt(
+        control, outline=take.outline, upstream=take.upstream, worldinfo=worldinfo
+    ).messages
     if terse:
         messages = _terse(messages)
 
@@ -154,14 +157,14 @@ async def run_lab(
     thinking: bool | None = None,
     terse: bool = False,
 ) -> LabResult:
-    world, control, takes = load_takes(settings, session_id, limit)
+    worldinfo, control, takes = load_takes(settings, session_id, limit)
     result = LabResult(session_id=session_id, takes=takes)
 
     async with LLMGateway(settings) as gateway:
         for take in takes:
             for attempt in range(repeat):
                 rendering = await render_once(
-                    gateway, world, control, take, thinking=thinking, terse=terse
+                    gateway, worldinfo, control, take, thinking=thinking, terse=terse
                 )
                 rendering.attempt = attempt + 1
                 result.renderings.append(rendering)
