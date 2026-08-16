@@ -3,7 +3,7 @@
 
 import { create } from "zustand";
 
-import { SessionSocket, api, type ServerMeta } from "./api";
+import { SessionSocket, api, type ServerMeta, type SessionCard } from "./api";
 import type {
   ClientMessage,
   GoalProgress,
@@ -16,6 +16,9 @@ import type {
 
 export type RunPhase = "idle" | "running" | "asking";
 
+/** 主区当前是哪一页。`story` 是默认的正文流；另外两个是左栏上方的独立页面入口。 */
+export type Page = { kind: "story" } | { kind: "worldbooks"; open?: string } | { kind: "prompts" };
+
 /** 某个 agent 连续说的一段过程（思考段，或它推演途中的自言自语）。 */
 export interface Thought {
   actor: string;
@@ -24,7 +27,8 @@ export interface Thought {
 
 export interface SessionState {
   meta: ServerMeta | null;
-  sessionIds: string[];
+  /** 会话列表。**带标题和它开在哪份设定上**（D172）——一串 id 认不出哪局是哪局。 */
+  sessions: SessionCard[];
   sessionId: string | null;
   session: Session | null;
 
@@ -80,10 +84,16 @@ export interface SessionState {
    */
   goal: GoalProgress | null;
 
+  /** 主区显示哪一页。**独立页面不是浮层**（D172）：编辑设定要待很久，
+   * 而浮层的语义是「临时打断，看完就关」。 */
+  page: Page;
+  go: (page: Page) => void;
+
   connect: (sessionId: string) => Promise<void>;
   disconnect: () => void;
   bootstrap: () => Promise<void>;
-  newSession: () => Promise<void>;
+  refreshSessions: () => Promise<void>;
+  newSession: (worldbookId?: string) => Promise<void>;
   /** 把状态从服务端拉回来对齐。**改了 worldbook 的初始状态条目之后必须调**——
    * 故事开始之前它是现算的，改了会立刻改变当前 state，而 WS 那侧不会为此推消息。 */
   refreshState: () => Promise<void>;
@@ -231,8 +241,9 @@ export const useSession = create<SessionState>((set, get) => {
 
   return {
     meta: null,
-    sessionIds: [],
+    sessions: [],
     sessionId: null,
+    page: { kind: "story" },
     session: null,
     path: [],
     state: {},
@@ -248,17 +259,27 @@ export const useSession = create<SessionState>((set, get) => {
     resumable: false,
     goal: null,
 
+    go: (page) => set({ page }),
+
     async bootstrap() {
-      const [meta, sessionIds] = await Promise.all([api.meta(), api.listSessions()]);
-      set({ meta, sessionIds });
-      const first = sessionIds[0];
-      if (first) await get().connect(first);
+      const [meta, sessions] = await Promise.all([api.meta(), api.listSessions()]);
+      set({ meta, sessions });
+      const first = sessions[0];
+      if (first) await get().connect(first.id);
     },
 
-    async newSession() {
-      const created = await api.createSession();
-      set((s) => ({ sessionIds: [...s.sessionIds, created.id ?? ""] }));
+    async refreshSessions() {
+      set({ sessions: await api.listSessions() });
+    },
+
+    async newSession(worldbookId) {
+      // 不传就由服务端现配一份空设定（D170）：**先开故事、边写边补**也要走得通。
+      const created = await api.createSession(
+        worldbookId ? { worldbook_id: worldbookId } : undefined,
+      );
+      await get().refreshSessions();
       await get().connect(created.id ?? "");
+      set({ page: { kind: "story" } });
     },
 
     async connect(sessionId) {

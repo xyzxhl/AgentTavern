@@ -76,13 +76,23 @@ def test_session_crud(client_for) -> None:
     client = client_for(happy_llm())
     session = client.post("/sessions").json()
 
-    assert client.get("/sessions").json() == [session["id"]]
-
     patched = client.patch(
         f"/sessions/{session['id']}",
         json={"meta": {"title": "雨夜", "prose_style": "短句，冷调"}},
     ).json()
     assert patched["meta"]["title"] == "雨夜"
+
+    # **列表带标题，不只是 id**（D172）：一串 `sess_a1b2c3…` 认不出哪局是哪局。
+    # 顺带给出它开在哪份设定上——那是列表里唯一需要的第二行信息。
+    listed = client.get("/sessions").json()
+    assert listed == [
+        {
+            "id": session["id"],
+            "title": "雨夜",
+            "worldbook_id": session["worldbook_id"],
+            "worldbook_name": "未命名",
+        }
+    ]
 
     detail = client.get(f"/sessions/{session['id']}").json()
     assert detail["path"] == []
@@ -1653,3 +1663,36 @@ def test_a_hand_edit_lands_in_the_trace(client_for) -> None:
         )
         == 1
     )
+
+
+def test_importing_a_file_can_create_a_new_worldbook(client_for) -> None:
+    """**拿到别人分享的设定文件时，要的是"变成我的一份新设定"**（D172）。
+
+    第一版只有 `/worldbooks/{id}/import`——往一份已有的里追加或替换，于是必须
+    先建个空的再往里导。那不是这个动作本来的形状。
+    """
+    client = client_for(happy_llm())
+    bundle = {
+        "format": "agenttavern.worldbook",
+        "version": 1,
+        "name": "旧城区",
+        "entries": [
+            {"id": "wi_x", "name": "题材与基调", "kind": "world", "content": "现代，悬疑"},
+            {"name": "陈屿", "kind": "character", "voice": "说话绕"},
+        ],
+    }
+
+    created = client.post("/worldbooks/import", json=bundle).json()
+    assert created["name"] == "旧城区"
+
+    got = client.get(f"/worldbooks/{created['id']}").json()
+    assert {e["name"] for e in got["entries"]} == {"题材与基调", "陈屿"}
+    # id 一律重新分配——文件里的 id 是别人存储里的地址，不是条目的身份。
+    assert all(e["id"] != "wi_x" for e in got["entries"])
+    assert got["sessions"] == [], "刚建出来，还没有故事开在上面"
+
+    # 坏格式照样当场拒绝，不能尽力而为地导进一份半懂的东西。
+    assert (
+        client.post("/worldbooks/import", json={"format": "别的", "version": 1}).status_code == 400
+    )
+    assert len(client.get("/worldbooks").json()) == 1

@@ -18,6 +18,14 @@ export interface WorldbookCard {
   sessions: string[];
 }
 
+/** 会话列表里的一条。**带标题**——一串 `sess_a1b2c3…` 认不出哪局是哪局（D172）。 */
+export interface SessionCard {
+  id: string;
+  title: string;
+  worldbook_id: string;
+  worldbook_name: string;
+}
+
 export interface ServerMeta {
   developer: boolean;
   model: string;
@@ -44,7 +52,7 @@ async function json<T>(input: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   meta: () => json<ServerMeta>("/meta"),
-  listSessions: () => json<string[]>("/sessions"),
+  listSessions: () => json<SessionCard[]>("/sessions"),
   createSession: (session?: Partial<Session>) =>
     json<Session>("/sessions", { method: "POST", body: JSON.stringify(session ?? null) }),
   patchSession: (id: string, patch: Record<string, unknown>) =>
@@ -64,6 +72,10 @@ export const api = {
   listWorldbooks: () => json<WorldbookCard[]>("/worldbooks"),
   createWorldbook: (book?: Partial<Worldbook>) =>
     json<Worldbook>("/worldbooks", { method: "POST", body: JSON.stringify(book ?? null) }),
+  /** 导入一份文件 → **得到一份新设定**。拿到别人分享的文件时要的是这个，
+   * 而不是"先建个空的再往里导"（D172）。 */
+  importAsNewWorldbook: (bundle: WorldbookBundle) =>
+    json<Worldbook>("/worldbooks/import", { method: "POST", body: JSON.stringify(bundle) }),
   getWorldbook: (id: string) =>
     json<{
       worldbook: Worldbook;

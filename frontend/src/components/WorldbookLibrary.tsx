@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { api, type WorldbookCard } from "../api";
-import type { Worldbook } from "../protocol";
+import type { Worldbook, WorldbookBundle } from "../protocol";
 import { useSession } from "../store";
 import { WorldbookPanel } from "./WorldbookPanel";
 
@@ -15,11 +15,16 @@ import { WorldbookPanel } from "./WorldbookPanel";
  * 空设定、边写边补）也走得通，那条在会话列表上。**两条都要留**：要求先建设定
  * 才能开会话，等于在最没有想法的那一刻逼人做决定。
  */
-export function WorldbookLibrary({ onClose }: { onClose: () => void }): JSX.Element {
+export function WorldbookLibrary(): JSX.Element {
   const [cards, setCards] = useState<WorldbookCard[]>([]);
-  const [editing, setEditing] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const connect = useSession((s) => s.connect);
+  const file = useRef<HTMLInputElement>(null);
+  const newSession = useSession((s) => s.newSession);
+  // **要打开哪一份写在路由上**，不写在这个组件的局部状态里——头部那个
+  // `〔旧城区 ↗〕` 标签就是这么直接跳进某一份的（D172）。
+  const editing = useSession((s) => (s.page.kind === "worldbooks" ? (s.page.open ?? null) : null));
+  const go = useSession((s) => s.go);
+  const setEditing = (id: string | null) => go({ kind: "worldbooks", open: id ?? undefined });
 
   async function reload(): Promise<void> {
     setCards(await api.listWorldbooks());
@@ -39,6 +44,22 @@ export function WorldbookLibrary({ onClose }: { onClose: () => void }): JSX.Elem
     );
   }
 
+  /** 导入一份文件 → **一份新设定**（D172）。拿到别人分享的文件时要的就是这个。 */
+  async function importAsNew(picked: File): Promise<void> {
+    setBusy(true);
+    try {
+      const bundle = JSON.parse(await picked.text()) as WorldbookBundle;
+      const book = await api.importAsNewWorldbook(bundle);
+      await reload();
+      setEditing(book.id ?? null);
+    } catch (err) {
+      alert(`导入失败：${(err as Error).message}`);
+    } finally {
+      setBusy(false);
+      if (file.current) file.current.value = "";
+    }
+  }
+
   async function create(): Promise<void> {
     setBusy(true);
     try {
@@ -51,10 +72,7 @@ export function WorldbookLibrary({ onClose }: { onClose: () => void }): JSX.Elem
   }
 
   async function start(book: Worldbook): Promise<void> {
-    const created = await api.createSession({ worldbook_id: book.id });
-    useSession.setState((s) => ({ sessionIds: [...s.sessionIds, created.id ?? ""] }));
-    await connect(created.id ?? "");
-    onClose();
+    await newSession(book.id ?? undefined);
   }
 
   async function rename(card: WorldbookCard): Promise<void> {
@@ -76,16 +94,26 @@ export function WorldbookLibrary({ onClose }: { onClose: () => void }): JSX.Elem
   }
 
   return (
-    <div className="absolute inset-0 z-10 flex flex-col bg-ink-900">
+    <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex items-center gap-3 border-b border-line px-5 py-2.5">
         <span className="text-sm text-fg">设定库</span>
         <span className="text-[11px] text-dim">{cards.length} 份 · 一份可以开好几局故事</span>
         <div className="flex-1" />
+        <button className="btn" onClick={() => file.current?.click()} disabled={busy}>
+          导入
+        </button>
+        <input
+          ref={file}
+          type="file"
+          accept=".json"
+          className="hidden"
+          onChange={(e) => {
+            const picked = e.target.files?.[0];
+            if (picked) void importAsNew(picked);
+          }}
+        />
         <button className="btn" onClick={() => void create()} disabled={busy}>
           + 新建
-        </button>
-        <button className="btn" onClick={onClose}>
-          关闭
         </button>
       </header>
 

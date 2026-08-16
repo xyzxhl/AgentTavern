@@ -119,13 +119,31 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
 
     @app.post("/sessions")
     def create_session(session: Session | None = None) -> Session:
-        created = session or Session()
-        store.create_session(created)
-        return created
+        """**返回落盘的那一份，不是传进来的那一份。**
+
+        没指定设定时 `create_session` 会现建一份并写进 `worldbook_id`（D170），
+        而它是在一个 `model_copy` 上写的——把入参原样回给客户端，那个字段就是空的。
+        """
+        return store.create_session(session or Session()).load_session()
 
     @app.get("/sessions")
-    def list_sessions() -> list[str]:
-        return store.list_sessions()
+    def list_sessions() -> list[dict[str, Any]]:
+        """**带标题，不只是 id。** 列表上一串 `sess_a1b2c3…` 认不出哪局是哪局。
+
+        顺带给出它开在哪份设定上——那是会话列表里唯一需要的第二行信息（D172）。
+        """
+        out: list[dict[str, Any]] = []
+        for sid in store.list_sessions():
+            session = store.session(sid).load_session()
+            out.append(
+                {
+                    "id": sid,
+                    "title": session.meta.title,
+                    "worldbook_id": session.worldbook_id,
+                    "worldbook_name": store.worldbook(session.worldbook_id).load().name,
+                }
+            )
+        return out
 
     @app.get("/sessions/{session_id}")
     def get_session(session_id: str) -> dict[str, Any]:
@@ -232,6 +250,24 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
         created = book or Worldbook()
         store.create_worldbook(created)
         return created
+
+    @app.post("/worldbooks/import")
+    def import_as_new(bundle: WorldbookBundle) -> Worldbook:
+        """导入一份文件，**得到一份新设定**（D172）。
+
+        和 `/worldbooks/{id}/import` 分开是因为它们回答不同的问题：那条是「往这
+        一份里追加或替换」，这条是「把别人给我的这份变成我的一份」。**后者才是
+        拿到分享文件时的动作**，而第一版只有前者——于是要先建个空的再往里导。
+        """
+        if (bad := bundle.check()) is not None:
+            raise HTTPException(400, bad)
+
+        book = Worldbook(name=bundle.name or "导入的设定")
+        repo = store.create_worldbook(book)
+        for entry in bundle.entries:
+            # **id 一律重新分配**：文件里的 id 是别人存储里的地址，不是条目的身份。
+            repo.save_entry(entry.model_copy(update={"id": new_id("wi")}))
+        return book
 
     @app.get("/worldbooks/{worldbook_id}")
     def get_worldbook(worldbook_id: str) -> dict[str, Any]:
