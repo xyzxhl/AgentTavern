@@ -163,7 +163,7 @@ export function WorldbookPanel({
     );
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${bundle.name || "worldbook"}.worldbook.json`;
+    link.download = `${bundle.meta?.name || "worldbook"}.worldbook.json`;
     link.click();
     URL.revokeObjectURL(url);
   }

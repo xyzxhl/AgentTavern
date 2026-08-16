@@ -57,13 +57,22 @@ SSE 三条都不满足。不用 socket.io——不需要它的房间与 fallback
 
 ### 目录布局
 
+**两类一级资产，各占一棵目录树**（D170）：设定不属于任何 session，一份能开出好几局故事。
+
 ```
+data/worldbooks/<worldbook_id>/
+  worldbook.json            名字、题材与基调、剧情尺度
+  entries/<entry_id>.json   一条设定一个文件（世界 / 角色 / 初始状态）
+
 data/sessions/<session_id>/
-  session.json              元指令、控制维度默认值、goal
+  session.json              worldbook_id、标题、goal、控制维度默认值、冻结的初始状态
   nodes/<node_id>.json      一个 run 一个节点：细纲、正文、state_delta、偏离报告、parent
   trace/<run_id>.jsonl      append-only，每 run 一个文件（匹配归因分析的粒度）
-  worldinfo/<entry_id>.json
 ```
+
+session 只存一个 `worldbook_id`，不内嵌拷贝：拷贝的话「改一次、所有故事都跟着」就没了，
+而那正是把设定独立出来要买的东西。**共享的代价不需要额外机制**——初始状态在每局故事
+自己的第一轮冻结进 `session.json`（D158），其余每一样都是每轮现读的。
 
 规模上限：几百个 run × 每个几 KB，全量读取毫秒级。真到瓶颈再加索引缓存，模型不变。
 

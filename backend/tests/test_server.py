@@ -301,8 +301,12 @@ def test_a_round_trip_keeps_the_kinds_and_the_expansion_settings(client_for) -> 
     # 初始状态跟着过来；开在这份设定上的会话还没开始，所以立刻生效。
     landed_session = client.post("/sessions", json={"worldbook_id": b}).json()["id"]
     assert client.get(f"/sessions/{landed_session}").json()["state"] == {"陈屿": {"在场": True}}
-    # **世界那半边也跟着走**（D170）：题材和尺度是这个世界的事，不是某局故事的。
-    assert client.get(f"/worldbooks/{b}").json()["worldbook"]["meta"]["genre_tone"] == "悬疑"
+    # **世界那半边也跟着走**（D170）：名字、题材、尺度都是这个世界的事，不是
+    # 某局故事的。名字**只在 meta 里**——包上不再单放一个 name（D171 的同一条理由）。
+    landed_meta = client.get(f"/worldbooks/{b}").json()["worldbook"]["meta"]
+    assert landed_meta["genre_tone"] == "悬疑"
+    assert landed_meta["name"] == "旧城区"
+    assert "name" not in _bundle(client, a), "名字只有一个入口"
 
 
 # -- WebSocket：一个完整 run --------------------------------------------------
@@ -1605,3 +1609,49 @@ def test_unknown_session_websocket_is_rejected(client_for) -> None:
         client.websocket_connect("/sessions/nope/ws") as ws,
     ):
         ws.receive_text()
+
+
+def test_a_hand_edit_lands_in_the_trace(client_for) -> None:
+    """**用户改过的节点必须在 trace 里留痕**（D50/D65）。
+
+    `USER_EDIT` 这个事件类型一直定义着却从没被发出过——于是一段手改过的正文在
+    trace 里和 writer 写的一模一样，回看时会被当成模型的产出去归因，而 trace
+    存在的头一个理由就是 eval（D8）。
+
+    记的是**改了哪几样**，不是新旧内容：正文动辄几千字，而"这个节点被人动过"
+    才是回看时要的那一位信息。
+    """
+    client = client_for(happy_llm(), developer=True)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "我推开门"}))
+        node_id = collect(ws, "run_finished")[-1]["node"]["id"]
+
+    client.patch(
+        f"/sessions/{session_id}/nodes/{node_id}",
+        json={"prose": "我自己改的这一句。", "state_set": {"地点": "改过了"}},
+    )
+
+    edits = [
+        e
+        for e in client.get(f"/sessions/{session_id}/trace/{node_id}").json()
+        if e["type"] == "user_edit"
+    ]
+    assert len(edits) == 1
+    assert edits[0]["actor"] == "user"
+    assert edits[0]["payload"]["fields"] == ["prose", "state"], "改了哪几样"
+    assert "正文" in edits[0]["label"] and "状态" in edits[0]["label"], "标签得人能读（D25）"
+    # 没改动就不留痕——空的 patch 不是一次编辑。
+    client.patch(f"/sessions/{session_id}/nodes/{node_id}", json={})
+    assert (
+        len(
+            [
+                e
+                for e in client.get(f"/sessions/{session_id}/trace/{node_id}").json()
+                if e["type"] == "user_edit"
+            ]
+        )
+        == 1
+    )

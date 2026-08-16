@@ -11,6 +11,7 @@ from pydantic import BaseModel, ValidationError
 from ..config import Settings, load_settings
 from ..llm import LLMGateway
 from ..models import (
+    Actor,
     Capabilities,
     ControlDimensions,
     Goal,
@@ -20,6 +21,7 @@ from ..models import (
     SessionMeta,
     SessionModes,
     TraceEvent,
+    TraceEventType,
     Worldbook,
     WorldbookBundle,
     WorldbookEntry,
@@ -160,7 +162,7 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
     @app.patch("/sessions/{session_id}/nodes/{node_id}")
     def patch_node(session_id: str, node_id: str, patch: NodePatch) -> Node:
         repo = repo_of(session_id)
-        return _apply_node_patch(repo, node_id, patch)
+        return _apply_node_patch(repo, node_id, patch, developer=resolved.developer)
 
     @app.post("/sessions/{session_id}/close-segment")
     async def close_current_segment(session_id: str) -> dict[str, Any]:
@@ -259,10 +261,8 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
     def delete_worldbook(worldbook_id: str) -> dict[str, Any]:
         """**有故事在用就不让删**，先说清是哪几局。"""
         book_of(worldbook_id)
-        users = store.sessions_of(worldbook_id)
-        if users:
+        if users := store.delete_worldbook(worldbook_id):
             raise HTTPException(409, f"还有 {len(users)} 局故事开在这份设定上。")
-        store.delete_worldbook(worldbook_id)
         return {"deleted": worldbook_id}
 
     @app.get("/worldbooks/{worldbook_id}/entries")
@@ -351,7 +351,7 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
         try:
             while True:
                 raw = await websocket.receive_text()
-                await _handle(raw, runner, repo, broadcast)
+                await _handle(raw, runner, repo, broadcast, developer=resolved.developer)
         except WebSocketDisconnect:
             pass
         finally:
@@ -365,6 +365,8 @@ async def _handle(
     runner: SessionRunner,
     repo: SessionRepository,
     broadcast: Any,
+    *,
+    developer: bool = False,
 ) -> None:
     try:
         message = ClientEnvelope.model_validate_json(f'{{"message":{raw}}}').message
@@ -407,6 +409,7 @@ async def _handle(
                 prose=message.prose,
                 state_set=message.state_set,
             ),
+            developer=developer,
         )
         await broadcast(StateSnapshot(values=repo.state_at(node.id).values, leaf_id=node.id))
 
@@ -487,20 +490,49 @@ async def _handle(
             await runner.submit(node.user_input.text if node.user_input else "", regenerate=True)
 
 
-def _apply_node_patch(repo: SessionRepository, node_id: str, patch: NodePatch) -> Node:
+def _apply_node_patch(
+    repo: SessionRepository, node_id: str, patch: NodePatch, *, developer: bool = False
+) -> Node:
     """用户编辑直接改写节点数据（D65），**不做依赖检查**。
 
     此前曾主张"插入一个只含 delta 的新节点"以保护已提交节点的不可变性，
     该方案已否决——它为一个乐观假设下不存在的问题增加复杂度，
     也不符合常见 AI chat 的编辑语义。
+
+    **改了什么要入 trace**（D50）。`USER_EDIT` 这个事件类型一直定义着却从没被
+    发出过——于是一段手改过的正文在 trace 里和 writer 写的一模一样，回看时会被
+    当成模型的产出去归因，而 trace 存在的头一个理由就是 eval（D8）。
+    记的是**改了哪几样**，不是新旧内容：正文动辄几千字，而"这个节点被人动过"
+    才是回看时要的那一位信息。
     """
     node = repo.load_node(node_id)
+    touched: list[str] = []
     if patch.outline is not None:
         node.outline = patch.outline
         node.outline_summary = None  # 细纲变了，缓存的摘要作废
+        touched.append("outline")
     if patch.prose is not None:
         node.prose = patch.prose
+        touched.append("prose")
     if patch.state_set is not None:
         node.state_delta.set = patch.state_set
+        touched.append("state")
     repo.save_node(node)
+
+    if touched:
+        session = repo.load_session()
+        Tracer(
+            repo,
+            node_id,
+            persist=session.capabilities.trace or developer,
+            developer=developer,
+        ).emit(
+            TraceEventType.USER_EDIT,
+            Actor.USER,
+            f"用户改了{'、'.join(_EDIT_LABEL[t] for t in touched)}",
+            {"fields": touched},
+        )
     return node
+
+
+_EDIT_LABEL = {"outline": "细纲", "prose": "正文", "state": "状态增量"}

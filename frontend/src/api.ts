@@ -69,7 +69,6 @@ export const api = {
   deleteWorldbook: (id: string) =>
     json<{ deleted: string }>(`/worldbooks/${id}`, { method: "DELETE" }),
 
-  listEntries: (id: string) => json<WorldbookEntry[]>(`/worldbooks/${id}/entries`),
   saveEntry: (id: string, entry: WorldbookEntry) =>
     json<WorldbookEntry>(`/worldbooks/${id}/entries`, { method: "PUT", body: JSON.stringify(entry) }),
   deleteEntry: (id: string, entryId: string) =>

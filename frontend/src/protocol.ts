@@ -99,7 +99,6 @@ export type TraceEventType =
   | "tool_result"
   | "outline_submitted"
   | "prose_produced"
-  | "contract_check"
   | "cross_check"
   | "state_committed"
   | "goal_evaluated"
@@ -253,9 +252,8 @@ export type Depth = number;
 export type Summary = string | null;
 export type Format = string;
 export type Version = number;
-export type Name2 = string;
 export type Note = string;
-export type Name3 = string;
+export type Name2 = string;
 export type ContentScale = string;
 export type GenreTone = string;
 export type Entries = WorldbookEntry[];
@@ -790,7 +788,6 @@ export interface Values1 {
 export interface WorldbookBundle {
   format?: Format;
   version?: Version;
-  name?: Name2;
   note?: Note;
   meta?: WorldMeta;
   entries?: Entries;
@@ -807,7 +804,7 @@ export interface WorldbookBundle {
  * 留在 session 上的只剩这局故事自己的：标题、目标。
  */
 export interface WorldMeta {
-  name?: Name3;
+  name?: Name2;
   content_scale?: ContentScale;
   genre_tone?: GenreTone;
 }

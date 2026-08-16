@@ -17,8 +17,7 @@
 {
   "format": "agenttavern.worldbook",
   "version": 1,
-  "name": "雨夜",
-  "note": "现代悬疑，克制",
+  "note": "给读到这份文件的人看的一句话，不是设定的一部分",
   "meta": { "name": "雨夜", "genre_tone": "现代，悬疑，克制", "content_scale": "克制" },
   "entries": [
     {

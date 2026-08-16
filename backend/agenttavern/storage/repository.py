@@ -266,13 +266,18 @@ class Store:
             if self.session(sid).load_session().worldbook_id == worldbook_id
         ]
 
-    def delete_worldbook(self, worldbook_id: str) -> bool:
-        """删掉一份设定。**有人在用就不删**，返回 ``False``（同不存在）。"""
+    def delete_worldbook(self, worldbook_id: str) -> list[str]:
+        """删掉一份设定。**返回挡住它的那几局故事**——空列表表示删掉了。
+
+        判断和执行放在一起，不让调用方先查一遍再删：那就是两处判断，而两处判断
+        迟早对不上（同 D171）。调用方拿返回值渲染理由，不必自己再扫一遍。
+        """
         repo = self.worldbook(worldbook_id)
-        if not repo.exists() or self.sessions_of(worldbook_id):
-            return False
+        users = self.sessions_of(worldbook_id)
+        if users or not repo.exists():
+            return users
         shutil.rmtree(repo.dir, ignore_errors=True)
-        return True
+        return []
 
     # -- 旧数据 -------------------------------------------------------------
 

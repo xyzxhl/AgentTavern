@@ -41,7 +41,9 @@ class TraceEventType(StrEnum):
     OUTLINE_SUBMITTED = "outline_submitted"
     PROSE_PRODUCED = "prose_produced"
 
-    CONTRACT_CHECK = "contract_check"
+    # `CONTRACT_CHECK` **已删除**：它记的是 E0（`submit_outline` 之前必须写过一次
+    # `state_write`），而 director 卸下 `state_write` 之后那条契约自然作废（D143）。
+    # 留一个谁都发不出来的事件类型，等于让 schema 承诺一件代码不做的事。
     CROSS_CHECK = "cross_check"
 
     STATE_COMMITTED = "state_committed"
