@@ -315,6 +315,47 @@ class WorldState(BaseModel):
         return walk(self.values, path)
 
 
+def _diff_tree(before: Tree, after: Tree) -> Tree:
+    out: Tree = {}
+    for key, value in after.items():
+        if key not in before:
+            # **新键整份写下去，空字典也算**——"这里有个东西但暂时没内容"是
+            # 一种真实的状态（`paths_of` 也把它当叶子），递归下去会得到空补丁，
+            # 于是这个键根本不会被建出来。
+            out[key] = _clone(value) if isinstance(value, dict) else value
+            continue
+        old = before[key]
+        if isinstance(value, dict) and isinstance(old, dict):
+            inner = _diff_tree(old, value)
+            if inner:
+                out[key] = inner
+        elif value != old:
+            out[key] = list(value) if isinstance(value, list) else value
+    for key in before:
+        if key not in after:
+            out[key] = None  # `set` 里的 `None` 就是删键（连同整棵子树）
+    return out
+
+
+def diff(before: Tree, after: Tree) -> StateDelta:
+    """由「想要的结果」反推出增量。**「改结果」那个视图的落地方式**（D65）。
+
+    用户改状态有两种操作：改这一轮的**指令**（直接改增量），或者改这一轮之后的
+    **结果**（改状态树本身）。后者要能落到数据上，就得和这一轮之前的状态求差。
+
+    差分放在这里而不是前端，是为了不破坏「**权威是增量**」（D48）：接口收到
+    结果的那一刻就把它换算成增量了，落盘的仍然只有增量，没有第二份真相。
+
+    只产出 ``set``：它配合深合并已经表达得了一切改动（改值、删键、换整个列表），
+    而 ``append`` / ``remove`` 是**写入语义**，不是差分结果——从两棵树看不出
+    用户心里想的是"追加一项"还是"换成这个列表"，猜错了下游重放就会不一样。
+    要表达追加走「改指令」那个视图。
+
+    保证 ``WorldState(values=before).apply(diff(before, after)).values == after``。
+    """
+    return StateDelta(set=_diff_tree(before, after))
+
+
 def replay(deltas: list[StateDelta]) -> WorldState:
     """沿一条路径重放增量，得到该点的状态。
 

@@ -58,7 +58,23 @@ export const api = {
   patchSession: (id: string, patch: Record<string, unknown>) =>
     json<Session>(`/sessions/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   getSession: (id: string) =>
-    json<{ session: Session; path: Node[]; state: Record<string, unknown> }>(`/sessions/${id}`),
+    json<{
+      session: Session;
+      path: Node[];
+      state: Record<string, unknown>;
+      /** 路径上**有兄弟**的那几轮 → 兄弟 id 列表（D46/D147）。独苗不列。 */
+      siblings: Record<string, string[]>;
+    }>(`/sessions/${id}`),
+
+  /** 某一轮跑完之后的状态树，外加它之前的那一份。
+   *
+   * 「改结果」那个视图要有起点才能编辑，而那个起点**不是侧栏里的当前状态**
+   * ——侧栏显示的是路径末端，改历史某一轮时两者不是同一个东西。
+   */
+  stateAtNode: (id: string, nodeId: string) =>
+    json<{ before: Record<string, unknown>; values: Record<string, unknown> }>(
+      `/sessions/${id}/nodes/${nodeId}/state`,
+    ),
 
   // -- worldbook：**一级资产，不属于任何 session**（D170）--------------------
   //

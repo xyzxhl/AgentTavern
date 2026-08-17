@@ -6,6 +6,7 @@ import { create } from "zustand";
 import { SessionSocket, api, type ServerMeta, type SessionCard } from "./api";
 import type {
   ClientMessage,
+  EditNode,
   GoalProgress,
   Node,
   Question,
@@ -35,6 +36,13 @@ export interface SessionState {
   /** 当前路径上的节点，按顺序。**一个 node 就是一轮**（run = node = 细纲 = 正文）。 */
   path: Node[];
   state: Record<string, unknown>;
+
+  /** 路径上**有兄弟**的那几轮 → 兄弟 id 列表（D46/D147）。独苗不列。
+   *
+   * 随路径一起拿，不是一个节点一次请求——切换器要显示 `⟨2/3⟩` 就得先知道有没有
+   * 第 2 支，而一条 20 轮的路径会因此打 20 个请求。这份数据只在重生成之后才变。
+   */
+  siblings: Record<string, string[]>;
 
   phase: RunPhase;
 
@@ -77,6 +85,9 @@ export interface SessionState {
   /** 上一轮被打断且**存成了草稿**——下一条输入会接着它跑，不是从头重来。 */
   resumable: boolean;
 
+  /** 这一轮是重生成出来的——**落地之后要重拉兄弟关系**，切换器才知道有第几支。 */
+  rerolling: boolean;
+
   /** goal 的实时进度（D161）。`null` = 还没跑过一轮，或者没有 goal。
    *
    * **它是投影，不是权威**——权威在 `session.goal_run`。这里只为了让中间状态
@@ -88,6 +99,20 @@ export interface SessionState {
    * 而浮层的语义是「临时打断，看完就关」。 */
   page: Page;
   go: (page: Page) => void;
+
+  /** 展开了节点编辑器的那一轮（D65）。**一次只开一个**——两个编辑器同时开着，
+   * 保存顺序就成了隐含语义。`null` 是都收着。 */
+  editing: string | null;
+  edit: (nodeId: string | null) => void;
+
+  /** 切到另一支（D147）。**回到历史分叉点的唯一路径**——重生成产生的兄弟节点
+   * 只能从这里回去。整条路径会换掉，状态随之重放（D48）。 */
+  switchBranch: (nodeId: string) => void;
+  /** 在某一轮重开一支（D46）。不是当前叶时**先切过去**——D147 限制的是创建，
+   * 切换不受限，所以"在第 3 轮重新生成"就是这两步。 */
+  regenerate: (nodeId: string) => void;
+  /** 直接改一个节点的产出（D65）。改完服务端把整份节点回传（`node_updated`）。 */
+  editNode: (patch: { nodeId: string } & Partial<EditNode>) => void;
 
   connect: (sessionId: string) => Promise<void>;
   disconnect: () => void;
@@ -175,6 +200,18 @@ export const useSession = create<SessionState>((set, get) => {
           // 同一个 id 就替换（重生成会落新节点，切分支会整条换掉）。
           path: upsert(s.path, message.node),
         }));
+        // **重生成刚给某一轮添了个兄弟**，切换器得知道。只在重生成之后拉一次：
+        // 平常推进落的是独苗，兄弟关系没变，每轮都拉等于白拉一份完整路径。
+        if (get().rerolling) {
+          set({ rerolling: false });
+          void get().refreshState();
+        }
+        break;
+
+      case "node_updated":
+        // **整份替换那个节点。** 改「结果」时落盘的增量是服务端求差算出来的，
+        // 把发出去的东西塞回本地，`state_delta` 就成了旧的——而它是权威（D48）。
+        set((s) => ({ path: upsert(s.path, message.node) }));
         break;
 
       case "run_failed":
@@ -196,6 +233,12 @@ export const useSession = create<SessionState>((set, get) => {
 
       case "state":
         set({ state: message.values });
+        // **叶子不是我们以为的那个 → 整条路径换过了**（切分支）。这条自纠比让
+        // `switchBranch` 自己去拉可靠：它是在收到服务端的确认之后才动的，
+        // 而"发完就拉"会和服务端处理那条消息抢先后。
+        if (message.leaf_id && message.leaf_id !== get().path.at(-1)?.id) {
+          void get().refreshState();
+        }
         break;
 
       case "queue":
@@ -247,6 +290,7 @@ export const useSession = create<SessionState>((set, get) => {
     session: null,
     path: [],
     state: {},
+    siblings: {},
     phase: "idle",
     traces: {},
     live: null,
@@ -257,9 +301,34 @@ export const useSession = create<SessionState>((set, get) => {
     usage: { tokensIn: 0, tokensOut: 0 },
     notice: null,
     resumable: false,
+    rerolling: false,
     goal: null,
+    editing: null,
 
     go: (page) => set({ page }),
+    edit: (nodeId) => set({ editing: nodeId }),
+
+    switchBranch(nodeId) {
+      // 路径整条换掉，状态随之重放（D48）。这里只发消息——服务端回的那份
+      // `state` 快照带着新的叶子 id，`apply` 认出来之后自己去把路径拉回来。
+      get().send({ type: "switch_branch", node_id: nodeId });
+      set({ editing: null });
+    },
+
+    regenerate(nodeId) {
+      // **D147 限制的是创建，不是切换**：分支只能在当前节点上开，所以"在第 3 轮
+      // 重新生成"就是「先切过去、再重生成」两步。这两步在这里做完，用户按的是
+      // 一个按钮——但后面那几轮会移出当前路径，所以调用处要先问过。
+      const { path, send } = get();
+      if (path.at(-1)?.id !== nodeId) send({ type: "switch_branch", node_id: nodeId });
+      send({ type: "regenerate", node_id: nodeId });
+      set({ editing: null, rerolling: true });
+    },
+
+    editNode({ nodeId, ...patch }) {
+      get().send({ type: "edit_node", node_id: nodeId, ...patch });
+      set({ editing: null });
+    },
 
     async bootstrap() {
       const [meta, sessions] = await Promise.all([api.meta(), api.listSessions()]);
@@ -290,6 +359,7 @@ export const useSession = create<SessionState>((set, get) => {
         session: detail.session,
         path: detail.path,
         state: detail.state,
+        siblings: detail.siblings,
         phase: "idle",
         traces: {},
         live: null,
@@ -299,6 +369,8 @@ export const useSession = create<SessionState>((set, get) => {
         queue: [],
         notice: null,
         goal: null,
+        editing: null,
+        rerolling: false,
       });
 
       socket = new SessionSocket(sessionId, apply, (reason) => set({ notice: reason }));
@@ -309,7 +381,12 @@ export const useSession = create<SessionState>((set, get) => {
       const id = get().sessionId;
       if (!id) return;
       const detail = await api.getSession(id);
-      set({ session: detail.session, state: detail.state, path: detail.path });
+      set({
+        session: detail.session,
+        state: detail.state,
+        path: detail.path,
+        siblings: detail.siblings,
+      });
     },
 
     disconnect() {
@@ -343,5 +420,9 @@ function append(process: Thought[], actor: string, text: string): Thought[] {
 function upsert(path: Node[], node: Node): Node[] {
   const at = path.findIndex((n) => n.id === node.id);
   if (at >= 0) return path.map((n, i) => (i === at ? node : n));
+  // **重生成落的是兄弟：它顶掉原来那一支，不是接在它后面**（D46）。同父的那个
+  // 还留在路径上的话，界面会把同一轮的两个版本前后摆着，读起来像故事写了两遍。
+  const sibling = path.findIndex((n) => n.parent_id === node.parent_id);
+  if (sibling >= 0) return [...path.slice(0, sibling), node];
   return [...path, node];
 }

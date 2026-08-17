@@ -18,7 +18,7 @@ from .control import (
 from .draft import RunDraft, RunStage, trim_dangling_tool_call
 from .node import InputSource, Node, RunStatus, UserInput, new_id
 from .session import Session
-from .state import StateDelta, WorldState, replay
+from .state import StateDelta, Tree, WorldState, diff, replay
 from .trace import Actor, AttributionClass, TraceEvent, TraceEventType
 from .worldbook import EntryKind, Worldbook, WorldbookEntry, WorldbookMode
 
@@ -48,6 +48,7 @@ __all__ = [
     "SummarizeMode",
     "TraceEvent",
     "TraceEventType",
+    "Tree",
     "UserInput",
     "EntryKind",
     "Worldbook",
@@ -55,6 +56,7 @@ __all__ = [
     "WorldbookEntry",
     "WorldbookMode",
     "WorldState",
+    "diff",
     "new_id",
     "replay",
     "trim_dangling_tool_call",

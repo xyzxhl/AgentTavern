@@ -45,7 +45,7 @@ export type Type5 = "edit_node";
 export type NodeId1 = string;
 export type Outline = string | null;
 export type Prose = string | null;
-export type StateSet = {
+export type StateResult = {
   [k: string]: unknown;
 } | null;
 export type Type6 = "regenerate";
@@ -66,6 +66,7 @@ export type ServerMessage =
   | Trace
   | Question
   | RunFinished
+  | NodeUpdated
   | RunFailed
   | RunInterrupted
   | StateSnapshot
@@ -173,25 +174,26 @@ export type SegmentSpan = number;
 export type Prose1 = string;
 export type DeviationReport = string | null;
 export type Notes = string[];
-export type Type15 = "run_failed";
+export type Type15 = "node_updated";
+export type Type16 = "run_failed";
 export type Reason = string;
-export type Type16 = "run_interrupted";
+export type Type17 = "run_interrupted";
 export type Resumable = boolean;
-export type Type17 = "state";
+export type Type18 = "state";
 export type LeafId = string | null;
-export type Type18 = "queue";
+export type Type19 = "queue";
 export type Pending = string[];
-export type Type19 = "usage";
+export type Type20 = "usage";
 export type TokensIn1 = number;
 export type TokensOut1 = number;
-export type Type20 = "branches";
+export type Type21 = "branches";
 export type NodeId3 = string;
 export type Siblings = string[];
 export type ActiveIndex = number;
-export type Type21 = "goal_finished";
+export type Type22 = "goal_finished";
 export type Outcome = string;
 export type Reason1 = string;
-export type Type22 = "goal_progress";
+export type Type23 = "goal_progress";
 export type Description1 = string;
 export type Done = boolean;
 export type Subgoals = SubGoal[];
@@ -199,9 +201,9 @@ export type SpentRuns = number;
 export type SpentTokens = number;
 export type MaxRuns2 = number | null;
 export type MaxTotalTokens2 = number | null;
-export type Type23 = "goal_paused";
+export type Type24 = "goal_paused";
 export type Reason2 = string;
-export type Type24 = "error";
+export type Type25 = "error";
 export type Message1 = string;
 export type Id2 = string;
 export type CreatedAt1 = string;
@@ -353,7 +355,28 @@ export interface EditNode {
   node_id: NodeId1;
   outline?: Outline;
   prose?: Prose;
-  state_set?: StateSet;
+  state_delta?: StateDelta | null;
+  state_result?: StateResult;
+}
+/**
+ * 一个 run 的状态变化。**权威数据**——当前状态是沿路径重放增量的结果（D48）。
+ *
+ * 每 run 必须提交，**哪怕为空**（D19）。空增量极便宜；漏提交的代价极高——
+ * 分叉在几百个 run 后才爆，且爆时查不出源头，还会让分支重建出错。
+ */
+export interface StateDelta {
+  set?: Set;
+  append?: Append;
+  remove?: Remove;
+}
+export interface Set {
+  [k: string]: unknown;
+}
+export interface Append {
+  [k: string]: unknown;
+}
+export interface Remove {
+  [k: string]: unknown;
 }
 /**
  * 重生成：在**当前节点**的父节点下新建兄弟（D46/D147）。原分支保留。
@@ -533,27 +556,18 @@ export interface ToolCall {
   parse_error?: ParseError;
 }
 /**
- * 一个 run 的状态变化。**权威数据**——当前状态是沿路径重放增量的结果（D48）。
+ * 一个节点被用户改过了（D65）。**回传整个节点，不回传"改了什么"。**
  *
- * 每 run 必须提交，**哪怕为空**（D19）。空增量极便宜；漏提交的代价极高——
- * 分叉在几百个 run 后才爆，且爆时查不出源头，还会让分支重建出错。
+ * 改「结果」那个视图下，落盘的增量是**服务端求差算出来的**——只把用户发来的
+ * 那棵结果树塞回本地节点，本地的 `state_delta` 就成了旧的，而它才是权威数据
+ * （D48）。回传整份是唯一不需要客户端猜的做法。
  */
-export interface StateDelta {
-  set?: Set;
-  append?: Append;
-  remove?: Remove;
-}
-export interface Set {
-  [k: string]: unknown;
-}
-export interface Append {
-  [k: string]: unknown;
-}
-export interface Remove {
-  [k: string]: unknown;
+export interface NodeUpdated {
+  type?: Type15;
+  node: Node;
 }
 export interface RunFailed {
-  type?: Type15;
+  type?: Type16;
   reason: Reason;
 }
 /**
@@ -564,14 +578,14 @@ export interface RunFailed {
  * 结果下一句话被接进了同一段推演，那是最难查的一类困惑。
  */
 export interface RunInterrupted {
-  type?: Type16;
+  type?: Type17;
   resumable?: Resumable;
 }
 /**
  * 当前路径上的完整状态。**派生数据**——权威是各节点的增量（D48）。
  */
 export interface StateSnapshot {
-  type?: Type17;
+  type?: Type18;
   values: Values;
   leaf_id?: LeafId;
 }
@@ -582,19 +596,19 @@ export interface Values {
  * 队列可见性：用户应能看到待处理的输入并撤销尚未消费的部分。
  */
 export interface QueueStatus {
-  type?: Type18;
+  type?: Type19;
   pending: Pending;
 }
 /**
  * 成本可见性：**实时显示消耗，由用户手动打断**，不做自动预算拦截。
  */
 export interface UsageUpdate {
-  type?: Type19;
+  type?: Type20;
   tokens_in: TokensIn1;
   tokens_out: TokensOut1;
 }
 export interface Branches {
-  type?: Type20;
+  type?: Type21;
   node_id: NodeId3;
   siblings: Siblings;
   active_index: ActiveIndex;
@@ -606,7 +620,7 @@ export interface Branches {
  * 一个是达成了，一个是这个目标已经不可能达成了，用户的下一步动作完全不同。
  */
 export interface GoalFinished {
-  type?: Type21;
+  type?: Type22;
   outcome: Outcome;
   reason?: Reason1;
 }
@@ -621,7 +635,7 @@ export interface GoalFinished {
  * 直到它突然结束。而中间状态一条条被划掉，恰恰是用户最想看的东西。
  */
 export interface GoalProgress {
-  type?: Type22;
+  type?: Type23;
   subgoals?: Subgoals;
   spent_runs?: SpentRuns;
   spent_tokens?: SpentTokens;
@@ -647,11 +661,11 @@ export interface SubGoal {
  * 对话原样留着，不用重新判一遍。
  */
 export interface GoalPaused {
-  type?: Type23;
+  type?: Type24;
   reason: Reason2;
 }
 export interface ServerError {
-  type?: Type24;
+  type?: Type25;
   message: Message1;
 }
 export interface Session {

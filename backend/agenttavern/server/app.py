@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, model_validator
 
 from ..config import Settings, load_settings
 from ..llm import LLMGateway
@@ -20,11 +20,14 @@ from ..models import (
     Session,
     SessionMeta,
     SessionModes,
+    StateDelta,
     TraceEvent,
     TraceEventType,
+    Tree,
     Worldbook,
     WorldbookBundle,
     WorldbookEntry,
+    diff,
     new_id,
 )
 from ..orchestration import close_segment
@@ -38,6 +41,7 @@ from .protocol import (
     EditNode,
     GoalControl,
     Interject,
+    NodeUpdated,
     Regenerate,
     ServerError,
     ServerMessage,
@@ -62,11 +66,22 @@ class NodePatch(BaseModel):
     """用户直接编辑节点数据（D65）。
 
     **直接改写，不做依赖检查**——乐观假设用户只改最新输出，此时本无下游。
+
+    状态那部分有两个视图，字段一一对应，见 `EditNode` 上的说明。
     """
 
     outline: str | None = None
     prose: str | None = None
-    state_set: dict[str, Any] | None = None
+    state_delta: StateDelta | None = None
+    state_result: Tree | None = None
+
+    @model_validator(mode="after")
+    def _one_state_view(self) -> NodePatch:
+        # 两个视图落在同一个字段上，一起给就不知道该听谁的。当场报错而不是挑一个
+        # ——"我改了结果，它却按指令存了"是查不出来的那种错。
+        if self.state_delta is not None and self.state_result is not None:
+            raise ValueError("state_delta 与 state_result 只能给一个")
+        return self
 
 
 def create_app(settings: Settings | None = None, gateway: LLMGateway | None = None) -> FastAPI:
@@ -150,10 +165,18 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
         repo = repo_of(session_id)
         session = repo.load_session()
         leaf = session.active_leaf_id
+        path = repo.path_to(leaf) if leaf else []
+        # **哪几轮有兄弟，随路径一起给**（D46/D147）。切换器要显示 `⟨2/3⟩` 就得
+        # 先知道有没有第 2 支；一个节点一次 `siblings` 请求会让一条 20 轮的路径
+        # 打 20 个请求，而这份数据只在重生成之后才变。
+        #
+        # 只列有兄弟的那些——绝大多数节点是独苗，全列一遍等于把路径抄两份。
+        groups = {n.id: [s.id for s in repo.children_of(n.parent_id)] for n in path}
         return {
             "session": session,
-            "path": repo.path_to(leaf) if leaf else [],
+            "path": path,
             "state": repo.state_at(leaf).values,
+            "siblings": {k: v for k, v in groups.items() if len(v) > 1},
         }
 
     @app.patch("/sessions/{session_id}")
@@ -175,6 +198,21 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
         group = repo.children_of(node.parent_id)
         ids = [n.id for n in group]
         return Branches(node_id=node_id, siblings=ids, active_index=ids.index(node_id))
+
+    @app.get("/sessions/{session_id}/nodes/{node_id}/state")
+    def state_at_node(session_id: str, node_id: str) -> dict[str, Any]:
+        """这一轮**跑完之后**的状态树，以及它**之前**的那一份。
+
+        「改结果」那个视图要有个起点才能编辑——用户改的是"这一轮结束时世界
+        是什么样"，而那不是侧栏里的当前状态（那是路径末端的）。`before` 一并给出，
+        是为了界面能标出这一轮到底动了哪几处，而不必自己再算一遍。
+        """
+        repo = repo_of(session_id)
+        node = repo.load_node(node_id)
+        return {
+            "before": repo.state_at(node.parent_id).values,
+            "values": repo.state_at(node_id).values,
+        }
 
     @app.patch("/sessions/{session_id}/nodes/{node_id}")
     def patch_node(session_id: str, node_id: str, patch: NodePatch) -> Node:
@@ -436,17 +474,22 @@ async def _handle(
         )
 
     elif isinstance(message, EditNode):
-        node = _apply_node_patch(
-            repo,
-            message.node_id,
-            NodePatch(
+        try:
+            patch = NodePatch(
                 outline=message.outline,
                 prose=message.prose,
-                state_set=message.state_set,
-            ),
-            developer=developer,
-        )
-        await broadcast(StateSnapshot(values=repo.state_at(node.id).values, leaf_id=node.id))
+                state_delta=message.state_delta,
+                state_result=message.state_result,
+            )
+        except ValidationError as exc:
+            await broadcast(ServerError(message=str(exc.errors()[0]["msg"])))
+            return
+        node = _apply_node_patch(repo, message.node_id, patch, developer=developer)
+        await broadcast(NodeUpdated(node=node))
+        # **状态要按当前叶重放，不是按被改的那个节点。** 改的是历史某一轮时，
+        # 用户看的仍然是路径末端的状态——发被改节点处的快照会让侧栏往回跳。
+        leaf = repo.load_session().active_leaf_id or node.id
+        await broadcast(StateSnapshot(values=repo.state_at(leaf).values, leaf_id=leaf))
 
     elif isinstance(message, SetGoal):
         # **同一时间只有一个 goal**（D148）。已有的必须先放弃——goal_manager 的
@@ -549,8 +592,16 @@ def _apply_node_patch(
     if patch.prose is not None:
         node.prose = patch.prose
         touched.append("prose")
-    if patch.state_set is not None:
-        node.state_delta.set = patch.state_set
+    if patch.state_delta is not None:
+        # **整份替换，不是只换 `set`。** 以前这里是 `node.state_delta.set = ...`，
+        # 于是 `append` / `remove` 从界面够不着——而 D96 加 `remove` 正是因为
+        # 清单要能减。
+        node.state_delta = patch.state_delta
+        touched.append("state")
+    if patch.state_result is not None:
+        # **「改结果」在这里换算成增量**（D65）：和这一轮**之前**的状态求差。
+        # 起点是父节点处的状态，不是当前叶——用户改的是这一轮的产出。
+        node.state_delta = diff(repo.state_at(node.parent_id).values, patch.state_result)
         touched.append("state")
     repo.save_node(node)
 

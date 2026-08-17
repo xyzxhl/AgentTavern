@@ -3,9 +3,15 @@ import { useSession } from "../store";
 /**
  * 世界状态。**它是派生数据**——权威是各节点的增量（D48），这里只是当前路径
  * 重放出来的结果。切分支时它会整份换掉。
+ *
+ * 所以这里的「改」不是改这块面板，是**改最新一轮的增量**（D65）——也就是正文流
+ * 里最后一轮的 `✎`。**同一个操作，两个入口，不是两个概念**：日常说的"改现在的
+ * 状态"就是它，历史某一轮走它自己的 `✎`。
  */
 export function StatePanel(): JSX.Element {
   const state = useSession((s) => s.state);
+  const latest = useSession((s) => s.path.at(-1)?.id ?? null);
+  const edit = useSession((s) => s.edit);
   const keys = Object.keys(state).sort();
 
   if (keys.length === 0) {
@@ -20,6 +26,16 @@ export function StatePanel(): JSX.Element {
           <Value value={state[key]} />
         </div>
       ))}
+
+      {latest && (
+        <button
+          className="btn mt-1"
+          onClick={() => edit(latest)}
+          title="状态是重放出来的——改它就是改最新一轮的增量"
+        >
+          改状态
+        </button>
+      )}
     </div>
   );
 }

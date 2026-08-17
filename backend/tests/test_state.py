@@ -4,7 +4,7 @@
 粒度与形态都取决于故事，定不了固定 schema。
 """
 
-from agenttavern.models import StateDelta, WorldState, replay
+from agenttavern.models import StateDelta, WorldState, diff, replay
 
 
 def test_empty_delta_is_legal_and_noop() -> None:
@@ -223,3 +223,67 @@ def test_append_and_remove_address_nested_lists() -> None:
     state = state.apply(StateDelta(remove={"林": {"知情": ["照片"]}}))
 
     assert state.values["林"]["知情"] == ["西山的坟"]
+
+
+# -- 「改结果」反推增量（D65）---------------------------------------------------
+
+
+def test_diff_is_the_delta_that_turns_before_into_after() -> None:
+    """`diff` 的**唯一契约**：套上去就得到用户要的那棵树。
+
+    「改结果」这个视图整个建在它上面——用户改的是状态树，落盘的仍然只有增量。
+    """
+    before = {"林": {"在场": True, "知情": ["照片"]}, "地点": "客厅", "天气": "雨"}
+    after = {"林": {"在场": False, "知情": ["照片", "西山"]}, "地点": "阳台", "沈": {"在场": True}}
+
+    assert WorldState(values=before).apply(diff(before, after)).values == after
+
+
+def test_diff_only_mentions_what_changed() -> None:
+    """**不整份重发。** 增量是权威数据，把没动的键也写进去，等于让后来看这一轮的
+    人（和切分支时的重放）以为用户动过它们。
+    """
+    before = {"林": {"在场": True, "性格": "谨慎"}, "地点": "客厅"}
+    after = {"林": {"在场": True, "性格": "暴躁"}, "地点": "客厅"}
+
+    assert diff(before, after).set == {"林": {"性格": "暴躁"}}
+
+
+def test_diff_expresses_a_deletion_as_a_null_leaf() -> None:
+    before = {"林": {"在场": True, "伤势": "左臂中刀"}, "地点": "客厅"}
+    after = {"林": {"在场": True}}
+
+    assert diff(before, after).set == {"林": {"伤势": None}, "地点": None}
+    assert WorldState(values=before).apply(diff(before, after)).values == after
+
+
+def test_diff_creates_an_empty_branch_that_was_not_there() -> None:
+    """空字典是"这里有个东西但暂时没内容"，`paths_of` 也把它当叶子。
+
+    递归求差会得到空补丁、于是这个键根本不会被建出来——所以新键整份写下去。
+    """
+    assert WorldState().apply(diff({}, {"沈": {}})).values == {"沈": {}}
+
+
+def test_diff_never_guesses_append() -> None:
+    """**只产出 `set`。** 从两棵树看不出用户心里想的是"追加一项"还是"换成这个
+    列表"，而那两者对下游重放不是一回事。要追加走「改指令」那个视图。
+    """
+    delta = diff({"林": {"知情": ["照片"]}}, {"林": {"知情": ["照片", "西山"]}})
+
+    assert delta.append == {} and delta.remove == {}
+    assert delta.set == {"林": {"知情": ["照片", "西山"]}}
+
+
+def test_diff_of_identical_trees_is_empty() -> None:
+    tree = {"林": {"在场": True, "知情": ["照片"]}}
+    assert diff(tree, dict(tree)).is_empty()
+
+
+def test_diff_does_not_mutate_either_side() -> None:
+    before = {"林": {"知情": ["照片"]}}
+    after = {"林": {"知情": ["照片", "西山"]}}
+    delta = diff(before, after)
+    delta.set["林"]["知情"].append("污染")
+
+    assert after["林"]["知情"] == ["照片", "西山"]

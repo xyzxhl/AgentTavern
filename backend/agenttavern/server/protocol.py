@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from ..models import ControlOverride, Node, SubGoal, TraceEvent
+from ..models import ControlOverride, Node, StateDelta, SubGoal, TraceEvent, Tree
 
 # --------------------------------------------------------------------------
 # 客户端 → 服务端
@@ -98,8 +98,21 @@ class EditNode(BaseModel):
     node_id: str
     outline: str | None = None
     prose: str | None = None
-    state_set: dict[str, Any] | None = None
-    """覆盖该节点 ``state_delta`` 的 ``set`` 部分。"""
+
+    state_delta: StateDelta | None = None
+    """**改指令**：整份替换该节点的增量。
+
+    以前这里只有 `state_set`，只能覆盖 `set` 那一半——于是 D96 补的 `remove`
+    （以及 `append`）从界面根本够不着，"清单要能减"这件事只有模型做得到。
+    """
+
+    state_result: Tree | None = None
+    """**改结果**：这一轮跑完之后**你想要的状态树**，服务端和上一轮求差写回。
+
+    和 `state_delta` 是同一件事的两个视图（D65），只能给一个。收结果而不是让
+    前端自己算差，是为了不破坏「权威是增量」（D48）：换算发生在进门那一刻，
+    落盘的仍然只有增量。
+    """
 
 
 class Regenerate(BaseModel):
@@ -243,6 +256,18 @@ class RunFinished(BaseModel):
     """eval 采样标记。**从不影响运行时行为**（D43/D44），仅供提示。"""
 
 
+class NodeUpdated(BaseModel):
+    """一个节点被用户改过了（D65）。**回传整个节点，不回传"改了什么"。**
+
+    改「结果」那个视图下，落盘的增量是**服务端求差算出来的**——只把用户发来的
+    那棵结果树塞回本地节点，本地的 `state_delta` 就成了旧的，而它才是权威数据
+    （D48）。回传整份是唯一不需要客户端猜的做法。
+    """
+
+    type: Literal["node_updated"] = "node_updated"
+    node: Node
+
+
 class RunFailed(BaseModel):
     type: Literal["run_failed"] = "run_failed"
     reason: str
@@ -348,6 +373,7 @@ ServerMessage = (
     | Trace
     | Question
     | RunFinished
+    | NodeUpdated
     | RunFailed
     | RunInterrupted
     | StateSnapshot

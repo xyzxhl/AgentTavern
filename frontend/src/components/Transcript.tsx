@@ -3,6 +3,7 @@ import Markdown from "react-markdown";
 
 import type { Node } from "../protocol";
 import { useSession } from "../store";
+import { NodeEditor } from "./NodeEditor";
 import { Process, splitAtProse } from "./Process";
 
 /**
@@ -83,6 +84,8 @@ function Turn({
   /** 过程那半反过来：节点里没有它，落地之后照样留着（D166）。 */
   thinking?: import("../store").Thought[];
 }): JSX.Element {
+  const editing = useSession((s) => s.editing);
+
   // **时间线不能在正文这里倒着走**（D167）：状态维护跑在 writer 之后（D143），
   // goal 判定更在 run 末（D28），它们的思考与工具调用因此归到正文**下面**那一块。
   const [beforeEvents, afterEvents] = splitAtProse(events);
@@ -90,10 +93,11 @@ function Turn({
   const post = afterEvents.length > 0 || afterThinking.length > 0;
 
   return (
-    <article className="mb-8">
-      {said && (
+    // `group` 是为了那排操作：**悬停才出现**，读正文的时候它们全是噪音。
+    <article className="group mb-8">
+      {(said || node) && (
         <div className="mb-3 flex items-baseline gap-2">
-          <span className="select-none text-dim">›</span>
+          {said && <span className="select-none text-dim">›</span>}
           <p className="min-w-0 flex-1 whitespace-pre-wrap text-sm text-dim">{said}</p>
           {/* **模拟输入要标出来**（D148）：那一条不是用户打的，是 goal_manager
               写的。不标的话用户会以为自己说过这句话。 */}
@@ -102,6 +106,7 @@ function Turn({
               目标推进
             </span>
           )}
+          {node && <TurnControls node={node} />}
         </div>
       )}
 
@@ -145,6 +150,88 @@ function Turn({
           tail
         />
       )}
+
+      {node && editing === node.id && <NodeEditor node={node} />}
     </article>
+  );
+}
+
+/**
+ * 一轮的操作：`⟨2/3⟩` 切支、`↻` 重生成、`✎` 编辑。**悬停才出现**（D172）。
+ *
+ * 这三样是「回头」这个方向的全部入口。此前后端全齐、界面一个都没有——而
+ * `⟨2/3⟩` 尤其重要：**它是回到历史分叉点的唯一路径**（D147），没有它，
+ * 重生成产生的兄弟节点永远回不去。
+ */
+function TurnControls({ node }: { node: Node }): JSX.Element {
+  const siblings = useSession((s) => s.siblings[node.id ?? ""] ?? []);
+  const path = useSession((s) => s.path);
+  const phase = useSession((s) => s.phase);
+  const switchBranch = useSession((s) => s.switchBranch);
+  const regenerate = useSession((s) => s.regenerate);
+  const edit = useSession((s) => s.edit);
+  const editing = useSession((s) => s.editing);
+
+  const at = siblings.indexOf(node.id ?? "");
+  const behind = path.length - 1 - path.findIndex((n) => n.id === node.id);
+
+  function reroll(): void {
+    // **不是当前叶时，后面那几轮会移出当前路径。** 它们还在（切回来就是了），
+    // 但这件事必须先说——用户按的是"重写这一轮"，看到的却是后面几轮消失了。
+    if (behind > 0 && !confirm(`重新生成这一轮？后面 ${behind} 轮会移出当前路径（还能切回来）。`)) {
+      return;
+    }
+    regenerate(node.id ?? "");
+  }
+
+  return (
+    <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+      {siblings.length > 1 && (
+        <span className="flex items-center gap-0.5 font-mono text-[11px] text-dim">
+          <Tap
+            label="‹"
+            title="上一支"
+            disabled={at <= 0}
+            onClick={() => switchBranch(siblings[at - 1] ?? "")}
+          />
+          {at + 1}/{siblings.length}
+          <Tap
+            label="›"
+            title="下一支"
+            disabled={at >= siblings.length - 1}
+            onClick={() => switchBranch(siblings[at + 1] ?? "")}
+          />
+        </span>
+      )}
+      <Tap label="↻" title="重新生成这一轮" disabled={phase !== "idle"} onClick={reroll} />
+      <Tap
+        label="✎"
+        title="改细纲 / 正文 / 状态"
+        onClick={() => edit(editing === node.id ? null : (node.id ?? null))}
+      />
+    </div>
+  );
+}
+
+function Tap({
+  label,
+  title,
+  onClick,
+  disabled,
+}: {
+  label: string;
+  title: string;
+  onClick: () => void;
+  disabled?: boolean;
+}): JSX.Element {
+  return (
+    <button
+      title={title}
+      onClick={onClick}
+      disabled={disabled}
+      className="rounded px-1 py-0.5 font-mono text-[11px] text-dim transition-colors hover:bg-ink-700 hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-dim"
+    >
+      {label}
+    </button>
   );
 }

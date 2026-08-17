@@ -574,11 +574,193 @@ def test_user_edit_rewrites_node_directly(client_for) -> None:
 
     patched = client.patch(
         f"/sessions/{session_id}/nodes/{node_id}",
-        json={"prose": "门开了。", "state_set": {"地点": "阳台"}},
+        json={"prose": "门开了。", "state_delta": {"set": {"地点": "阳台"}}},
     ).json()
 
     assert patched["prose"] == "门开了。"
     assert client.get(f"/sessions/{session_id}").json()["state"]["地点"] == "阳台"
+
+
+def test_switching_back_to_a_regenerated_sibling_restores_its_state(client_for) -> None:
+    """重生成之后**切回原来那一支**，状态跟着回去（D48）。
+
+    `⟨2/3⟩` 是回到历史分叉点的唯一路径（D147）——切换器要能用，靠的就是这条：
+    切过去之后状态得是那一支的，否则就是"文本对、状态悄悄错"。
+    """
+    llm = ScriptedLLM(
+        *one_run(outline="第一轮。"),
+        *one_run(outline="第二轮。"),
+        *one_run(outline="另一个第二轮。"),
+        state=[one_state("客厅"), one_state("阳台"), one_state("门口")],
+    )
+    client = client_for(llm)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "第一条"}))
+        collect(ws, "run_finished")
+        ws.send_text(json.dumps({"type": "submit", "text": "第二条"}))
+        second = collect(ws, "run_finished")[-1]["node"]["id"]
+
+        ws.send_text(json.dumps({"type": "regenerate", "node_id": second}))
+        third = collect(ws, "run_finished")[-1]["node"]["id"]
+        collect(ws, "state")  # 这一轮自己的快照，读掉
+        assert client.get(f"/sessions/{session_id}").json()["state"]["地点"] == "门口"
+
+        ws.send_text(json.dumps({"type": "switch_branch", "node_id": second}))
+        # 切换的确认里就带着新叶子的状态——前端据此认出"路径整条换过了"。
+        snapshot = collect(ws, "state")[-1]
+
+    assert snapshot["leaf_id"] == second
+    assert snapshot["values"]["地点"] == "阳台"
+
+    detail = client.get(f"/sessions/{session_id}").json()
+    assert [n["id"] for n in detail["path"]][-1] == second
+    assert set(detail["siblings"][second]) == {second, third}, "切回来之后切换器照样在"
+
+
+def test_editing_state_reaches_append_and_remove(client_for) -> None:
+    """**改指令是整份替换增量，不只是 `set`。**
+
+    以前这里是 `node.state_delta.set = ...`，于是 D96 补的 `remove`（以及
+    `append`）从界面根本够不着——"清单要能减"只有模型做得到。而清单要能减这件事
+    正是数据化世界里最先暴露的：消耗品会用完，随从会离队。
+    """
+    client = client_for(happy_llm())
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "我推开门"}))
+        node_id = collect(ws, "run_finished")[-1]["node"]["id"]
+
+    client.patch(
+        f"/sessions/{session_id}/nodes/{node_id}",
+        json={"state_delta": {"set": {"沈": {"随身": ["青锋剑", "灵石"]}}}},
+    )
+    client.patch(
+        f"/sessions/{session_id}/nodes/{node_id}",
+        json={
+            "state_delta": {
+                "set": {"沈": {"随身": ["青锋剑", "灵石"]}},
+                "append": {"沈": {"随身": ["止血符"]}},
+                "remove": {"沈": {"随身": ["灵石"]}},
+            }
+        },
+    )
+
+    state = client.get(f"/sessions/{session_id}").json()["state"]
+    assert state["沈"]["随身"] == ["青锋剑", "止血符"]
+
+
+def test_editing_the_result_is_diffed_back_into_a_delta(client_for) -> None:
+    """「改结果」的落地方式（D65）：收下你想要的状态树，和这一轮**之前**求差。
+
+    换算发生在进门那一刻，落盘的仍然只有增量——「**权威是增量**」（D48）
+    这句话不会因为多了个视图就被破坏。
+    """
+    llm = ScriptedLLM(
+        *one_run(outline="第一轮。"),
+        *one_run(outline="第二轮。"),
+        state=[one_state("客厅"), one_state("阳台")],
+    )
+    client = client_for(llm)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "第一条"}))
+        collect(ws, "run_finished")
+        ws.send_text(json.dumps({"type": "submit", "text": "第二条"}))
+        second = collect(ws, "run_finished")[-1]["node"]["id"]
+
+    # 「改结果」的起点不是侧栏里的当前状态，是**这一轮跑完时**的那一份。
+    at = client.get(f"/sessions/{session_id}/nodes/{second}/state").json()
+    assert at["values"]["地点"] == "阳台" and at["before"]["地点"] == "客厅"
+
+    want = {"地点": "天台", "林": {"在场": True}}
+    patched = client.patch(
+        f"/sessions/{session_id}/nodes/{second}", json={"state_result": want}
+    ).json()
+
+    assert client.get(f"/sessions/{session_id}").json()["state"] == want
+    assert patched["state_delta"]["set"]["地点"] == "天台"
+    assert patched["state_delta"]["set"].get("林") == {"在场": True}
+
+
+def test_the_two_state_views_cannot_both_be_given(client_for) -> None:
+    """一起给就不知道该听谁的。**当场报错而不是挑一个**——"我改了结果，它却按
+    指令存了"是查不出来的那种错。
+    """
+    client = client_for(happy_llm())
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "我推开门"}))
+        node_id = collect(ws, "run_finished")[-1]["node"]["id"]
+
+        res = client.patch(
+            f"/sessions/{session_id}/nodes/{node_id}",
+            json={"state_delta": {"set": {"a": 1}}, "state_result": {"b": 2}},
+        )
+        assert res.status_code == 422
+
+        # WS 那侧不能因此把连接掀了——一条坏消息只是一条坏消息。
+        ws.send_text(
+            json.dumps(
+                {
+                    "type": "edit_node",
+                    "node_id": node_id,
+                    "state_delta": {"set": {"a": 1}},
+                    "state_result": {"b": 2},
+                }
+            )
+        )
+        assert "只能给一个" in collect(ws, "error")[-1]["message"]
+        ws.send_text(json.dumps({"type": "edit_node", "node_id": node_id, "prose": "还活着。"}))
+        # **改完的节点整份回传**：改「结果」时落盘的增量是服务端求差算出来的，
+        # 客户端只把发出去的东西塞回本地节点，那份增量就成了旧的。
+        assert collect(ws, "node_updated")[-1]["node"]["prose"] == "还活着。"
+
+
+def test_editing_an_older_node_keeps_the_state_at_the_leaf(client_for) -> None:
+    """改的是历史某一轮时，侧栏仍然显示**路径末端**的状态。
+
+    发被改节点处的快照会让侧栏往回跳——而用户看的从来是"现在是什么样"。
+    下游照常重放，那是 event-sourced 的正常行为（D48/D49），不是连锁事故。
+    """
+    llm = ScriptedLLM(
+        *one_run(outline="第一轮。"),
+        *one_run(outline="第二轮。"),
+        state=[one_state("客厅"), one_state("阳台")],
+    )
+    client = client_for(llm)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "第一条"}))
+        first = collect(ws, "run_finished")[-1]["node"]["id"]
+        ws.send_text(json.dumps({"type": "submit", "text": "第二条"}))
+        second = collect(ws, "run_finished")[-1]["node"]["id"]
+        collect(ws, "state")  # 这一轮自己的快照，读掉，别和下面那个混起来
+
+        ws.send_text(
+            json.dumps(
+                {
+                    "type": "edit_node",
+                    "node_id": first,
+                    "state_delta": {"set": {"天气": "雨"}},
+                }
+            )
+        )
+        snapshot = collect(ws, "state")[-1]
+
+    assert snapshot["leaf_id"] == second
+    assert snapshot["values"]["地点"] == "阳台", "第二轮的增量照常盖在上面"
+    assert snapshot["values"]["天气"] == "雨", "改的那一笔也在"
 
 
 def test_editing_outline_invalidates_cached_summary(client_for) -> None:
@@ -608,6 +790,41 @@ def test_siblings_endpoint(client_for) -> None:
     branches = client.get(f"/sessions/{session_id}/nodes/{node_id}/siblings").json()
     assert branches["siblings"] == [node_id]
     assert branches["active_index"] == 0
+
+
+def test_session_detail_carries_the_sibling_map(client_for) -> None:
+    """**哪几轮有兄弟随路径一起给**（D46/D147）。
+
+    切换器要显示 `⟨2/3⟩` 就得先知道有没有第 2 支，而一个节点一次 `siblings`
+    请求会让一条 20 轮的路径打 20 个请求——那份数据只在重生成之后才变。
+
+    只列有兄弟的那些：绝大多数节点是独苗，全列一遍等于把路径抄两份。
+    """
+    llm = ScriptedLLM(
+        *one_run(outline="第一轮。"),
+        *one_run(outline="第二轮。"),
+        *one_run(outline="另一个第二轮。"),
+        state=[one_state("客厅"), one_state("阳台"), one_state("门口")],
+    )
+    client = client_for(llm)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "第一条"}))
+        first = collect(ws, "run_finished")[-1]["node"]["id"]
+        ws.send_text(json.dumps({"type": "submit", "text": "第二条"}))
+        second = collect(ws, "run_finished")[-1]["node"]["id"]
+
+        assert client.get(f"/sessions/{session_id}").json()["siblings"] == {}, "都是独苗"
+
+        ws.send_text(json.dumps({"type": "regenerate", "node_id": second}))
+        third = collect(ws, "run_finished")[-1]["node"]["id"]
+
+    detail = client.get(f"/sessions/{session_id}").json()
+    assert list(detail["siblings"]) == [third], "只有当前路径上有兄弟的那一轮"
+    assert set(detail["siblings"][third]) == {second, third}
+    assert first not in detail["siblings"]
 
 
 # -- goal 驱动的自动续跑 -------------------------------------------------------
@@ -1639,7 +1856,7 @@ def test_a_hand_edit_lands_in_the_trace(client_for) -> None:
 
     client.patch(
         f"/sessions/{session_id}/nodes/{node_id}",
-        json={"prose": "我自己改的这一句。", "state_set": {"地点": "改过了"}},
+        json={"prose": "我自己改的这一句。", "state_delta": {"set": {"地点": "改过了"}}},
     )
 
     edits = [
