@@ -18,16 +18,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from ..models import (
-    Capabilities,
-    ControlDimensions,
     EntryKind,
     Goal,
-    ModelAuthority,
     Session,
     SessionMeta,
     WorldbookEntry,
     WorldbookMode,
 )
+from ..prompting import PromptSetup
 
 
 @dataclass(frozen=True)
@@ -45,6 +43,14 @@ class Scenario:
     """按顺序喂给同一个 session 的多轮输入。**每一项是独立的一轮**（D40）。"""
 
     note: str = ""
+
+    prompts: PromptSetup = field(default_factory=PromptSetup)
+    """这个场景要把哪几档提示词换掉（D174）。
+
+    以前是 `session.control` / `session.capabilities`——那两个类整体上调到了
+    提示词层，所以场景改的也是提示词。**改的是一份副本**（`prompts_as`），
+    跑完不在仓库里留痕。
+    """
 
     segments: list[int] = field(default_factory=list)
     """预期的段落切分：每一项是这一段占几轮，累加应等于 ``len(inputs)``。
@@ -89,8 +95,6 @@ XIHUAN_TONE = _tone("低魔西幻，边境小镇。冷硬，务实，魔法昂�
 def _noir_session() -> Session:
     return Session(
         meta=SessionMeta(title="回归·悬疑"),
-        control=ControlDimensions(prose_style="jishi", pov="third"),
-        capabilities=Capabilities(trace=True),
     )
 
 
@@ -154,6 +158,7 @@ NOIR_WORLDBOOK = [
 
 NOIR = Scenario(
     name="noir",
+    prompts=PromptSetup(choices={"writer": {"prose_style": "jishi", "pov": "third"}}),
     make_session=_noir_session,
     worldbook=NOIR_WORLDBOOK,
     world_name="回归·悬疑",
@@ -202,6 +207,7 @@ def _noir_goal_session() -> Session:
 
 NOIR_GOAL = Scenario(
     name="noir_goal",
+    prompts=PromptSetup(choices={"writer": {"prose_style": "jishi", "pov": "third"}}),
     make_session=_noir_goal_session,
     worldbook=NOIR_WORLDBOOK,
     world_name="回归·悬疑",
@@ -254,6 +260,7 @@ def _noir_impossible_session() -> Session:
 
 NOIR_IMPOSSIBLE = Scenario(
     name="noir_impossible",
+    prompts=PromptSetup(choices={"writer": {"prose_style": "jishi", "pov": "third"}}),
     make_session=_noir_impossible_session,
     worldbook=[*NOIR_WORLDBOOK, PING],
     world_name="回归·悬疑",
@@ -270,8 +277,6 @@ NOIR_IMPOSSIBLE = Scenario(
 def _data_session() -> Session:
     return Session(
         meta=SessionMeta(title="回归·数据化"),
-        control=ControlDimensions(prose_style="jishi", pov="third"),
-        capabilities=Capabilities(trace=True),
     )
 
 
@@ -342,6 +347,7 @@ DATA_WORLDBOOK = [
 
 DATA = Scenario(
     name="data",
+    prompts=PromptSetup(choices={"writer": {"prose_style": "jishi", "pov": "third"}}),
     make_session=_data_session,
     worldbook=DATA_WORLDBOOK,
     world_name="回归·数据化",
@@ -392,12 +398,20 @@ def _long_session() -> Session:
     """
     session = _noir_session()
     session.meta.title = "回归·长会话"
-    session.capabilities.history_search = True
     return session
 
 
 LONG = Scenario(
     name="noir_long",
+    prompts=PromptSetup(
+        choices={"writer": {"prose_style": "jishi", "pov": "third"}},
+        # **必须显式打开检索。** 它默认关着，关着时 `history_search` /
+        # `history_read` 根本不注册。第一次跑这个场景时忘了开——于是
+        # 「12 轮里检索工具一次都没被调用」这个观察什么也说明不了：
+        # **工具当时不存在**。这是一类很值钱的错误：测量对象没有被启用，
+        # 而结果看起来像是一个发现。
+        tools={"director": {"history_search": True}},
+    ),
     make_session=_long_session,
     worldbook=NOIR_WORLDBOOK,
     world_name="回归·悬疑",
@@ -444,12 +458,15 @@ LONG = Scenario(
 def _chapters_session() -> Session:
     session = _noir_session()
     session.meta.title = "回归·多段"
-    session.capabilities.history_search = True
     return session
 
 
 CHAPTERS = Scenario(
     name="chapters",
+    prompts=PromptSetup(
+        choices={"writer": {"prose_style": "jishi", "pov": "third"}},
+        tools={"director": {"history_search": True}},
+    ),
     make_session=_chapters_session,
     worldbook=NOIR_WORLDBOOK,
     world_name="回归·悬疑",
@@ -494,8 +511,6 @@ CHAPTERS = Scenario(
 def _pulp_session() -> Session:
     return Session(
         meta=SessionMeta(title="回归·网文"),
-        control=ControlDimensions(prose_style="wangwen", pov="third"),
-        capabilities=Capabilities(trace=True),
     )
 
 
@@ -563,6 +578,7 @@ PULP_WORLDBOOK = [
 
 PULP = Scenario(
     name="pulp",
+    prompts=PromptSetup(choices={"writer": {"prose_style": "wangwen", "pov": "third"}}),
     make_session=_pulp_session,
     worldbook=PULP_WORLDBOOK,
     world_name="回归·网文",
@@ -589,8 +605,6 @@ PULP = Scenario(
 def _gufeng_session() -> Session:
     return Session(
         meta=SessionMeta(title="回归·古风"),
-        control=ControlDimensions(prose_style="gufeng", pov="third"),
-        capabilities=Capabilities(trace=True),
     )
 
 
@@ -643,6 +657,7 @@ GUFENG_WORLDBOOK = [
 
 GUFENG = Scenario(
     name="gufeng",
+    prompts=PromptSetup(choices={"writer": {"prose_style": "gufeng", "pov": "third"}}),
     make_session=_gufeng_session,
     worldbook=GUFENG_WORLDBOOK,
     world_name="回归·古风",
@@ -668,8 +683,6 @@ GUFENG = Scenario(
 def _xihuan_session() -> Session:
     return Session(
         meta=SessionMeta(title="回归·西幻"),
-        control=ControlDimensions(prose_style="jishi", pov="third"),
-        capabilities=Capabilities(trace=True),
     )
 
 
@@ -721,6 +734,7 @@ XIHUAN_WORLDBOOK = [
 
 XIHUAN = Scenario(
     name="xihuan",
+    prompts=PromptSetup(choices={"writer": {"prose_style": "jishi", "pov": "third"}}),
     make_session=_xihuan_session,
     worldbook=XIHUAN_WORLDBOOK,
     world_name="回归·西幻",
@@ -756,15 +770,19 @@ XIHUAN = Scenario(
 def _forks_session() -> Session:
     session = _noir_session()
     session.meta.title = "回归·岔路"
-    # **控制权在用户这边**：这一档才会让它遇岔就问。
-    session.control = ControlDimensions(
-        prose_style="jishi", pov="third", model_authority=ModelAuthority.LOW
-    )
     return session
 
 
 FORKS = Scenario(
     name="forks",
+    prompts=PromptSetup(
+        choices={
+            "writer": {"prose_style": "jishi", "pov": "third"},
+        },
+        # **控制权在用户这边**：`ask_question` 的描述分三档，`low` 那档
+        # 才会让它遇岔就问（D140②）。
+        tools={},
+    ),
     make_session=_forks_session,
     worldbook=NOIR_WORLDBOOK,
     world_name="回归·悬疑",

@@ -2,16 +2,15 @@
 
 from pathlib import Path
 
-from conftest import ScriptedLLM, text, tool, tools
+from conftest import ScriptedLLM, option, text, tool, tools
 
 from agenttavern.bench import SCENARIOS, Attribution, Variant, Verdict, grade_turn, run_scenario
 from agenttavern.bench.grader import parse
 from agenttavern.bench.report import attribution_table, render
 from agenttavern.bench.scenarios import Scenario
 from agenttavern.config import Settings
-from agenttavern.models import Capabilities, InputSource, StateDelta
+from agenttavern.models import InputSource, StateDelta
 from agenttavern.models.state import paths_of, walk
-from agenttavern.prompting import choice
 
 
 def one_run(outline: str = "她推开门。", prose: str = "门轴响了。"):
@@ -66,10 +65,11 @@ def test_scenarios_span_two_ends_of_prose_style() -> None:
     因此回归集里必须有一个文风反差最大的场景。它同时是"表达自然、
     达到主流网文水平"这条目标的量尺：拿克制文学向的样本去量网文水平是量错了尺子。
     """
-    # `prose_style` 现在是**档位名**，档位全文在 writer.yaml 里（D136）；
-    # 而且它归控制维度不归 meta——文风是读者偏好，不是世界属性。
-    styles = {name: s.make_session().control.prose_style for name, s in SCENARIOS.items()}
-    bodies = {name: choice("writer", "prose_style", value) for name, value in styles.items()}
+    # `prose_style` 是**档位名**，档位全文在 writer.yaml 里（D136）；而**当前选
+    # 哪一档也在那儿**（D173）。场景要换文风就带一份 `PromptSetup`——它改的是
+    # 提示词副本，不是 session（那上面已经没有配置了，D174）。
+    styles = {name: s.prompts.choices["writer"]["prose_style"] for name, s in SCENARIOS.items()}
+    bodies = {name: option("writer", "prose_style", value) for name, value in styles.items()}
 
     # 断言的是**两极真的对立**，不是某一档的措辞：档位正文随时会改，
     # 「回归集里必须有反差最大的一对」才是不变量。
@@ -141,8 +141,9 @@ def test_a_scenario_is_long_enough_to_trigger_progressive_disclosure() -> None:
 
     # **被测的能力必须真的打开。** `history_search` 默认关闭，关闭时两个工具
     # 都不注册——第一次跑这个场景时忘了开，于是"12 轮一次都没调用"
-    # 这个观察什么也说明不了：工具当时根本不存在。
-    assert long.make_session().capabilities.history_search is True
+    # 这个观察什么也说明不了：工具当时根本不存在。开关现在在提示词里（D174），
+    # 所以场景把它写进自己那份 `PromptSetup`。
+    assert long.prompts.tools["director"]["history_search"] is True
 
 
 # -- runner ------------------------------------------------------------------
@@ -195,15 +196,28 @@ async def test_turns_are_chained_so_state_accumulates(tmp_path: Path) -> None:
     assert result.turns[1].state_before["陈屿"]["在场"] is True
 
 
-def test_variant_only_touches_session_level_config() -> None:
-    """变体只改 session 级配置，不改题材与输入——否则比的不是同一件事（P19）。"""
-    variant = Variant(name="no-state", capabilities=Capabilities(state=False, trace=True))
-    session = SCENARIOS["noir"].make_session()
-    applied = variant.apply(session)
+def test_a_variant_layers_on_top_of_the_scenario() -> None:
+    """变体只改配置，不改题材与输入——否则比的不是同一件事（P19）。
 
-    assert applied.capabilities.state is False
-    assert applied.meta == session.meta
-    assert applied.control == session.control
+    **它改的是提示词，不是 session**（D174）：`capabilities` / `control` 整体
+    上调到了提示词层之后，往 session 上写配置这条路失去了全部着力点。补法是
+    换一份 YAML 副本（`prompts_as`），不是开一个 `overrides` 后门——一个
+    "只有程序能用"的第二取值入口迟早会有第二个调用者。
+
+    **场景先定，变体再改**：变体提到的那几档盖掉场景的，没提到的沿用——
+    换 `history_search` 不该顺手把文风也换了。
+    """
+    from agenttavern.prompting import PromptSetup
+
+    scenario = SCENARIOS["noir"]
+    variant = Variant(name="no-state", prompts=PromptSetup(agents={"state_manager": False}))
+    merged = variant.over(scenario.prompts)
+
+    assert merged.agents == {"state_manager": False}
+    assert merged.choices["writer"]["prose_style"] == "jishi", "场景那一档要留着"
+
+    # 空变体 = 场景原样。
+    assert Variant(name="baseline").over(scenario.prompts).choices == scenario.prompts.choices
 
 
 # -- grader ------------------------------------------------------------------

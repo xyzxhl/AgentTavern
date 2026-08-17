@@ -22,6 +22,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from ..models import Goal, GoalOutcome, GoalPlan, GoalRun, SubGoal
+from ..prompting import tool_description
 from .base import Tool, ToolResult, error
 
 
@@ -126,8 +127,14 @@ async def _finish(ctx: GoalContext, params: FinishParams) -> ToolResult:
     )
 
 
-def _tool(name: str, description: str, params: type[BaseModel], handler: Any) -> Tool[Any]:
-    return Tool(name=name, description=description, params_type=params, handler=handler)
+def _tool(name: str, params: type[BaseModel], handler: Any) -> Tool[Any]:
+    """**描述从 `goal_manager.yaml` 的 `tools` 里取**（D173）——它是模型读到的字。"""
+    return Tool(
+        name=name,
+        description=tool_description("goal_manager", name),
+        params_type=params,
+        handler=handler,
+    )
 
 
 def goal_tools() -> list[Tool[Any]]:
@@ -139,17 +146,10 @@ def goal_tools() -> list[Tool[Any]]:
     「不进行实质性引导」也是一种合法的选择。
     """
     return [
-        _tool(
-            "plan", "建立或重建中间状态。**重建会清空进度**，全部从未成立算起。", PlanParams, _plan
-        ),
-        _tool("check", "更新中间状态的成立情况。只观察，不干预。", CheckParams, _check),
-        _tool(
-            "steer",
-            "填写操控剧情的输入",
-            SteerParams,
-            _steer,
-        ),
-        _tool("finish", "结束这个目标，交回控制权。", FinishParams, _finish),
+        _tool("plan", PlanParams, _plan),
+        _tool("check", CheckParams, _check),
+        _tool("steer", SteerParams, _steer),
+        _tool("finish", FinishParams, _finish),
     ]
 
 

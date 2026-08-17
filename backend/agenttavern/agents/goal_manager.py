@@ -41,14 +41,13 @@ from ..config import LIMITS
 from ..llm import LLMGateway, Message, OnDelta, Role
 from ..models import (
     Actor,
-    ExpansionDensity,
     Goal,
     GoalRun,
     InputSource,
     Node,
     TraceEventType,
 )
-from ..prompting import assemble, titled
+from ..prompting import assemble, rendering
 from ..tools import GoalContext, ToolRegistry
 from ..tracing import Tracer
 from .replay import interjections_of
@@ -85,9 +84,7 @@ def render_before(nodes: list[Node]) -> str:
     return "\n\n".join(f"{i + 1}. {n.summary_or_head()}" for i, n in enumerate(nodes))
 
 
-def _prefix(
-    user_character: str, goal: Goal, density: ExpansionDensity, before: list[Node]
-) -> list[Message]:
+def _prefix(user_character: str, goal: Goal, before: list[Node]) -> list[Message]:
     """静态前缀：任务说明 + 用户扮演谁 + 目标 + 节奏 + goal 之前的剧情。
 
     **整个 goal 生命周期不变**——"之前"那段不会再长，goal 期间的轮次逐条追加在后面。
@@ -108,14 +105,15 @@ def _prefix(
             "goal": goal.description,
             "history_outline": render_before(before),
         },
-        options={"pace": density.value},
     ).messages
 
 
-_SOURCE_LABEL = {
-    InputSource.USER: "用户自己的输入",
-    InputSource.SIMULATED: "我写的输入",
+_SOURCE_KEY = {
+    InputSource.USER: "turn_user",
+    InputSource.SIMULATED: "turn_simulated",
 }
+"""这一句的措辞在 `goal_manager.yaml` 的 `rendering` 里（D173）——它是模型每轮
+都会读到的字。这里只把来源映射到那一条的名字。"""
 
 
 def turn_record(node: Node, index: int, interjections: list[str]) -> Message:
@@ -132,17 +130,18 @@ def turn_record(node: Node, index: int, interjections: list[str]) -> Message:
     said = node.user_input
     parts = []
     if said and said.text:
-        parts.append(f"〔{_SOURCE_LABEL[said.source]}：{said.text}〕")
+        parts.append(rendering("goal_manager", _SOURCE_KEY[said.source], text=said.text))
     else:
-        parts.append("〔没有输入，直接推进〕")
+        parts.append(rendering("goal_manager", "turn_silent"))
     for word in interjections:
-        parts.append(f"〔用户插话：{word}〕")
+        parts.append(rendering("goal_manager", "turn_interjection", text=word))
     # **正文没写成时不要回退到细纲**（D151）。回退看起来只是"降级用一份更粗的
     # 记录"，实际上把一个失败悄悄补齐了：那一轮什么都没写出来，而 goal_manager
     # 读到一段像模像样的剧情，会照着它判某个中间状态已经成立。
     # 说出来，让它当成一次没有产出的轮次处理。
     parts.append(node.prose or "（这一轮没有写出正文。）")
-    return Message(role=Role.USER, content=titled(f"第 {index} 轮", "\n".join(parts)))
+    body = rendering("goal_manager", "turn", index=index, body="\n".join(parts))
+    return Message(role=Role.USER, content=body)
 
 
 def plan_snapshot(run: GoalRun) -> Message | None:
@@ -153,7 +152,8 @@ def plan_snapshot(run: GoalRun) -> Message | None:
     """
     if run.plan is None or not run.plan.subgoals:
         return None
-    return Message(role=Role.USER, content=titled("当前的阶段计划与进度", run.plan.render()))
+    body = rendering("goal_manager", "plan_snapshot", body=run.plan.render())
+    return Message(role=Role.USER, content=body)
 
 
 def sync_conversation(
@@ -161,8 +161,6 @@ def sync_conversation(
     goal: Goal,
     run: GoalRun,
     path: list[Node],
-    *,
-    density: ExpansionDensity = ExpansionDensity.NORMAL,
 ) -> None:
     """把对话补到当前路径的末端。**能续就续，续不上就整份重建。**
 
@@ -194,7 +192,7 @@ def sync_conversation(
     start = during_ids.index(seen) + 1 if resumable and not at_cut and seen else 0
 
     if not resumable:
-        run.conversation = _prefix(user_character, goal, density, before)
+        run.conversation = _prefix(user_character, goal, before)
         snapshot = plan_snapshot(run)
         if snapshot is not None:
             run.conversation.append(snapshot)
@@ -212,7 +210,6 @@ async def advance_goal(
     goal: Goal,
     run: GoalRun,
     *,
-    density: ExpansionDensity = ExpansionDensity.NORMAL,
     model: str | None = None,
     user_id: str | None = None,
     max_rounds: int = MAX_ROUNDS,

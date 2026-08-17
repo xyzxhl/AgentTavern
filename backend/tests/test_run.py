@@ -5,14 +5,10 @@ import json
 from pathlib import Path
 
 import pytest
-from conftest import STATE_MARK, CancelWriter, ScriptedLLM, text, tool
+from conftest import STATE_MARK, CancelWriter, ScriptedLLM, option, text, tool, using
 
 from agenttavern.models import (
-    Capabilities,
-    ControlOverride,
     EntryKind,
-    ExpansionDensity,
-    InputHandling,
     RunStage,
     RunStatus,
     Session,
@@ -20,7 +16,6 @@ from agenttavern.models import (
     WorldbookEntry,
 )
 from agenttavern.orchestration import execute_run
-from agenttavern.prompting import choice
 from agenttavern.storage import Store
 from agenttavern.tools import ToolRegistry
 from agenttavern.tracing import Tracer
@@ -42,26 +37,22 @@ def setup(tmp_path: Path, llm: ScriptedLLM, session: Session | None = None):
 async def test_the_run_hands_the_control_dimensions_to_the_tool_face(tmp_path: Path) -> None:
     """**控制维度必须传到工具面**（D155）。
 
-    `ask_question` 的调用积极性写在它自己的工具描述里，按 `model_authority` 分三档
-    （D39/D58）。`execute_run` 组装工具面时漏掉了 `control`，于是不管控制维度调成
-    什么，模型读到的永远是 `medium` 那档——`low` 档「遇到任何值得由用户决定的分岔
-    都调用它征询」从来没真正发出去过。
+    `ask_question` 的调用积极性写在它自己的工具描述里，三档是那条描述自己的
+    `choice`（D39/D58/D140②/D173）。`execute_run` 组装工具面时曾经漏掉过档位，
+    于是不管调成什么，模型读到的永远是 `medium` 那档——`low` 档「遇到任何值得
+    由用户决定的分岔都调用它征询」从来没真正发出去过。
 
     **原来那条测试测不出这个**：它直接调 `build_tools` 并显式传档位，验的是机制；
     漏的是接线。所以这条从 `execute_run` 进去，断言真正发给模型的那份 spec。
     """
-    from agenttavern.models import ControlDimensions, ModelAuthority, SessionMeta
-
-    session = Session(
-        meta=SessionMeta(),
-        control=ControlDimensions(model_authority=ModelAuthority.LOW),
-        capabilities=Capabilities(ask_question=True),
-    )
     llm = happy_llm()
-    repo = Store(tmp_path).create_session(session)
+    repo = Store(tmp_path).create_session(Session())
 
     # `registry=None`，走 `execute_run` 自己那条组装路径——接线就在那里。
-    await execute_run(repo, repo.load_session(), llm.gateway(), user_input=UserInput(text="我推门"))
+    with using(tool_choices={"director": {"ask_question": "low"}}):
+        await execute_run(
+            repo, repo.load_session(), llm.gateway(), user_input=UserInput(text="我推门")
+        )
 
     specs = next(r["tools"] for r in llm.requests if r.get("tools"))
     ask = next(s for s in specs if s["function"]["name"] == "ask_question")
@@ -158,33 +149,28 @@ async def test_deviation_report_is_extracted(tmp_path: Path) -> None:
     assert any("偏离" in n for n in outcome.notes)
 
 
-async def test_control_override_applies_for_this_run_only(tmp_path: Path) -> None:
-    """单轮覆盖：未指定的项沿用常驻设置（D45）。"""
+async def test_the_current_choice_lives_in_the_yaml_not_the_session(tmp_path: Path) -> None:
+    """**单轮覆盖已经删掉**（D174，推翻 D45）：取值只剩一处，没有被覆盖的对象了。
+
+    取而代之的是这条：换一档就是改 `director.yaml` 里那个 `choice` 的
+    `selected`，而它必须真的发到模型手上。
+
+    位置也一起钉住：控制维度**每轮都可能变**，所以它排在前情之后、跟这一轮的
+    输入在一起，不进跨轮不变的那一段——那段是持续对话的缓存前缀，放会变的东西
+    进去，前缀每轮都失效（D114）。
+    """
     llm = happy_llm()
     repo, session, gw, reg = setup(tmp_path, llm)
 
-    outcome = await execute_run(
-        repo,
-        session,
-        gw,
-        reg,
-        user_input=UserInput(text="我推开门"),
-        control_override=ControlOverride(input_handling=InputHandling.NARRATE_ONLY),
-    )
+    with using(choices={"director": {"narration_and_advancement": "narrate_only"}}):
+        await execute_run(
+            repo, session, gw, ToolRegistry.for_session(), user_input=UserInput(text="我推开门")
+        )
+        directive = option("director", "narration_and_advancement", "narrate_only")
 
-    assert outcome.node.control.input_handling is InputHandling.NARRATE_ONLY
-    assert outcome.node.control.expansion_density is ExpansionDensity.NORMAL
-    assert repo.load_session().control.input_handling is InputHandling.NARRATE_AND_ADVANCE
-    # 控制维度**每轮都可能变**，所以它排在前情之后、跟这一轮的输入在一起，
-    # 不进跨轮不变的那一段——那段是持续对话的缓存前缀，放会变的东西进去，
-    # 前缀每轮都失效（D114）。
-    directive = choice("director", "narration_and_advancement", "narrate_only")
     sent = llm.messages_of(0)
     assert any(directive in (m["content"] or "") for m in sent)
     assert all(m["role"] != "system" for m in sent if directive in (m["content"] or ""))
-
-
-# -- 打断：哪一段被掐掉，哪一段就作废（D142） ----------------------------------
 
 
 async def test_interrupt_during_director_lands_no_node(tmp_path: Path) -> None:
@@ -520,20 +506,37 @@ async def test_every_segment_goes_through_the_summarizer(tmp_path: Path) -> None
 async def test_manual_close_does_not_ask_the_model(tmp_path: Path) -> None:
     """手动归段是第三条支路：**用户说这一段收了，就是收了**，不再追问。
 
-    这条路在 MANUAL 模式下是唯一的归段方式；AUTO 下也保留——自动追问
-    判早了或判晚了，用户随时可以自己断。
+    归段追问关掉时它是唯一的归段方式，开着时也保留——自动追问判早了或判晚了，
+    用户随时可以自己断。
+
+    **开关是 director 的 `specials.segment.enabled`**（D174）：它从来就是
+    「这条追问发不发」，不是一条独立的能力。
     """
-    from agenttavern.models import Capabilities, SummarizeMode
+    import yaml
+
     from agenttavern.orchestration import close_segment
+    from agenttavern.prompting import assembler
 
     runs = 4
-    session = Session(capabilities=Capabilities(summarize=SummarizeMode.MANUAL))
     llm = _script(runs, "她推开门。", text("四轮压成这一句。"), followup=False)
-    repo, session, gw, reg = setup(tmp_path, llm, session)
+    repo, session, gw, reg = setup(tmp_path, llm)
 
-    parent = await _drive(repo, session, gw, reg, runs)
-    # MANUAL 下不追问，所以什么也没归段
-    assert all(n.outline_summary is None for n in repo.path_to(parent))
+    room = tmp_path / "prompts"
+    import shutil
+
+    shutil.copytree(assembler._DIR, room, ignore=shutil.ignore_patterns("__pycache__"))
+    doc = yaml.safe_load((room / "director.yaml").read_text(encoding="utf-8"))
+    doc["specials"]["segment"]["enabled"] = False
+    (room / "director.yaml").write_text(
+        yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+    assembler.use_dir(room)
+    try:
+        parent = await _drive(repo, session, gw, reg, runs)
+        # 关掉之后不追问，所以什么也没归段
+        assert all(n.outline_summary is None for n in repo.path_to(parent))
+    finally:
+        assembler.use_dir(None)
 
     end = await close_segment(repo, gw, parent, Tracer(repo, parent), forced=True)
     assert end is not None
@@ -656,8 +659,11 @@ async def test_trace_covers_the_whole_run(tmp_path: Path) -> None:
     记录从用户输入到最终输出之间发生的一切。
     """
     llm = happy_llm()
-    repo, session, gw, reg = setup(tmp_path, llm, Session(capabilities=Capabilities(trace=True)))
-    outcome = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
+    repo, session, gw, reg = setup(tmp_path, llm)
+    # **落不落盘是服务级的**（`Settings.trace`，D174）：运维，跟模型完全无关。
+    outcome = await execute_run(
+        repo, session, gw, reg, user_input=UserInput(text="我推开门"), persist_trace=True
+    )
 
     events = repo.read_trace(outcome.node.id)
     labels = [e.label for e in events]
@@ -682,7 +688,7 @@ async def test_going_back_to_the_director_starts_the_round_count_over(tmp_path: 
     repo, session, gw, reg = setup(
         tmp_path,
         CancelWriter(tool("submit_outline", outline="她推开门。")),
-        Session(capabilities=Capabilities(trace=True)),
+        Session(),
     )
     with pytest.raises(asyncio.CancelledError):
         await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
@@ -697,6 +703,7 @@ async def test_going_back_to_the_director_starts_the_round_count_over(tmp_path: 
         resume.gateway(),
         reg,
         user_input=UserInput(text="等等，她其实没推开"),
+        persist_trace=True,
     )
     assert outcome.node.outline == "她停在门口。"
 

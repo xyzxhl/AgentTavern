@@ -28,19 +28,31 @@
 
 理由与 D74 同源：**不同故事需要的能力差别很大，不该预设所有故事都一样。**
 
-| 开关 | 默认 | 关闭时 |
-|---|---|---|
-| `state` | 开 | **state_manager 整个不跑**，`state_query` / `state_write` 不注册（D143）。~~E0 契约随之失效（D80）~~——E0 本身已被 D143 删除，这条连带没有对象了 |
-| `history_search` | 关 | **禁止检索**：只有近期全文 + 更早的长期总结，`history.*` 不注册 |
-| `summarize` | `manual` | 摘要由用户维护，`summarize` 不注册；`auto` 时模型自行压缩并缓存 |
-| `ask_question` | 开 | 模型只能自己拿主意。**注意这与控制权等级不同**：等级调节积极性，这里是有没有这个动作 |
-| `trace` | **关** | 见下 |
+**开关都住在提示词 YAML 里**（D174）——它们从来不是独立的配置，是**某个工具、
+某条提示词、某段 context 的属性**，而那些东西本来就在那份文件里。
+
+| 开关 | 住在哪 | 默认 | 关闭时 |
+|---|---|---|---|
+| 状态维护 | `state_manager.yaml` 顶上的 `enabled` | 开 | **这个 agent 整个不跑**，`state_query` / `state_write` 不注册，director 也不再收到状态那一节（D143）。~~E0 契约随之失效（D80）~~——E0 本身已被 D143 删除，这条连带没有对象了 |
+| 状态按需展开 | 两侧各一个 `tools.state_query.enabled` | 开 | state 每轮全量注入且长值不截断（D115）。**两侧各有各的开关**：同一个工具在 director 和 state_manager 手上是两条描述、两个开关 |
+| 检索 | `director.yaml` 的 `tools.history_search.enabled` | **关** | 只有近期全文 + 更早的长期总结，`history.*` 不注册 |
+| 归段追问 | `director.yaml` 的 `specials.segment.enabled` | 开 | 不再追问模型这一段收没收；用户仍可手动归段（D112 的第三条支路） |
+| 摘要压缩 | `director.yaml` 的 `tools.summarize.enabled` | 开 | `summarize` 不注册 |
+| 空回催促 | `director.yaml` 的 `specials.nudge.enabled` | 开 | 模型空手回来这一轮就算完 |
+| 提问 | `director.yaml` 的 `tools.ask_question.enabled` | 开 | 模型只能自己拿主意。**注意这与控制权等级不同**：等级调节积极性（它是那条描述自己的 `choice`），这里是有没有这个动作 |
+| 上文 / 示范给几轮 | 对应那条 `context` 上的 `runs` | 3 / 3 | 那不是开关是参数——**它是那段 context 的属性** |
+
+**两条不在这里**：`stream`（关于交付，不关于能力）与 `trace`（运维）归**服务**
+（`Settings`，D174/D178）——开关它们不改变模型收到什么。
 
 **worldinfo 的开关是数据驱动的**：每个条目有 `always`（全量注入上下文）或 `on_demand`（只进索引、按需展开）两种模式。**全部条目都是 `always` 时，worldinfo 工具不注册**——没有东西可展开，留着只是白占体量。
 
 ### trace 是开发者模式
 
 trace 服务于 eval，**不是产品功能，默认关闭**。它以 **node 为单位**——一个 run 一个文件，记录从用户输入到最终输出之间发生的一切。
+
+**它在 `Settings` 里，不在提示词层**（D174）：落不落盘跟模型收到什么完全无关，
+那是运维。开发者模式（同样服务级，D156）开着时强制落盘。
 
 关闭时事件仍会推给 UI（「呈现 agent 工作过程」依赖它），**只是不落盘**。这正是 D25 要求 trace 与 UI 呈现分两层的好处：两者可以独立开关。
 

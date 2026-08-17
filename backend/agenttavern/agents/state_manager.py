@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from ..config import LIMITS
 from ..llm import Message, Role
 from ..models import Actor, StateDelta, TraceEventType
-from ..prompting import state_manager_prompt
+from ..prompting import state_manager_prompt, state_recent_runs
 from ..tools import RunContext, ToolRegistry
 from ..tracing import Tracer
 
@@ -73,7 +73,7 @@ async def run_state_manager(
     节点是原子的（D48/D56）。
     """
     path = ctx.repo.path_to(ctx.parent_id) if ctx.parent_id else []
-    window = ctx.capabilities.state_recent_runs
+    window = state_recent_runs()
     recent = path[-window:] if window else []
     messages = state_manager_prompt(
         # 本 run 开始时的状态。loop 中途写下的增量由 `state_query` 反映
@@ -82,7 +82,6 @@ async def run_state_manager(
         recent=recent,
         outline=outline,
         prose=prose,
-        capabilities=ctx.capabilities,
     ).messages
 
     tracer.emit(

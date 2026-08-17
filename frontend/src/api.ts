@@ -29,8 +29,41 @@ export interface SessionCard {
 export interface ServerMeta {
   developer: boolean;
   model: string;
-  /** 各控制维度有哪些档。**从提示词 YAML 现读**，前端不写死一份。 */
-  options: { prose_style: string[]; pov: string[] };
+  /** 边生成边推。**服务级**（D174）：关于交付，不关于能力，所以它没跟着配置
+   * 一起上调到提示词层。在 `.env` 里定，运行时只读。 */
+  stream: boolean;
+}
+
+/** agent 列表里的一条。数字只为让列表有点信息量，编辑要进详情。 */
+export interface AgentCard {
+  name: string;
+  enabled: boolean;
+  sections: number;
+  tools: number;
+  specials: number;
+}
+
+/** 一份 agent 配置，加上**由 Python 生成的参数 schema**（只读）。
+ *
+ * 参数不搬进 YAML 是 D140 那条担忧的落地方式：「描述跟参数是同一件事，拆开
+ * 必然对不上」——那个风险是真的，所以让它们**并排显示**，漂移摆在人眼前。
+ */
+export interface AgentDoc {
+  name: string;
+  data: Record<string, unknown>;
+  params: Record<string, { properties?: Record<string, { description?: string; type?: string }> }>;
+}
+
+/** 一条提示词条目。**类型是显式字段**（D173）——拖动排序要先读出它是什么。 */
+export interface Section {
+  type: "text" | "context" | "choice";
+  role?: string;
+  body?: string;
+  source?: string;
+  name?: string;
+  selected?: string;
+  options?: Record<string, string>;
+  [k: string]: unknown;
 }
 
 async function json<T>(input: string, init?: RequestInit): Promise<T> {
@@ -110,6 +143,26 @@ export const api = {
     json<WorldbookEntry>(`/worldbooks/${id}/entries`, { method: "PUT", body: JSON.stringify(entry) }),
   deleteEntry: (id: string, entryId: string) =>
     json<{ deleted: string }>(`/worldbooks/${id}/entries/${entryId}`, { method: "DELETE" }),
+
+  /** 用户手动归段（D112 的第三条支路）。**用户说这一段收了，就是收了。** */
+  closeSegment: (id: string) =>
+    json<{ closed: boolean; reason?: string; end?: string; span?: number }>(
+      `/sessions/${id}/close-segment`,
+      { method: "POST" },
+    ),
+
+  // -- agent 管理（D173）----------------------------------------------------
+  //
+  // **一份配置 = 一个 agent 收到的全部文字**：`sections`（消息串）、`tools`
+  // （工具描述）、`specials`（运行时另外追加的整条消息）、`rendering`（嵌在
+  // 渲染里的短句）、`enabled`（这个 agent 跑不跑）。
+  //
+  // 原样进原样出——前端不认识里面的结构，只按三类条目画界面。
+  listAgents: () => json<AgentCard[]>("/agents"),
+  getAgent: (name: string) => json<AgentDoc>(`/agents/${name}`),
+  /** 保存。**服务端先试装配再写盘**——装不出来回 422，正文里说是哪一节坏了。 */
+  putAgent: (name: string, data: Record<string, unknown>) =>
+    json<AgentDoc>(`/agents/${name}`, { method: "PUT", body: JSON.stringify({ data }) }),
 
   /** 回看某一轮落盘的 trace（D162）。开发者面板靠它看当前连接之前的轮次。 */
   readTrace: (id: string, runId: string) => json<TraceEvent[]>(`/sessions/${id}/trace/${runId}`),

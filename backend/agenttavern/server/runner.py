@@ -21,7 +21,6 @@ from ..agents import GoalStep, advance_goal, sync_conversation
 from ..llm import LLMGateway, Usage
 from ..models import (
     Actor,
-    ControlOverride,
     Goal,
     GoalRun,
     InputSource,
@@ -62,7 +61,6 @@ _DELTA_KINDS = ("content", "reasoning")
 @dataclass
 class _Queued:
     text: str
-    control_override: ControlOverride | None = None
     regenerate: bool = False
     """重生成：挂在**当前叶的父**下，成为它的兄弟（D46）；普通输入挂在当前叶下。
 
@@ -85,14 +83,23 @@ class SessionRunner:
         broadcast: Broadcast,
         *,
         developer: bool = False,
+        stream: bool = True,
+        persist_trace: bool = False,
     ) -> None:
         self._repo = repo
         self._gateway = gateway
         self._broadcast = broadcast
+        self._stream = stream
+        """**边生成边推**（`Settings.stream`，D160/D174）。**它在服务级**：
+        这组开关里唯一一条**关于交付而不是关于能力**的——开关它不改变模型
+        收到什么、也不改变产出，只改变用户什么时候看到。别的开关全都上调
+        到了提示词层，只有这一条上调到服务。
+        """
+        self._persist_trace = persist_trace
         self._developer = developer
         """**服务级开发者模式**（D156，`Settings.developer`）：额外记录每次模型
-        往返的完整输入输出，并强制 trace 落盘。session 级的 `capabilities.trace`
-        管的是另一件事——那条决定要不要留 trace 文件，这条决定 trace 里有没有原文。
+        往返的完整输入输出，并强制 trace 落盘。上面那条 `persist_trace` 管的是
+        另一件事——它决定要不要留 trace 文件，这条决定 trace 里有没有原文。
         """
 
         self._queue: asyncio.Queue[_Queued | None] = asyncio.Queue()
@@ -164,11 +171,10 @@ class SessionRunner:
     async def submit(
         self,
         text: str,
-        override: ControlOverride | None = None,
         *,
         regenerate: bool = False,
     ) -> None:
-        item = _Queued(text=text, control_override=override, regenerate=regenerate)
+        item = _Queued(text=text, regenerate=regenerate)
         self._pending.append(item)
         await self._queue.put(item)
         self._emit(QueueStatus(pending=[q.text for q in self._pending]))
@@ -328,7 +334,7 @@ class SessionRunner:
                 self._repo,
                 session,
                 self._gateway,
-                # 不传 registry：工具面依赖能力开关与 worldinfo 模式，
+                # 不传 registry：工具面依赖各 agent YAML 里的开关与 worldinfo 模式，
                 # 两者都可能被用户改，必须每轮重新组装。
                 # **来源要标注**（D148）：goal_manager 靠它分辨"剧情偏了是我推错了"
                 # 和"用户主动把剧情带走了"。director 不读这个字段——两种输入在它
@@ -346,12 +352,14 @@ class SessionRunner:
                 # 普通输入挂在它下面（延长），重生成挂在它的父下面（开兄弟）。
                 parent_id=_parent_for(self._repo, session.active_leaf_id, item),
                 ask_user=self._ask_user,
-                control_override=item.control_override if item else None,
                 on_trace=self._on_trace,
                 inbox=self._inbox,
                 developer=self._developer,
+                persist_trace=self._persist_trace,
                 # 分片带上 run_id：前端要把它归到正确的那一轮名下（D160）。
-                on_delta=self._emit_delta,
+                # **不流式时干脆不给出口**（D174）：那是服务级的交付开关，
+                # 在这里决定一次，下游不必再各判一遍。
+                on_delta=self._emit_delta if self._stream else None,
                 run_id=run_id,
             )
         except asyncio.CancelledError:
@@ -469,12 +477,12 @@ class SessionRunner:
             self._repo,
             run_id,
             lambda event: self._emit(Trace(event=event)),
-            persist=session.capabilities.trace or self._developer,
+            persist=self._persist_trace or self._developer,
             developer=self._developer,
         )
 
-        # 事件密度是 goal_manager 唯一读的控制维度：它决定阶段拆多细、
-        # 一条输入推多远（D93 那条投影的第三面）。
+        # 推进节奏是 goal_manager 自己 YAML 里的一个 `choice`（D173）——
+        # 它决定阶段拆多细、一条输入推多远（D93 那条投影的第三面）。
         sync_conversation(
             # 用户扮演谁**就是那条标了 is_player 的角色条目**（D158/D171），
             # 而那条规则只有一处实现。
@@ -482,20 +490,18 @@ class SessionRunner:
             goal,
             run,
             self._repo.path_to(leaf_id) if leaf_id else [],
-            density=session.control.expansion_density,
         )
         step = await advance_goal(
             self._gateway,
             tracer,
             goal,
             run,
-            density=session.control.expansion_density,
             user_id=session.id,
             # **它的思考也要能看见**（D166）。分片和它的 trace 事件挂同一个
             # `run_id`——显式传而不是靠 `self._run_id` 刚好设对了。
             on_delta=(
                 (lambda kind, text: self._emit_delta(Actor.GOAL_MANAGER.value, kind, text, run_id))
-                if session.capabilities.stream
+                if self._stream
                 else None
             ),
         )

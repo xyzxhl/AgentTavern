@@ -17,6 +17,7 @@ export default defineConfig({
     proxy: {
       "/sessions": { target: "http://127.0.0.1:8000", ws: true, changeOrigin: true },
       "/worldbooks": { target: "http://127.0.0.1:8000", changeOrigin: true },
+      "/agents": { target: "http://127.0.0.1:8000", changeOrigin: true },
       "/meta": { target: "http://127.0.0.1:8000", changeOrigin: true },
     },
   },

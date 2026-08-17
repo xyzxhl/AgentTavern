@@ -19,9 +19,10 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from ..config import LIMITS
-from ..models import ModelAuthority, Node, StateDelta
+from ..models import Node, StateDelta
 from ..models.state import label_path as _label
 from ..models.state import paths_of
+from ..prompting import tool_description
 from .base import Tool, ToolOutcome, ToolResult, error
 from .context import RunContext
 
@@ -107,9 +108,6 @@ class StateWriteParams(BaseModel):
         description="从清单里拿掉：结构同 set，叶子是要去掉的条目。不存在的忽略。"
         "**改清单里的某一项就 remove 旧的再 append 新的**，别用 set 整体重写。",
     )
-
-
-_STATE_WRITE_DESC = "记录本轮的状态变化。可多次调用，累积生效；没有变化就一次也不调。"
 
 
 async def _state_write(ctx: RunContext, params: StateWriteParams) -> ToolResult:
@@ -427,131 +425,84 @@ async def _ask_question(ctx: RunContext, params: AskQuestionParams) -> ToolResul
 # --------------------------------------------------------------------------
 
 
-def _tool(name: str, description: str, params: type[BaseModel], handler: Any) -> Tool[Any]:
-    return Tool(name=name, description=description, params_type=params, handler=handler)
+def _tool(agent: str, name: str, params: type[BaseModel], handler: Any) -> Tool[Any]:
+    """**描述从那个 agent 的 YAML 里取**（D173，推翻 D140 ①）。
+
+    D140 当时判「工具描述不搬进 YAML」，理由是「一个工具怎么描述自己，跟它的参数、
+    错误信息、注册条件是同一件事，拆开写两处必然对不上」。**上面那条判据压过它**：
+    描述是模型读到的字，就必须可审查可修改。
+
+    但 D140 担心的漂移是真的，所以**参数 schema 仍由 Python 生成**（`params_type`
+    导出），在 agent 管理页上与描述并排只读显示——漂移因此摆在人眼前，
+    而不是藏在两个文件里。错误文案仍然留在代码里：它不进上下文，是工具实现的一部分。
+
+    带上 `agent` 是因为**同一个工具在两个 agent 手上可以有两份描述**：
+    `state_query` director 拿它是为了推演，state_manager 拿它是为了比对该改哪个键。
+    """
+    return Tool(
+        name=name,
+        description=tool_description(agent, name),
+        params_type=params,
+        handler=handler,
+    )
 
 
-def submit_tool() -> Tool[Any]:
+def submit_tool(agent: str = "director") -> Tool[Any]:
     """**没有前置条件了**（D143）：E0 契约（提交前必须写过一次 state）随
     director 卸下 `state_write` 一并作废。
     """
-    return _tool(
-        "submit_outline",
-        "提交本轮细纲。**调用即结束这一轮**，之后不能再做任何事。",
-        SubmitOutlineParams,
-        _submit_outline,
-    )
+    return _tool(agent, "submit_outline", SubmitOutlineParams, _submit_outline)
 
 
-def state_query_tool() -> Tool[Any]:
+def state_query_tool(agent: str) -> Tool[Any]:
     """读侧。**两个 agent 都可能拿到它**：director 读状态推演，state_manager
     读状态决定该改哪个键。只在按需展开开着时才注册（D62）。
     """
-    return _tool(
-        "state_query",
-        "按路径展开世界状态。上下文里已给出结构，深过展开层级的子树与体量大的值"
-        "只给了个数/字数，这里用来把它们取出来。",
-        StateQueryParams,
-        _state_query,
-    )
+    return _tool(agent, "state_query", StateQueryParams, _state_query)
 
 
-def state_write_tool() -> Tool[Any]:
+def state_write_tool(agent: str = "state_manager") -> Tool[Any]:
     """写侧。**只给 state_manager**（D143）。
 
     它以前在 director 手上，边推演边记；现在挪到 writer 之后，读着这一轮的细纲和
     正文去记。换来两件事：记的人看得见**最终写出来的是什么**（正文常常落实了细纲
     没写死的东西），以及 director 那一轮少了一件要惦记的事。
     """
-    return _tool("state_write", _STATE_WRITE_DESC, StateWriteParams, _state_write)
+    return _tool(agent, "state_write", StateWriteParams, _state_write)
 
 
-_HISTORY_WHEN = (
-    "要原话、要兑现伏笔、要说清先后与因果时才翻——"
-    "**当前状态和总结共同的盲区，是「当时不要紧、现在才要紧」的细节。**"
-)
-"""这一句是**这两个工具各自的适用场合**，属于工具描述（D140）。
-
-它以前有十五行，逐条列了六种该翻、三种不该翻的情形——那是判据，不是用法。
-判据本该在提示词里，但 D143 把 `flow_lookup` 那一节删掉之后没有落脚点，于是
-一直堆在这儿。收成一句（D152）：**长度本身会稀释它**，六条并列的规则读起来
-和一条也没什么区别。真要展开就得先给它一个能按能力开关的 section。
-"""
-
-
-def history_tools() -> list[Tool[Any]]:
+def history_tools(agent: str = "director") -> list[Tool[Any]]:
     return [
-        _tool(
-            "history_search",
-            "在**各轮细纲全文**里找一个字眼，并列出轮次索引（总结与体量）。\n"
-            "**命中只做标注，不筛掉任何一轮**——没命中不等于没发生过，当时可能换了说法。\n\n"
-            + _HISTORY_WHEN,
-            HistorySearchParams,
-            _history_search,
-        ),
-        _tool(
-            "history_read",
-            "按 ref 展开某几轮细纲的**全文**。ref 在上下文的历史索引里已经给出，"
-            "知道是哪几轮就直接读，不必先 history_search。\n\n" + _HISTORY_WHEN,
-            HistoryReadParams,
-            _history_read,
-        ),
+        _tool(agent, "history_search", HistorySearchParams, _history_search),
+        _tool(agent, "history_read", HistoryReadParams, _history_read),
     ]
 
 
-def worldinfo_tools() -> list[Tool[Any]]:
+def worldinfo_tools(agent: str = "director") -> list[Tool[Any]]:
     return [
-        _tool(
-            "worldinfo_list",
-            "列出按需展开的设定条目索引（名称、摘要、体量）。"
-            "常驻设定已直接在上下文里，不在这个索引中。",
-            WorldInfoListParams,
-            _worldinfo_list,
-        ),
-        _tool("worldinfo_read", "展开指定设定条目的全文。", WorldInfoReadParams, _worldinfo_read),
+        _tool(agent, "worldinfo_list", WorldInfoListParams, _worldinfo_list),
+        _tool(agent, "worldinfo_read", WorldInfoReadParams, _worldinfo_read),
     ]
 
 
-def summarize_tool() -> Tool[Any]:
-    return _tool(
-        "summarize",
-        "把过长的内容压缩成摘要。结果会被缓存，之后出现在索引里。",
-        SummarizeParams,
-        _summarize,
-    )
+def summarize_tool(agent: str = "director") -> Tool[Any]:
+    return _tool(agent, "summarize", SummarizeParams, _summarize)
 
 
-_ASK_QUESTION_EAGERNESS = {
-    ModelAuthority.HIGH: "**这一档不要调用它，自己拿主意。**",
-    ModelAuthority.MEDIUM: "剧情走向以你为主。本轮若存在真正的分岔，可以调用一次让用户选。",
-    ModelAuthority.LOW: (
-        "用户主导剧情走向。遇到任何值得由用户决定的分岔都调用它征询，一轮内可以多次。"
-    ),
-}
-"""**剧情控制权直接反映为这个工具的调用积极性**（D39/D58）——越高越少问。
-
-这段措辞以前是 `director.yaml` 里一个叫 `authority` 的选项组，单独占一条消息。
-搬到这里的理由是它讲的**只是一个工具该多积极地调用**，而不是创作要求：
-读到「不要调用 ask_question」的地方就该是 `ask_question` 自己。
-控制维度本身没变，仍然是 `ControlDimensions.model_authority` 三档（D140）。
-"""
-
-
-def ask_question_tool(authority: ModelAuthority = ModelAuthority.MEDIUM) -> Tool[Any]:
+def ask_question_tool(agent: str = "director") -> Tool[Any]:
     """**一个题干 + 恰好三个选项**（D155）。
 
     三个是定死的，不是 2–4 的区间：两个把岔路压成二选一，四个开始出现凑数的那条。
     而**用户随时可以不选、自己写一条**，所以不必留一个「其他」位——实测模型自己
     造过这么一个选项（「其他：你另指定这一轮实际要用的手段」），那是在没有一等
     自由作答入口时的将就，白白花掉三分之一的选项位。
+
+    **剧情控制权那三档就是它描述里的 `choice`**（D140②/D155）：越高越少问，讲的
+    正是「这个工具该多积极地调用」，不是创作要求——读到「不要调用 ask_question」
+    的地方就该是 `ask_question` 自己。所以这里不再收一个 `authority` 参数，
+    当前选哪一档写在 `director.yaml` 的 `tools.ask_question.selected` 上。
     """
-    return _tool(
-        "ask_question",
-        "向用户提问并等待回答。用于剧情方向不明、或用户指令与既有设定冲突时。"
-        "**用户可以选一个，也可以都不选、自己写一条。**\n" + _ASK_QUESTION_EAGERNESS[authority],
-        AskQuestionParams,
-        _ask_question,
-    )
+    return _tool(agent, "ask_question", AskQuestionParams, _ask_question)
 
 
 __all__ = [

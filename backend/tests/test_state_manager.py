@@ -12,11 +12,10 @@ import json
 from pathlib import Path
 
 import pytest
-from conftest import STATE_MARK, ScriptedLLM, text, tool
+from conftest import STATE_MARK, ScriptedLLM, text, tool, using
 
 from agenttavern.agents.state_manager import MAX_ROUNDS, run_state_manager
 from agenttavern.models import (
-    Capabilities,
     Node,
     Session,
     StateDelta,
@@ -24,6 +23,7 @@ from agenttavern.models import (
     WorldbookEntry,
 )
 from agenttavern.orchestration import execute_run
+from agenttavern.prompting import state_recent_runs
 from agenttavern.storage import Store
 from agenttavern.tools import RunContext, ToolRegistry
 from agenttavern.tracing import Tracer
@@ -32,7 +32,7 @@ from agenttavern.tracing import Tracer
 def _ctx(tmp_path: Path, llm: ScriptedLLM, session: Session | None = None):
     repo = Store(tmp_path).create_session(session or Session())
     ctx = RunContext(run_id="run_1", repo=repo, session=repo.load_session(), gateway=llm.gateway())
-    registry = ToolRegistry.for_state_manager(ctx.capabilities)
+    registry = ToolRegistry.for_state_manager()
     return ctx, Tracer(repo, "run_1"), registry
 
 
@@ -100,14 +100,16 @@ async def test_recent_turns_carry_the_full_triple(tmp_path: Path) -> None:
 
 
 async def test_only_the_last_few_turns_come_along(tmp_path: Path) -> None:
-    """滑动窗口，宽度由 `Capabilities.state_recent_runs` 定（默认 3）。
+    """滑动窗口，宽度是 `state_manager.yaml` 里 `recent` 那条 context 上的
+    `runs`（默认 3，D174）——**它从来不是一条独立的配置，是那段 context
+    的属性**。
 
     **这是它最大的一笔开销**——前几轮的正文占了上下文的大头，而且每轮全变，
     一点缓存前缀都吃不到。所以窗口是用户可调的，不是代码里的常量。
     """
     llm = ScriptedLLM(text("无变化。"), auto_state=False)
     ctx, tracer, reg = _ctx(tmp_path, llm)
-    window = ctx.capabilities.state_recent_runs
+    window = state_recent_runs()
 
     parent = None
     for i in range(window + 2):
@@ -252,23 +254,26 @@ async def test_an_interrupt_is_not_a_failure(tmp_path: Path) -> None:
 
 
 async def test_state_off_means_it_never_runs(tmp_path: Path) -> None:
-    """`Capabilities.state` 是唯一开关——没有 state_manager 就没人写 state，
-    不需要第二个。
+    """**关掉这个 agent 就没人写 state**（D174）。
+
+    开关是 `state_manager.yaml` 顶上的 `enabled`——它从来就是「这个 agent
+    跑不跑」，而不是一条独立的能力，所以不需要第二个。
     """
     llm = ScriptedLLM(
         tool("submit_outline", outline="她推开门。"),
         text("门开了。"),
         state=dict(set={"不该出现": True}),
     )
-    repo = Store(tmp_path).create_session(Session(capabilities=Capabilities(state=False)))
+    repo = Store(tmp_path).create_session(Session())
 
-    outcome = await execute_run(
-        repo,
-        repo.load_session(),
-        llm.gateway(),
-        ToolRegistry.for_session(Capabilities(state=False)),
-        user_input=UserInput(text="我推开门"),
-    )
+    with using(agents={"state_manager": False}):
+        outcome = await execute_run(
+            repo,
+            repo.load_session(),
+            llm.gateway(),
+            ToolRegistry.for_session(),
+            user_input=UserInput(text="我推开门"),
+        )
 
     assert outcome.node.state_delta.is_empty()
     assert not any(STATE_MARK in str(r["messages"]) for r in llm.requests), "它根本不该被叫起来"

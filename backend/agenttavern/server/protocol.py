@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from ..models import ControlOverride, Node, StateDelta, SubGoal, TraceEvent, Tree
+from ..models import Node, StateDelta, SubGoal, TraceEvent, Tree
 
 # --------------------------------------------------------------------------
 # 客户端 → 服务端
@@ -29,8 +29,11 @@ class Submit(BaseModel):
 
     type: Literal["submit"] = "submit"
     text: str
-    control_override: ControlOverride | None = None
-    """单轮覆盖（D45）。UI 上应做成快捷方式而非选择题。"""
+
+    # `control_override` **已删除**（D174，推翻 D45）：控制维度的取值上调到
+    # 提示词层之后，「覆盖」没有被覆盖的对象了。D45 原本的理由是「显式化的代价
+    # 边界在交互形态上」——那说的是*怎么呈现*一个存在的维度，而维度本身搬走
+    # 之后那条理由够不着新的形态。
 
 
 class Interject(BaseModel):

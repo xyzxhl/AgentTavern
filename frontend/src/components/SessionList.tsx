@@ -1,10 +1,14 @@
-import { useSession } from "../store";
+import { api } from "../api";
+import { type Page, useSession } from "../store";
 
 /**
  * 左栏：**上面是独立页面的入口，下面是会话记录**（D172）。
  *
  * 不做成 tab 切换——tab 会让会话列表在看设定时消失，而那没道理：设定不是故事的
  * 互斥模式，它是故事的**材料**。入口在上、列表在下，两者同时在场。
+ *
+ * **会话的标题在这里改**（D174）：session 上只剩标题、目标、节点树，为一个字段
+ * 单开一个「会话设置」面板不划算——它就在你能看见这个标题的地方改。
  */
 export function SessionList(): JSX.Element {
   const sessions = useSession((s) => s.sessions);
@@ -13,11 +17,21 @@ export function SessionList(): JSX.Element {
   const go = useSession((s) => s.go);
   const connect = useSession((s) => s.connect);
   const newSession = useSession((s) => s.newSession);
+  const refreshSessions = useSession((s) => s.refreshSessions);
+  const refreshState = useSession((s) => s.refreshState);
   const developer = useSession((s) => s.meta?.developer ?? false);
 
   function open(id: string): void {
     void connect(id);
     go({ kind: "story" });
+  }
+
+  async function rename(id: string, was: string): Promise<void> {
+    const title = prompt("这局故事叫什么？", was);
+    if (title === null || title === was) return;
+    await api.patchSession(id, { meta: { title } });
+    await refreshSessions();
+    if (id === current) await refreshState();
   }
 
   return (
@@ -26,12 +40,24 @@ export function SessionList(): JSX.Element {
         {/* **提示词是部署方写的东西**（D35），且改坏了整台服务不工作——所以跟
             开发者模式同一个开关（D156）。放开只是去掉这个条件。 */}
         {developer && (
-          <Entry label="提示词管理" active={page.kind === "prompts"} onClick={() => go({ kind: "prompts" })} />
+          <Entry
+            label="提示词管理"
+            active={page.kind === "agents"}
+            page={{ kind: "agents" }}
+            go={go}
+          />
         )}
         <Entry
           label="世界书管理"
           active={page.kind === "worldbooks"}
-          onClick={() => go({ kind: "worldbooks" })}
+          page={{ kind: "worldbooks" }}
+          go={go}
+        />
+        <Entry
+          label="全局设置"
+          active={page.kind === "settings"}
+          page={{ kind: "settings" }}
+          go={go}
         />
       </nav>
 
@@ -47,19 +73,27 @@ export function SessionList(): JSX.Element {
         {sessions.map((card) => {
           const here = card.id === current && page.kind === "story";
           return (
-            <button
+            <div
               key={card.id}
-              onClick={() => open(card.id)}
-              className={`mb-0.5 block w-full rounded px-2 py-1.5 text-left transition-colors ${
+              className={`group mb-0.5 flex items-start rounded transition-colors ${
                 here ? "bg-ink-600" : "hover:bg-ink-700"
               }`}
             >
-              <span className={`block truncate text-xs ${here ? "text-fg" : "text-dim"}`}>
-                {card.title || "未命名"}
-              </span>
-              {/* 第二行是它开在哪份设定上——列表里唯一需要的第二位信息。 */}
-              <span className="block truncate text-[10px] text-dim/70">{card.worldbook_name}</span>
-            </button>
+              <button onClick={() => open(card.id)} className="min-w-0 flex-1 px-2 py-1.5 text-left">
+                <span className={`block truncate text-xs ${here ? "text-fg" : "text-dim"}`}>
+                  {card.title || "未命名"}
+                </span>
+                {/* 第二行是它开在哪份设定上——列表里唯一需要的第二位信息。 */}
+                <span className="block truncate text-[10px] text-dim/70">{card.worldbook_name}</span>
+              </button>
+              <button
+                onClick={() => void rename(card.id, card.title)}
+                title="改名"
+                className="shrink-0 px-1.5 py-1.5 text-[11px] text-dim opacity-0 transition-opacity hover:text-fg group-hover:opacity-100"
+              >
+                ✎
+              </button>
+            </div>
           );
         })}
       </div>
@@ -70,15 +104,17 @@ export function SessionList(): JSX.Element {
 function Entry({
   label,
   active,
-  onClick,
+  page,
+  go,
 }: {
   label: string;
   active: boolean;
-  onClick: () => void;
+  page: Page;
+  go: (next: Page) => void;
 }): JSX.Element {
   return (
     <button
-      onClick={onClick}
+      onClick={() => go(page)}
       className={`block w-full rounded px-2 py-1.5 text-left text-xs transition-colors ${
         active ? "bg-ink-600 text-fg" : "text-dim hover:bg-ink-700 hover:text-fg"
       }`}

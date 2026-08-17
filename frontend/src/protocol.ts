@@ -7,31 +7,6 @@ export type ClientMessage =
   Submit | Interject | Answer | Stop | SwitchBranch | EditNode | Regenerate | SetGoal | SetGoalBudget | GoalControl;
 export type Type = "submit";
 export type Text = string;
-/**
- * 输入处理三档（D41）。取代了原先"转述二值 × 故事跨度"的设计。
- *
- * 故事跨度不再是独立维度：想快进就写在指令里（那本就是指令内容），
- * 想零推进就是 NARRATE_ONLY。
- */
-export type InputHandling = "narrate_and_advance" | "narrate_only" | "advance_only";
-/**
- * 模型剧情控制权。
- *
- * 直接反映为 ``ask_question`` 工具的调用积极性——**控制权越高，调用积极性越低**（D39）。
- * 三档均保持 run ↔ 细纲一一对应：交互式创作是在一个 run 内多次提问，
- * 而非拆成多个 run（D58）。
- */
-export type ModelAuthority = "low" | "medium" | "high";
-/**
- * 展开密度：每单位故事时间写多少字。
- *
- * 与"故事跨度"正交——同一场戏可以写 200 字也可以写 2000 字。
- * 同时影响两侧：细纲的事件密度（director）与正文的铺陈程度（writer）。
- */
-export type ExpansionDensity = "sparse" | "normal" | "rich";
-export type AllowSpeakingForUser = boolean | null;
-export type ProseStyle = string | null;
-export type Pov = string | null;
 export type Type1 = "interject";
 export type Text1 = string;
 export type Interrupt = boolean;
@@ -129,31 +104,6 @@ export type Text3 = string;
  */
 export type InputSource = "user" | "simulated";
 export type SubmittedAt = string;
-/**
- * 输入处理三档（D41）。取代了原先"转述二值 × 故事跨度"的设计。
- *
- * 故事跨度不再是独立维度：想快进就写在指令里（那本就是指令内容），
- * 想零推进就是 NARRATE_ONLY。
- */
-export type InputHandling1 = "narrate_and_advance" | "narrate_only" | "advance_only";
-/**
- * 模型剧情控制权。
- *
- * 直接反映为 ``ask_question`` 工具的调用积极性——**控制权越高，调用积极性越低**（D39）。
- * 三档均保持 run ↔ 细纲一一对应：交互式创作是在一个 run 内多次提问，
- * 而非拆成多个 run（D58）。
- */
-export type ModelAuthority1 = "low" | "medium" | "high";
-/**
- * 展开密度：每单位故事时间写多少字。
- *
- * 与"故事跨度"正交——同一场戏可以写 200 字也可以写 2000 字。
- * 同时影响两侧：细纲的事件密度（director）与正文的铺陈程度（writer）。
- */
-export type ExpansionDensity1 = "sparse" | "normal" | "rich";
-export type AllowSpeakingForUser1 = boolean;
-export type ProseStyle1 = string;
-export type Pov1 = string;
 export type Outline1 = string;
 export type OutlineSummary = string | null;
 export type Role = "system" | "user" | "assistant" | "tool";
@@ -213,17 +163,6 @@ export type Description2 = string;
 export type MaxRuns3 = number | null;
 export type MaxTotalTokens3 = number | null;
 export type TimeDriven = boolean;
-export type Nudge = boolean;
-export type State = boolean;
-export type StateQuery = boolean;
-export type WorldinfoRead = boolean;
-export type HistorySearch = boolean;
-export type UpstreamRuns = number;
-export type StateRecentRuns = number;
-export type SummarizeMode = "manual" | "auto";
-export type AskQuestion = boolean;
-export type Stream = boolean;
-export type Trace1 = boolean;
 export type InitialState = {
   [k: string]: unknown;
 } | null;
@@ -277,21 +216,6 @@ export interface AgentTavern {
 export interface Submit {
   type?: Type;
   text: Text;
-  control_override?: ControlOverride | null;
-}
-/**
- * 单轮覆盖。全部字段可选；未指定即沿用常驻设置。
- *
- * UI 上应做成**快捷方式**（``/只转述``）而非选择题——显式化的代价边界
- * 在交互形态上，不在维度数量上（D45）。
- */
-export interface ControlOverride {
-  input_handling?: InputHandling | null;
-  model_authority?: ModelAuthority | null;
-  expansion_density?: ExpansionDensity | null;
-  allow_speaking_for_user?: AllowSpeakingForUser;
-  prose_style?: ProseStyle;
-  pov?: Pov;
 }
 /**
  * 把一句话插进**正在跑的**那一轮（F3b / D119）。
@@ -499,7 +423,6 @@ export interface Node {
   created_at?: CreatedAt;
   status?: RunStatus;
   user_input?: UserInput | null;
-  control?: ControlDimensions;
   outline?: Outline1;
   outline_summary?: OutlineSummary;
   director_messages?: DirectorMessages;
@@ -520,19 +443,6 @@ export interface UserInput {
   text: Text3;
   source?: InputSource;
   submitted_at?: SubmittedAt;
-}
-/**
- * 每 run 生效的控制维度取值。
- *
- * 由用户显式选择而非模型推断；与输入内容冲突时**显式优先**（D15）。
- */
-export interface ControlDimensions {
-  input_handling?: InputHandling1;
-  model_authority?: ModelAuthority1;
-  expansion_density?: ExpansionDensity1;
-  allow_speaking_for_user?: AllowSpeakingForUser1;
-  prose_style?: ProseStyle1;
-  pov?: Pov1;
 }
 export interface Message {
   role: Role;
@@ -673,9 +583,7 @@ export interface Session {
   created_at?: CreatedAt1;
   worldbook_id?: WorldbookId;
   meta?: SessionMeta;
-  control?: ControlDimensions;
   modes?: SessionModes;
-  capabilities?: Capabilities;
   initial_state?: InitialState;
   active_leaf_id?: ActiveLeafId;
   goal_run?: GoalRun | null;
@@ -689,8 +597,8 @@ export interface Session {
  * 也是成立。当时没搬，是因为 worldbook 还不是独立的东西（D92：一份 worldbook
  * 开启一个 session），"世界的属性"和"故事的属性"没有区别的余地。
  *
- * 文风和视角两样都不在这儿：它们是读者这一侧的偏好，和铺陈程度一起归
- * `ControlDimensions`。
+ * 文风和视角两样也不在这儿：**它们上调到了 writer.yaml**（D173），
+ * 和铺陈程度一样是一个 `choice` 的 `selected`。
  *
  * **没有「否定项」字段**（D139）。不能提前揭示的东西属于世界设定，写进
  * worldinfo 或 state；「不许写什么」这类写作纪律属于提示词，写进 YAML。
@@ -719,29 +627,6 @@ export interface Goal {
  */
 export interface SessionModes {
   time_driven?: TimeDriven;
-}
-/**
- * 能力开关。**关闭时对应工具不注册**——模型根本看不到它。
- *
- * 这是第四类配置，与元指令（目标）/ 控制维度（处理方式）/ 模式（触发源）都不同：
- * 它决定**系统能做什么**，而不同故事需要的能力差别很大。这与 D74 是同一个判断——
- * 不预设所有故事都一样。
- *
- * 「不注册」比「注册了但拒绝调用」强：后者仍然占 prompt 体量、仍会被尝试、
- * 失败还要消耗一轮往返。工具面越小，模型的决策空间越小（分配原则 P9）。
- */
-export interface Capabilities {
-  nudge?: Nudge;
-  state?: State;
-  state_query?: StateQuery;
-  worldinfo_read?: WorldinfoRead;
-  history_search?: HistorySearch;
-  upstream_runs?: UpstreamRuns;
-  state_recent_runs?: StateRecentRuns;
-  summarize?: SummarizeMode;
-  ask_question?: AskQuestion;
-  stream?: Stream;
-  trace?: Trace1;
 }
 /**
  * 一次 goal 从创建到结束期间的**运行时状态**（D148）。

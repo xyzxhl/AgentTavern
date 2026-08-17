@@ -13,6 +13,10 @@ director 只读细纲历史、不读正文；writer 读正文上文以保证衔�
 D35（否定项两边都要）**已删除**（D139）：否定项这个字段整个不存在了。
 不能提前揭示的东西属于世界设定，写进 worldinfo 或 state 即可；
 「不许写什么」这类写作纪律属于提示词，写进 YAML 即可。
+
+**这里不再回答"选哪一档"**（D173）：控制维度的当前取值住在各 agent 的 YAML 里
+（`choice` 条目上的 `selected`），一处定义、一处取值、一处修改。所以这个模块
+现在只回答一个问题：**每段 context 注入什么。**
 """
 
 from __future__ import annotations
@@ -23,8 +27,6 @@ from collections.abc import Sequence
 from ..config import LIMITS
 from ..llm import Message
 from ..models import (
-    Capabilities,
-    ControlDimensions,
     EntryKind,
     Goal,
     Node,
@@ -33,7 +35,15 @@ from ..models import (
     WorldbookMode,
     WorldState,
 )
-from .assembler import Prompt, assemble, text
+from .assembler import (
+    Prompt,
+    assemble,
+    param,
+    rendering,
+    special_text,
+    tool_enabled,
+)
+from .assembler import enabled as agent_enabled
 
 
 def player_character(worldinfo: Sequence[WorldbookEntry] = ()) -> str:
@@ -61,28 +71,54 @@ def render_voices(worldinfo: Sequence[WorldbookEntry] = ()) -> str:
     )
 
 
-def _speaking(allowed: bool) -> str:
-    """抢话是个二选一的控制维度，所以在 YAML 里是选项组，选项名就是这两个。
-
-    **只有 director 侧有这个选项组。** writer 侧那条曾经也在（D35：否定项两边都要），
-    后来 writer 的输入契约收紧成「除非细纲已经给出，否则不要自行增加新行为、
-    新决定、新心理」——用户的角色被这条一并盖住了，再单给一条就是重复。
-    """
-    return "allowed" if allowed else "forbidden"
-
-
 STATE_INLINE_LIMIT = LIMITS.context.state_inline_limit
 """单个状态值超过这个长度就只给体量、不给内容，由模型按需 state_query 展开。"""
 
 
-HIDDEN = "（{chars} 字，用 state_query 展开）"
-"""长字符串的占位。**它自己是字符串，所以只能顶替字符串值**——见 `_hide_long`。"""
+def upstream_runs() -> int:
+    """给 writer 几轮**正文**上文。**参数住在 `upstream` 那条 context 上**（D174）。
 
-DEEPER = "（{count} 项，用 state_query 展开）"
-"""超过展开层级的子树的占位（D157）。"""
+    它只用来接住语气和现场，不是长程记忆——长程记忆是 director 的事，
+    它读细纲历史（D52/D54）。
+    """
+    return param("writer", "upstream", "runs", LIMITS.windows.upstream_runs)
 
 
-def _hide_long(value: object) -> object:
+def state_recent_runs() -> int:
+    """给 state_manager 几轮「细纲 → 成文 → 当时记下的」示范（D143）。
+
+    **这是 state_manager 最大的一笔开销**：滑动窗口，每轮全变，一点缓存前缀都
+    吃不到，而前几轮的正文是其中的大头。往下调省钱，代价是键名和值的形状更容易
+    漂移。**和 `upstream_runs` 分开**：writer 少一轮只是接得生硬些，
+    state_manager 少一轮直接影响键名一致性。
+    """
+    return param("state_manager", "recent", "runs", LIMITS.windows.state_recent_runs)
+
+
+class _StateText:
+    """渲染 state 时要用到的那几句短话。**它们也是模型读到的字**（D173）。
+
+    **按 agent 各存一份**：director 和 state_manager 都会读到 `render_state` 的
+    产物，于是两份 YAML 的 `rendering` 里各有一份。这不是"一件事两个入口"——
+    它们是发给两个不同 agent 的两条不同消息，本来就该能分别改（director 读 state
+    是为了推演，state_manager 读它是为了比对该记什么）。
+    """
+
+    def __init__(self, agent: str) -> None:
+        self.agent = agent
+
+    @property
+    def empty(self) -> str:
+        return rendering(self.agent, "state_empty")
+
+    def long(self, chars: int) -> str:
+        return rendering(self.agent, "state_long", chars=chars)
+
+    def deeper(self, count: int) -> str:
+        return rendering(self.agent, "state_deeper", count=count)
+
+
+def _hide_long(value: object, texts: _StateText) -> object:
     """体量大的值只给体量，由模型按需 `state_query` 展开。
 
     **只对字符串生效。** 清单即使很长也原样给出：顶替掉它会把形状一起顶替成
@@ -90,11 +126,11 @@ def _hide_long(value: object) -> object:
     长清单该做的是拆一层嵌套，不是藏起来。
     """
     if isinstance(value, str) and len(value) > STATE_INLINE_LIMIT:
-        return HIDDEN.format(chars=len(value))
+        return texts.long(len(value))
     return value
 
 
-def _fold(tree: dict[str, object], depth: int) -> dict[str, object]:
+def _fold(tree: dict[str, object], depth: int, texts: _StateText) -> dict[str, object]:
     """按**层级**折叠（D157）：深过 ``depth`` 的子树只给条数。
 
     这是点分键名换成真嵌套之后才做得成的事——平铺结构里没有"层"，
@@ -107,15 +143,15 @@ def _fold(tree: dict[str, object], depth: int) -> dict[str, object]:
     for key, value in tree.items():
         if isinstance(value, dict) and value:
             if depth == 1:
-                out[key] = DEEPER.format(count=len(value))
+                out[key] = texts.deeper(len(value))
             else:
-                out[key] = _fold(value, depth - 1)
+                out[key] = _fold(value, depth - 1, texts)
         else:
-            out[key] = _hide_long(value)
+            out[key] = _hide_long(value, texts)
     return out
 
 
-def render_state(state: WorldState, *, expandable: bool = True, depth: int = 0) -> str:
+def render_state(state: WorldState, *, agent: str, expandable: bool = True, depth: int = 0) -> str:
     """状态默认包：**JSON**，全量键名 + 体量大的字符串只给体量。
 
     ## 为什么是 JSON
@@ -136,14 +172,16 @@ def render_state(state: WorldState, *, expandable: bool = True, depth: int = 0) 
     **不预设任何维度。** 键由模型自由命名，时间、地点、角色属性的粒度与形态都
     取决于故事，定不了固定 schema（见 models/state.py）。
 
-    **这里只渲染键值，一句提示词都不带**——那些话是提示词，写在 YAML 里。
+    **这里只渲染键值，一句提示词都不带**——那些话是提示词，`agent` 决定从哪份
+    YAML 的 `rendering` 里取（D173）。
     """
+    texts = _StateText(agent)
     if not state.values:
-        return "（尚无记录）"
+        return texts.empty
 
     values: dict[str, object] = dict(state.values)
     if expandable:
-        values = _fold(values, depth)
+        values = _fold(values, depth, texts)
     return json.dumps(values, ensure_ascii=False, indent=2, sort_keys=True)
 
 
@@ -169,24 +207,24 @@ def render_worldinfo(entries: list[WorldbookEntry], *, expandable: bool = True) 
             f"- `{e.ref_hint()}` {e.name}（{len(e.content)} 字）：{e.summary_or_head()}"
             for e in on_demand
         )
-        parts.append(f"### 可展开的条目\n{index}\n\n用 worldinfo_read 按 ref 展开。")
+        # 「用 worldinfo_read 按 ref 展开。」是一句**明确的操作指令**，所以它也归
+        # YAML（D173）——改了工具名却忘了改它，模型会去调一个不存在的工具。
+        parts.append(f"### 可展开的条目\n{index}\n\n{rendering('director', 'worldinfo_expand')}")
     return "\n\n".join(parts)
 
 
 def director_prompt(
-    control: ControlDimensions,
     state: WorldState,
     user_text: str | None,
     *,
     history: Sequence[Message] = (),
-    capabilities: Capabilities | None = None,
     worldinfo: list[WorldbookEntry] | None = None,
     goal: Goal | None = None,
 ) -> Prompt:
     """装配 director 收到的整串消息。
 
-    **顺序、标题、role 都不在这里，在 director.yaml 的 `sections` 里**（D135–D137）。
-    这里只回答三个问题：每段 context 注入什么、变量的值是什么、选项组选哪一档。
+    **顺序、role、选哪一档都不在这里，在 director.yaml 里**（D135–D137/D173）。
+    这里只回答一个问题：**每段 context 注入什么。**
 
     但有一条约束是这里保证不了的、也不该由这里保证：**前情之前的部分跨轮不变**
     （D114）。对话跨轮持续，那一段就是缓存前缀，凡是每轮会变的东西排在它前面，
@@ -194,17 +232,27 @@ def director_prompt(
     所以 state 与本轮要求都排在 `history` 之后——**这是 YAML 里的顺序决定的**，
     改动它会付出缓存代价。
     """
-    caps = capabilities or Capabilities()
     return assemble(
         "director",
         contexts={
             # **题材与基调、剧情尺度不在这里了**（D175）：它们是 `WORLD` 条目，
             # 跟着 `worldinfo` 这一整块进来。`WORLD` 的定义就是「一段关于这个
             # 世界的字」，而它们正是那个——凭什么要特殊处理。
-            "worldinfo": render_worldinfo(worldinfo or [], expandable=caps.worldinfo_read),
+            "worldinfo": render_worldinfo(
+                worldinfo or [], expandable=tool_enabled("director", "worldinfo_read")
+            ),
             "history": history,
-            "state": render_state(state, expandable=caps.state_query) if caps.state else "",
-            "user_input": user_text or text("director", "no_user_input"),
+            # **没有 state_manager 就不给状态那一节**（D174）：没人写它，
+            # 给出去的永远是空的，白占体量还让模型以为这里本该有内容。
+            "state": render_state(
+                state,
+                agent="director",
+                expandable=tool_enabled("director", "state_query"),
+            )
+            if agent_enabled("state_manager")
+            else "",
+            # 没有新输入时顶上的那句话是**提示词**，所以在 YAML 的 specials 里。
+            "user_input": user_text or special_text("director", "no_input"),
         },
         # **`{{goal}}` 现在没人用**：`director.yaml` 里一个引用都没有，因为
         # director 不该读目标（D148——模拟输入和真输入在它眼里必须一模一样，
@@ -212,18 +260,6 @@ def director_prompt(
         # 想让它看见，在 YAML 里写一句 `{{goal}}` 即可；不写就什么也不发生。
         # 不留的话那一句会直接报 KeyError，而那是个坏得多的发现方式。
         values={"goal": goal.description if goal else ""},
-        options={
-            "narration_and_advancement": control.input_handling.value,
-            "input_handling": control.input_handling.value,
-            # **事件密度是「铺陈密度」的反向投影**：director 不该知道篇幅（D93），
-            # 所以同一个控制维度在两侧读的是两组不同的措辞。
-            "event_density": control.expansion_density.value,
-            # 剧情控制权不在这里了——它讲的是 `ask_question` 该多积极地调用，
-            # 所以写进了那个工具的描述（D140）。
-            "speaking_rule": _speaking(control.allow_speaking_for_user),
-            # 流程那四条已经删掉（D143）——每一条都有工具描述覆盖它，
-            # 于是 `_on_off` / `_has_lookup_tools` 两个 helper 也一并没了。
-        },
     )
 
 
@@ -235,7 +271,7 @@ def render_delta(delta: StateDelta) -> str:
     就是那个形式了。
     """
     if delta.is_empty():
-        return "（本轮无变化）"
+        return rendering("state_manager", "delta_empty")
 
     return json.dumps(delta.model_dump(exclude_defaults=True), ensure_ascii=False, indent=2)
 
@@ -247,7 +283,7 @@ def render_recent(nodes: Sequence[Node]) -> str:
     少了正文看不出细纲留白处最后落成了什么，少了增量就根本没有示范。
     """
     if not nodes:
-        return "（这是第一轮，前面没有可参照的记录。）"
+        return rendering("state_manager", "recent_empty")
 
     blocks: list[str] = []
     for offset, node in enumerate(nodes):
@@ -266,21 +302,23 @@ def state_manager_prompt(
     recent: Sequence[Node] = (),
     outline: str = "",
     prose: str = "",
-    capabilities: Capabilities | None = None,
 ) -> Prompt:
     """装配 state_manager 收到的整串消息（D143）。
 
-    它拿不到世界设定、拿不到目标、拿不到控制维度——那些决定"该写什么"，
+    它拿不到世界设定、拿不到目标、拿不到文风——那些决定"该写什么"，
     而它不写任何内容。它只回答"这一轮之后，速查表该改哪几个键"。
 
     **注入的是 `base_state`，本 run 开始时的状态。** 它自己 loop 中途写下的增量
     由 `state_query` 反映（那个走 `current_state`），不必也不该重新装配一次。
     """
-    caps = capabilities or Capabilities()
     return assemble(
         "state_manager",
         contexts={
-            "state": render_state(state, expandable=caps.state_query),
+            "state": render_state(
+                state,
+                agent="state_manager",
+                expandable=tool_enabled("state_manager", "state_query"),
+            ),
             "recent": render_recent(recent),
             "outline": outline,
             "prose": prose,
@@ -289,7 +327,6 @@ def state_manager_prompt(
 
 
 def writer_prompt(
-    control: ControlDimensions,
     *,
     outline: str = "",
     upstream: str = "",
@@ -300,8 +337,8 @@ def writer_prompt(
     它拿不到 state 的值、拿不到世界设定、拿不到用户原始指令，那些都已经在细纲里了。
     它的职责是改写，不是补充。
 
-    **它不吃 `WorldMeta`**（D171）：题材与尺度是给 director 的，而语言习惯和
-    用户扮演谁都在角色条目上。于是这一层完全由「控制维度 + 条目」决定。
+    **文风、视角、铺陈程度都在 `writer.yaml` 里选**（D173）：一档就是一段可编辑
+    的提示词，加一档只是加一个二级标题；当前选哪一档写在那个条目的 `selected` 上。
     """
     return assemble(
         "writer",
@@ -312,14 +349,6 @@ def writer_prompt(
         },
         # 用户扮演谁是**这个世界的设定**（D138 那条判据：换个人来读、换局故事
         # 来读都仍然成立），所以它跟着 worldbook 走（D170）——具体说，跟着那条
-        # 标了 `is_player` 的角色条目走；第几人称才是读者偏好，在 control。
+        # 标了 `is_player` 的角色条目走；第几人称才是读者偏好，在 writer.yaml。
         values={"user_character": player_character(worldinfo)},
-        # **文风与视角都是选项名，不是自由文本**：档位全文写在 writer.yaml 里，
-        # 这里只说选哪一档。它们和铺陈程度一样来自 `control`——都是读者这一侧的
-        # 偏好，不是这个世界的属性。
-        options={
-            "prose_style": control.prose_style,
-            "pov": control.pov,
-            "density": control.expansion_density.value,
-        },
     )

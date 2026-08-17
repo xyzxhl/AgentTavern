@@ -17,8 +17,12 @@ import type {
 
 export type RunPhase = "idle" | "running" | "asking";
 
-/** 主区当前是哪一页。`story` 是默认的正文流；另外两个是左栏上方的独立页面入口。 */
-export type Page = { kind: "story" } | { kind: "worldbooks"; open?: string } | { kind: "prompts" };
+/** 主区当前是哪一页。`story` 是默认的正文流；其余是左栏上方的独立页面入口。 */
+export type Page =
+  | { kind: "story" }
+  | { kind: "worldbooks"; open?: string }
+  | { kind: "agents"; open?: string }
+  | { kind: "settings" };
 
 /** 某个 agent 连续说的一段过程（思考段，或它推演途中的自言自语）。 */
 export interface Thought {
@@ -81,6 +85,14 @@ export interface SessionState {
   question: Question | null;
   queue: string[];
   usage: { tokensIn: number; tokensOut: number };
+
+  /** 每一轮的 eval 采样标记（`run_id` → 若干条）。**从不影响运行时行为**（D43/D44）。
+   *
+   * 服务端每轮都在算，而界面此前一条都不显示——`store` 收到 `run_finished`
+   * 直接把 `notes` 丢掉了。它们是"这一轮有什么值得看一眼"，正是回看时要的东西。
+   */
+  notes: Record<string, string[]>;
+
   notice: string | null;
   /** 上一轮被打断且**存成了草稿**——下一条输入会接着它跑，不是从头重来。 */
   resumable: boolean;
@@ -199,6 +211,11 @@ export const useSession = create<SessionState>((set, get) => {
           },
           // 同一个 id 就替换（重生成会落新节点，切分支会整条换掉）。
           path: upsert(s.path, message.node),
+          // **采样标记留着**（D43/D44）：它们从不影响运行时行为，但"这一轮有
+          // 什么值得看一眼"正是回看时要的那一位信息。此前这里直接丢掉了。
+          notes: message.notes?.length
+            ? { ...s.notes, [message.node.id ?? ""]: message.notes }
+            : s.notes,
         }));
         // **重生成刚给某一轮添了个兄弟**，切换器得知道。只在重生成之后拉一次：
         // 平常推进落的是独苗，兄弟关系没变，每轮都拉等于白拉一份完整路径。
@@ -299,6 +316,7 @@ export const useSession = create<SessionState>((set, get) => {
     question: null,
     queue: [],
     usage: { tokensIn: 0, tokensOut: 0 },
+    notes: {},
     notice: null,
     resumable: false,
     rerolling: false,
@@ -367,6 +385,7 @@ export const useSession = create<SessionState>((set, get) => {
         pendingInput: "",
         question: null,
         queue: [],
+        notes: {},
         notice: null,
         goal: null,
         editing: null,

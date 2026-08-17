@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from ..llm import Usage
 from ..models import Actor, Node, TraceEventType
-from ..prompting import writer_prompt
+from ..prompting import upstream_runs, writer_prompt
 from ..tools import RunContext
 from ..tracing import Tracer
 
@@ -36,7 +36,6 @@ class WriterResult:
 async def run_writer(ctx: RunContext, tracer: Tracer, outline: str) -> WriterResult:
     upstream = _recent_prose(ctx)
     messages = writer_prompt(
-        ctx.session.control,
         outline=outline,
         upstream=upstream,
         # 角色的语言习惯挂在角色条目上（D159），所以 writer 也要看到设定条目。
@@ -52,7 +51,7 @@ async def run_writer(ctx: RunContext, tracer: Tracer, outline: str) -> WriterRes
     )
 
     # **正文是流式最值得的地方**（D160）：它是一次调用、纯文本、而且是用户真正
-    # 在等的东西。`stream_to` 在能力关掉时返回 None，那条路就退回非流式。
+    # 在等的东西。`stream_to` 在编排层没给出口时返回 None，那条路就退回非流式。
     response = await ctx.gateway.complete(
         messages, user_id=ctx.session.id, on_delta=ctx.stream_to(Actor.WRITER)
     )
@@ -73,7 +72,7 @@ async def run_writer(ctx: RunContext, tracer: Tracer, outline: str) -> WriterRes
 def _recent_prose(ctx: RunContext) -> str:
     if ctx.parent_id is None:
         return ""
-    nodes: list[Node] = ctx.repo.path_to(ctx.parent_id)[-ctx.capabilities.upstream_runs :]
+    nodes: list[Node] = ctx.repo.path_to(ctx.parent_id)[-upstream_runs() :]
     return "\n\n".join(n.prose for n in nodes if n.prose)
 
 

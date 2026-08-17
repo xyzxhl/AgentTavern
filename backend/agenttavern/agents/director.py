@@ -29,7 +29,7 @@ from ..models import (
     UserInput,
     trim_dangling_tool_call,
 )
-from ..prompting import choice, director_prompt, text
+from ..prompting import director_prompt, special_text, tool_enabled
 from ..tools import RunContext, ToolOutcome, ToolRegistry
 from ..tracing import Tracer
 from .replay import append_message, replay_messages, turn_messages
@@ -90,7 +90,7 @@ async def run_director(
     session = ctx.session
     history = ctx.repo.path_to(ctx.parent_id) if ctx.parent_id else []
 
-    prior = replay_messages(history, readable=session.capabilities.history_search)
+    prior = replay_messages(history, readable=tool_enabled("director", "history_search"))
 
     # **打断是挂起**（D118 / D142）：上次被截断处之前的推演原样接回来。
     #
@@ -120,14 +120,12 @@ async def run_director(
     # 产出它的那个 run 结束（D120）。这是笔账：一轮推理一万五千字，而决定本身
     # 以细纲的形式完整留着。
     prompt = director_prompt(
-        control=session.control,
         # **本 run 开始时的状态。** 这里原先写的是 `current_state`（叠加暂存增量），
         # 为的是续跑时模型别看见一份不含自己刚写下那笔的状态。director 不再写
         # 状态之后暂存区在这一阶段恒为空，两者等价，写 `base_state` 更诚实（D143）。
         state=ctx.base_state(),
         user_text=said,
         history=prior,
-        capabilities=session.capabilities,
         worldinfo=ctx.repo.worldbook(),
         # 目标是**这局故事**的，不跟着世界走（D170）。
         goal=session.meta.goal,
@@ -176,7 +174,7 @@ async def run_director(
             if forced:
                 _push(messages, _nudge(ctx, final=True))
             elif round_index == soft_rounds:
-                _push(messages, text("director", "converge"))
+                _push(messages, special_text("director", "converge"))
 
             response = await _operation(
                 ctx,
@@ -372,8 +370,14 @@ def _push(messages: list[Message], body: str) -> None:
 def _nudge(ctx: RunContext, *, final: bool = False) -> str:
     """模型只回了文本时推回去的那句话。
 
-    措辞在 `director.yaml` 的 `nudge` 选项组里，这里只负责挑档（D140）。
-    `nudge` 关掉时那一档是空串，于是根本不推——模型空手回来，这一轮就算完。
+    措辞在 `director.yaml` 的 `specials.nudge` / `specials.nudge_final` 里（D173）。
+    **关掉它的开关就在那两条自己身上**（`enabled`，D174）——那从来不是一个独立
+    的能力，是这条提示词发不发。关掉时返回空串，于是根本不推：模型空手回来，
+    这一轮就算完。
+
+    **最后一轮单独一条，不是同一条的第二档。** 「这是最后一轮」和「请提交」是两句
+    不同的话，各自可编；做成一个 `choice` 的话「选哪一档」由代码按轮数决定，
+    而 `selected` 的语义是用户的选择（D173）。
 
     **这里原本有个分支**：state_write 还没做就催「先 state_write 再 submit」。
     判据是实测来的——催促词以前无条件写着两步，模型照做又写一次 `state_write`，
@@ -381,6 +385,4 @@ def _nudge(ctx: RunContext, *, final: bool = False) -> str:
     **69 万 input token，占整场的 84%**。D143 把状态维护整个搬走之后，director
     这一轮只剩一件事要做，分支自己没有了。
     """
-    if not ctx.capabilities.nudge:
-        return ""
-    return choice("director", "nudge", "final_submit" if final else "submit")
+    return special_text("director", "nudge_final" if final else "nudge")

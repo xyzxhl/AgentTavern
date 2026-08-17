@@ -22,18 +22,18 @@ from ..agents.writer import run_writer
 from ..llm import LLMGateway, Message, Usage
 from ..models import (
     Actor,
-    ControlOverride,
     Node,
     RunDraft,
     RunStage,
     RunStatus,
     Session,
     StateDelta,
-    SummarizeMode,
     TraceEventType,
     UserInput,
     new_id,
 )
+from ..prompting import enabled as agent_enabled
+from ..prompting import selected, special_on
 from ..storage import SessionRepository
 from ..tools import AskUser, Inbox, RunContext, RunDelta, ToolRegistry
 from ..tracing import OnEvent, Tracer
@@ -57,10 +57,10 @@ async def execute_run(
     user_input: UserInput | None = None,
     parent_id: str | None = None,
     ask_user: AskUser | None = None,
-    control_override: ControlOverride | None = None,
     on_trace: OnEvent | None = None,
     inbox: Inbox | None = None,
     developer: bool = False,
+    persist_trace: bool = False,
     on_delta: RunDelta | None = None,
     run_id: str | None = None,
 ) -> RunOutcome:
@@ -77,28 +77,20 @@ async def execute_run(
 
     run_id = run_id or new_id("run")
     # **开发者模式强制落盘**（D156）：记了不落盘，下次就查不了了，而查问题
-    # 恰恰总是事后。它与 `capabilities.trace` 是或的关系，不是覆盖。
+    # 恰恰总是事后。它与服务级的 `Settings.trace`（`persist_trace`）是或的关系，
+    # 不是覆盖。
     tracer = Tracer(
         repo,
         run_id,
         on_trace,
-        persist=session.capabilities.trace or developer,
+        persist=persist_trace or developer,
         developer=developer,
     )
 
-    control = session.control.merged_with(control_override)
-    effective = session.model_copy(update={"control": control})
-
-    # 工具面按能力开关组装：关闭的能力其工具**不注册**，模型看不到。
-    # worldinfo 全部常驻时也不注册其工具——没有东西可展开。
-    #
-    # **`control` 必须传**（D155）：`ask_question` 的调用积极性就写在它自己的
-    # 工具描述里，那段措辞按 `model_authority` 分三档（D39/D58）。这里漏掉过一次，
-    # 于是不管控制维度调成什么，模型读到的永远是 `medium` 那档——`low` 档
-    # 「遇到任何值得由用户决定的分岔都调用它征询」从来没真正发出去过。
-    # 单测直接调 `build_tools` 并显式传档位，所以它一直是绿的，漏的是**接线**。
+    # 工具面按各 agent YAML 里的开关组装（D174）：关掉的工具**不注册**，
+    # 模型看不到。worldinfo 全部常驻时也不注册其工具——没有东西可展开。
     if registry is None:
-        registry = ToolRegistry.for_session(session.capabilities, repo.worldbook(), control)
+        registry = ToolRegistry.for_session(repo.worldbook())
 
     # **打断是挂起**（D118）：上一次被截断的那一段在这里被接回来。
     # 认领的条件是父节点一致——不一致说明用户已经切到别的分支去了，接不上（D48）。
@@ -112,7 +104,7 @@ async def execute_run(
     ctx = RunContext(
         run_id=run_id,
         repo=repo,
-        session=effective,
+        session=session,
         gateway=gateway,
         parent_id=parent_id,
         ask_user=ask_user,
@@ -128,7 +120,6 @@ async def execute_run(
         "开始新的一轮" if draft is None else f"从「{stage.value}」接着跑",
         {
             "parent": parent_id,
-            "control": control.model_dump(mode="json"),
             "resumed": draft is not None,
             "stage": stage.value,
         },
@@ -208,7 +199,7 @@ async def execute_run(
     # 增量必须同时抵达（D48/D56）；放到落盘之后会出现一个"有正文没增量"的
     # 瞬时节点，那一刻沿路径重放状态的人（分支、`state_at`）会算错。
     # 代价是这一轮的结束晚一次模型调用，而用户此时已经看完正文了。
-    if session.capabilities.state:
+    if agent_enabled("state_manager"):
         try:
             await _maintain_state(ctx, tracer, outline, prose)
         except asyncio.CancelledError:
@@ -230,7 +221,7 @@ async def execute_run(
     notes = sampling_flags(
         delta=ctx.staged_delta,
         prose=prose,
-        density=control.expansion_density,
+        density=selected("writer", "density"),
         deviation=deviation,
         outline=outline,
         state_before=repo.state_at(parent_id).values,
@@ -243,7 +234,6 @@ async def execute_run(
         parent_id=parent_id,
         status=RunStatus.COMPLETE,
         user_input=turn_input,
-        control=control,
         outline=outline,
         prose=prose,
         deviation_report=deviation,
@@ -281,7 +271,7 @@ async def execute_run(
     # 所以从 writer / state 阶段续跑的那一轮不问——这一轮根本没有 director 在跑，
     # 另起一个只看得见几段细纲的冷调用，判据全靠猜（D112）。那一轮因此不带
     # 分段标记，代价只是这一处分界要等下一轮才被认出来。
-    if session.capabilities.summarize is SummarizeMode.AUTO and director is not None:
+    if special_on("director", "segment") and director is not None:
         with contextlib.suppress(Exception):
             open_nodes = _open_segment(repo, node.id)
             cut = await ask_segment_cut(
@@ -392,7 +382,7 @@ async def _maintain_state(ctx: RunContext, tracer: Tracer, outline: str, prose: 
     try:
         await run_state_manager(
             ctx,
-            ToolRegistry.for_state_manager(ctx.capabilities),
+            ToolRegistry.for_state_manager(),
             tracer,
             outline=outline,
             prose=prose,

@@ -29,8 +29,8 @@ from dataclasses import dataclass, field
 from ..agents.writer import DEVIATION_MARKER
 from ..config import Settings, load_settings
 from ..llm import LLMGateway, Message
-from ..models import ControlDimensions, WorldbookEntry
-from ..prompting import titled, writer_prompt
+from ..models import WorldbookEntry
+from ..prompting import upstream_runs, writer_prompt
 from ..storage import Store
 
 
@@ -67,7 +67,7 @@ class LabResult:
 
 def load_takes(
     settings: Settings, session_id: str, limit: int | None = None
-) -> tuple[list[WorldbookEntry], ControlDimensions, list[Take]]:
+) -> tuple[list[WorldbookEntry], list[Take]]:
     """把一个 session 的每一轮拆成一份固定输入。
 
     `上文` 用**当时落盘的正文**，不是这次重写出来的——否则第 n 轮的输入会随
@@ -81,14 +81,15 @@ def load_takes(
     for i, node in enumerate(path):
         if not node.outline:
             continue
-        window = session.capabilities.upstream_runs
+        window = upstream_runs()
         upstream = "\n\n".join(n.prose for n in path[max(0, i - window) : i] if n.prose)
         takes.append(
             Take(index=i + 1, outline=node.outline, upstream=upstream, original=node.prose)
         )
     # 文风实验要的是角色语言习惯与用户扮演谁——两样都在**条目**上（D159/D171），
-    # worldbook 已经没有字段了（D175）。
-    return repo.worldbook(), session.control, takes[:limit] if limit else takes
+    # worldbook 已经没有字段了（D175）。文风与视角也不在 session 上了（D173），
+    # 它们是 `writer.yaml` 里那两个 `choice` 的 `selected`。
+    return repo.worldbook(), takes[:limit] if limit else takes
 
 
 TERSE_CRAFT = """用网文的笔法写，像讲给人听，别端着。
@@ -104,6 +105,17 @@ TERSE_CRAFT = """用网文的笔法写，像讲给人听，别端着。
 """
 
 
+_CRAFT_HEAD = "# 人物思绪描写"
+_DIALOGUE_HEAD = "细纲中的对白不是台词草稿。"
+"""认出那两节的头一句。**装配器不再自动包标签**（D173），所以不能再按
+`<创作指导>` 这样的前缀去认——那对标签现在根本不存在了。
+
+认头一句是脆的：改了 `writer.yaml` 里那两节的开头，这里就认不出来。所以
+`_terse` 认不全时**直接报错**，不静默放过——一个消融跑出来和基线一模一样，
+比报错难查得多（同 D125：没生效的东西不该悄悄没生效）。
+"""
+
+
 def _terse(messages: list[Message]) -> list[Message]:
     """把三节细则整段换掉，其余原样。
 
@@ -111,26 +123,34 @@ def _terse(messages: list[Message]) -> list[Message]:
     不再是在一大块文本里找下标切片。
     """
     out: list[Message] = []
+    swapped = dropped = False
     for message in messages:
-        body = message.content or ""
-        if body.startswith("<创作指导>"):
-            out.append(message.model_copy(update={"content": titled("创作指导", TERSE_CRAFT)}))
-        elif not body.startswith("<台词>"):
+        body = (message.content or "").lstrip()
+        if body.startswith(_CRAFT_HEAD):
+            out.append(message.model_copy(update={"content": TERSE_CRAFT}))
+            swapped = True
+        elif body.startswith(_DIALOGUE_HEAD):
+            dropped = True
+        else:
             out.append(message)
+    if not (swapped and dropped):
+        raise ValueError(
+            "writer.yaml 里认不出「创作指导」或「台词」那一节——"
+            "改过开头的话，同步改 _CRAFT_HEAD / _DIALOGUE_HEAD"
+        )
     return out
 
 
 async def render_once(
     gateway: LLMGateway,
     worldinfo: list[WorldbookEntry],
-    control: ControlDimensions,
     take: Take,
     *,
     thinking: bool | None = None,
     terse: bool = False,
 ) -> Rendering:
     messages = writer_prompt(
-        control, outline=take.outline, upstream=take.upstream, worldinfo=worldinfo
+        outline=take.outline, upstream=take.upstream, worldinfo=worldinfo
     ).messages
     if terse:
         messages = _terse(messages)
@@ -157,14 +177,14 @@ async def run_lab(
     thinking: bool | None = None,
     terse: bool = False,
 ) -> LabResult:
-    worldinfo, control, takes = load_takes(settings, session_id, limit)
+    worldinfo, takes = load_takes(settings, session_id, limit)
     result = LabResult(session_id=session_id, takes=takes)
 
     async with LLMGateway(settings) as gateway:
         for take in takes:
             for attempt in range(repeat):
                 rendering = await render_once(
-                    gateway, worldinfo, control, take, thinking=thinking, terse=terse
+                    gateway, worldinfo, take, thinking=thinking, terse=terse
                 )
                 rendering.attempt = attempt + 1
                 result.renderings.append(rendering)

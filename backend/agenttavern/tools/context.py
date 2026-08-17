@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from ..llm import LLMGateway, OnDelta
-from ..models import Actor, Capabilities, Session, StateDelta, WorldState
+from ..models import Actor, Session, StateDelta, WorldState
 from ..storage import SessionRepository
 from .inbox import Inbox
 
@@ -53,17 +53,18 @@ class RunContext:
     **每个 run 一个**，由编排层建立——它的生命周期就是这一 run 的生命周期。
     """
 
-    @property
-    def capabilities(self) -> Capabilities:
-        return self.session.capabilities
-
     def stream_to(self, actor: Actor) -> OnDelta | None:
-        """给某个 agent 的分片出口。能力关掉或没有出口时返回 ``None``。
+        """给某个 agent 的分片出口。没有出口时返回 ``None``。
 
         **返回 `None` 时调用方走非流式那条路**——上层不必写两份逻辑，把它原样
         传给 `complete(on_delta=...)` 即可。
+
+        「要不要流式」这个开关**上调到了服务级**（`Settings.stream`，D174）：
+        它是这组开关里唯一一条**关于交付而不是关于能力**的——开关它不改变模型
+        收到什么、也不改变产出，只改变用户什么时候看到。所以编排层在建 context
+        时就据它决定给不给 `on_delta`，这里不再判一次。
         """
-        if not self.capabilities.stream or self.on_delta is None:
+        if self.on_delta is None:
             return None
         sink = self.on_delta
         return lambda kind, text: sink(actor.value, kind, text)

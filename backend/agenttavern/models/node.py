@@ -16,7 +16,6 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 from ..llm.types import Message
-from .control import ControlDimensions
 from .state import StateDelta
 
 
@@ -84,8 +83,10 @@ class Node(BaseModel):
     user_input: UserInput | None = None
     """时间驱动模式或 goal 驱动的后续 run 可能没有用户输入。"""
 
-    control: ControlDimensions = Field(default_factory=ControlDimensions)
-    """本 run 实际生效的取值（常驻设置 + 单轮覆盖合并后的结果）。"""
+    # `control` **已删除**（D173/D174）：控制维度整体上调到提示词层之后，
+    # 这个字段记的是一份全局配置的快照——每个节点存一遍同样的东西，而它既不
+    # 随节点变化，也不再有"单轮覆盖"可记。要知道某一轮用的什么文风，看当时的
+    # agent 配置，不看节点。
 
     outline: str = ""
     """director 的产出：无文风约束的文章（D34）。

@@ -19,15 +19,25 @@
 from __future__ import annotations
 
 from ..config import LIMITS
-from ..models import ExpansionDensity, StateDelta
+from ..models import StateDelta
 from ..models.state import label_path as _label
 from ..models.state import paths_of, walk
 
 _DENSITY_MIN_CHARS = {
-    ExpansionDensity.SPARSE: 80,
-    ExpansionDensity.NORMAL: 150,
-    ExpansionDensity.RICH: 300,
+    "sparse": 80,
+    "normal": 150,
+    "rich": 300,
 }
+"""每个事件至少几个字，按铺陈程度分档。**键是 `writer.yaml` 里 `density` 那组
+的档位名**（D173：档位定义在 YAML，这里只按名字查一个数值阈值）。
+
+**找不到就按 normal 算**：用户加一档文风或改个档位名，不该让整轮生成失败——
+这是个采样标记的阈值，不是契约（D43/D44：采样标记从不影响运行时行为）。
+"""
+
+
+def _min_chars(density: str) -> int:
+    return _DENSITY_MIN_CHARS.get(density, _DENSITY_MIN_CHARS["normal"])
 
 
 EXPANSION_MIN_RATIO = LIMITS.sampling.expansion_min_ratio
@@ -120,7 +130,7 @@ def sampling_flags(
     *,
     delta: StateDelta,
     prose: str,
-    density: ExpansionDensity,
+    density: str,
     deviation: str | None,
     outline: str = "",
     state_before: dict[str, object] | None = None,
@@ -145,11 +155,11 @@ def sampling_flags(
             "writer 可能在照抄而非展开（细纲越界写了描写？）"
         )
 
-    if delta.is_empty() and len(prose) > _DENSITY_MIN_CHARS[density] * 2:
+    if delta.is_empty() and len(prose) > _min_chars(density) * 2:
         flags.append("正文不短却没有任何状态变化，可能有遗漏的记录")
 
-    if prose and len(prose) < _DENSITY_MIN_CHARS[density] // 2:
-        flags.append(f"正文明显短于当前展开密度（{density.value}）的预期")
+    if prose and len(prose) < _min_chars(density) // 2:
+        flags.append(f"正文明显短于当前展开密度（{density}）的预期")
 
     if deviation:
         flags.append(f"writer 报告了偏离：{deviation}")

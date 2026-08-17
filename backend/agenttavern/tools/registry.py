@@ -1,8 +1,13 @@
 """工具注册表与调度。
 
-**能力关闭时对应工具不注册**——模型根本看不到它。这比「注册了但拒绝调用」强：
+**关掉的工具不注册**——模型根本看不到它。这比「注册了但拒绝调用」强：
 后者仍然占 prompt 体量、仍会被尝试、失败还要消耗一轮往返。工具面越小，
 模型的决策空间越小（分配原则 P9）。
+
+**开关住在各 agent 的 YAML 里**（D174）：`tools.<名字>.enabled`。它们以前是
+`Capabilities` 上的一排布尔值——**但它们从来不是独立的配置，是某个工具的属性**，
+而工具描述本来就在那份文件里（D173）。开关和它管的那段字住在一起，
+改一个工具的一切（描述、档位、开不开）只在一处。
 """
 
 from __future__ import annotations
@@ -10,13 +15,8 @@ from __future__ import annotations
 from typing import Any
 
 from ..llm import ToolCall, ToolSpec
-from ..models import (
-    Capabilities,
-    ControlDimensions,
-    SummarizeMode,
-    WorldbookEntry,
-    WorldbookMode,
-)
+from ..models import WorldbookEntry, WorldbookMode
+from ..prompting import enabled, tool_enabled
 from .base import Tool, ToolResult, error
 from .builtin import (
     ask_question_tool,
@@ -30,12 +30,8 @@ from .builtin import (
 from .goal import goal_tools
 
 
-def build_tools(
-    capabilities: Capabilities,
-    worldinfo: list[WorldbookEntry] | None = None,
-    control: ControlDimensions | None = None,
-) -> list[Tool[Any]]:
-    """director 的工具面，按能力开关组装。
+def build_tools(worldinfo: list[WorldbookEntry] | None = None) -> list[Tool[Any]]:
+    """director 的工具面。
 
     ``submit_outline`` 永远存在——它是 loop 的唯一终止点（D53）。
 
@@ -44,33 +40,34 @@ def build_tools(
     """
     tools: list[Tool[Any]] = [submit_tool()]
 
-    if capabilities.state and capabilities.state_query:
-        # `state_query` 是**按需展开**，可以单独关。关掉时 state 每轮全量注入——
-        # 没有展开的路还隐藏长值，就成了有损筛选（D62）。
-        tools.append(state_query_tool())
+    # `state_query` 是**按需展开**，可以单独关。关掉时 state 每轮全量注入——
+    # 没有展开的路还隐藏长值，就成了有损筛选（D62）。
+    # state_manager 整个关掉时它也没意义：查一份永远是空的状态。
+    if enabled("state_manager") and tool_enabled("director", "state_query"):
+        tools.append(state_query_tool("director"))
 
-    if capabilities.history_search:
+    if tool_enabled("director", "history_search"):
         tools += history_tools()
 
     # 全部条目都是常驻注入、或按需展开被关掉时不注册——
     # 没有任何东西可展开，留着只是白占 prompt 体量。
-    if capabilities.worldinfo_read and any(
+    if tool_enabled("director", "worldinfo_read") and any(
         e.mode is WorldbookMode.ON_DEMAND and e.is_lore for e in worldinfo or []
     ):
         tools += worldinfo_tools()
 
-    if capabilities.summarize is SummarizeMode.AUTO:
+    if tool_enabled("director", "summarize"):
         tools.append(summarize_tool())
 
-    if capabilities.ask_question:
+    if tool_enabled("director", "ask_question"):
         # 控制权那一档直接写进它的描述——「越高越少问」讲的是这个工具的调用
-        # 积极性，不是创作要求（D140）。
-        tools.append(ask_question_tool((control or ControlDimensions()).model_authority))
+        # 积极性，不是创作要求（D140②），所以它是那条描述自己的 `choice`。
+        tools.append(ask_question_tool())
 
     return tools
 
 
-def build_state_tools(capabilities: Capabilities) -> list[Tool[Any]]:
+def build_state_tools() -> list[Tool[Any]]:
     """state_manager 的工具面：**只有 state 那两个**（D143）。
 
     它不查历史、不展开设定、不问用户、也没有 `submit_outline`——它的活是把
@@ -81,35 +78,28 @@ def build_state_tools(capabilities: Capabilities) -> list[Tool[Any]]:
     得有个地方承接；state_manager 的产物是那几次写入本身，写完就没事了。
     """
     tools: list[Tool[Any]] = [state_write_tool()]
-    if capabilities.state_query:
-        tools.append(state_query_tool())
+    if tool_enabled("state_manager", "state_query"):
+        tools.append(state_query_tool("state_manager"))
     return tools
 
 
 class ToolRegistry:
     def __init__(self, tools: list[Tool[Any]] | None = None) -> None:
-        if tools is None:
-            tools = build_tools(Capabilities())
-        self._tools = {t.name: t for t in tools}
+        self._tools = {t.name: t for t in (build_tools() if tools is None else tools)}
 
     @classmethod
-    def for_session(
-        cls,
-        capabilities: Capabilities,
-        worldinfo: list[WorldbookEntry] | None = None,
-        control: ControlDimensions | None = None,
-    ) -> ToolRegistry:
-        return cls(build_tools(capabilities, worldinfo, control))
+    def for_session(cls, worldinfo: list[WorldbookEntry] | None = None) -> ToolRegistry:
+        return cls(build_tools(worldinfo))
 
     @classmethod
-    def for_state_manager(cls, capabilities: Capabilities) -> ToolRegistry:
-        return cls(build_state_tools(capabilities))
+    def for_state_manager(cls) -> ToolRegistry:
+        return cls(build_state_tools())
 
     @classmethod
     def for_goal_manager(cls) -> ToolRegistry:
-        """goal_manager 的工具面：`plan` / `advance` / `finish`（D148）。
+        """goal_manager 的工具面：`plan` / `check` / `steer` / `finish`（D148/D151）。
 
-        **不吃能力开关**——goal 要么在跑要么不在，没有中间档；这三个是它全部的
+        **不吃开关**——goal 要么在跑要么不在，没有中间档；这四个是它全部的
         表达方式，缺一个就有话说不出来。
         """
         return cls(goal_tools())

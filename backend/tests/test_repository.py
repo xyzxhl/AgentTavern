@@ -148,9 +148,9 @@ def test_config_yaml_covers_every_knob() -> None:
     """
     from agenttavern.agents import director, goal_manager, replay, state_manager, summarizer
     from agenttavern.config import LIMITS, load_limits
-    from agenttavern.models import Capabilities, Goal
+    from agenttavern.models import Goal
     from agenttavern.orchestration import checks
-    from agenttavern.prompting import prompts
+    from agenttavern.prompting import prompts, state_recent_runs, upstream_runs
     from agenttavern.tools import builtin
 
     wired = {
@@ -173,10 +173,12 @@ def test_config_yaml_covers_every_knob() -> None:
             LIMITS.sampling.state_value_max_chars,
             checks.STATE_VALUE_MAX_CHARS,
         ),
-        "windows.upstream_runs": (LIMITS.windows.upstream_runs, Capabilities().upstream_runs),
+        # 这两个的**真值在 YAML 的 context 条目上**（D174）；`config.yaml`
+        # 那份只是那一条被删掉时的兜底。仓库里两处应当一致。
+        "windows.upstream_runs": (LIMITS.windows.upstream_runs, upstream_runs()),
         "windows.state_recent_runs": (
             LIMITS.windows.state_recent_runs,
-            Capabilities().state_recent_runs,
+            state_recent_runs(),
         ),
         "goal_manager.max_rounds": (LIMITS.goal_manager.max_rounds, goal_manager.MAX_ROUNDS),
     }
@@ -188,8 +190,8 @@ def test_config_yaml_covers_every_knob() -> None:
     assert Goal(description="x").max_total_tokens is None
     assert not hasattr(LIMITS.goal_manager, "max_runs")
 
-    # session 级那几处只是**取默认值**，仍然能单独覆盖。
-    assert Capabilities(upstream_runs=9).upstream_runs == 9
+    # `Capabilities` 整个没了（D174）：那些开关上调到了提示词层，窗口宽度成了
+    # 对应那条 `context` 上的 `runs`。**这里的数只是那一条被删掉时的兜底。**
 
     # **文件里的值就是真值**，不是被模型里那份兜底默认悄悄顶掉的。
     assert load_limits().model_dump() == LIMITS.model_dump()

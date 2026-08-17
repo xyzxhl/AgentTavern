@@ -5,10 +5,11 @@
 而且不知道自己丢了什么。那正是 D62 判 lorebook 关键词触发不合格的理由。
 """
 
+from conftest import using
+
 from agenttavern.agents.replay import CONTEXT_BUDGET_CHARS, replay_messages
 from agenttavern.llm import Message, Role
 from agenttavern.models import (
-    Capabilities,
     Node,
     WorldbookEntry,
     WorldbookMode,
@@ -25,9 +26,9 @@ def test_state_is_injected_in_full_when_query_is_off() -> None:
     state = WorldState(values={"林与陈.关系": LONG})
     assert len(LONG) > STATE_INLINE_LIMIT
 
-    assert "state_query 展开" in render_state(state, expandable=True)
+    assert "state_query 展开" in render_state(state, agent="director", expandable=True)
 
-    off = render_state(state, expandable=False)
+    off = render_state(state, agent="director", expandable=False)
     assert LONG in off
     assert "state_query" not in off, "不能广告一个没注册的工具"
 
@@ -38,10 +39,15 @@ def test_state_query_disappears_from_both_sides_but_write_stays() -> None:
     `state_query` 两侧都有（director 读状态推演，state_manager 写之前先看），
     所以这个开关一关就两边一起消失（D143）。
     """
-    caps = Capabilities(state=True, state_query=False)
-
-    assert "state_query" not in ToolRegistry.for_session(caps).names
-    assert {t.name for t in build_state_tools(caps)} == {"state_write"}
+    # **两侧各有各的开关**（D173）：同一个工具在两个 agent 手上是两条描述、
+    # 两个开关，所以「按需展开」这件事要在两边各关一次。
+    off = {
+        "director": {"state_query": False},
+        "state_manager": {"state_query": False},
+    }
+    with using(tools=off):
+        assert "state_query" not in ToolRegistry.for_session().names
+        assert {t.name for t in build_state_tools()} == {"state_write"}
 
 
 def test_on_demand_worldinfo_is_inlined_when_read_is_off() -> None:
@@ -64,11 +70,9 @@ def test_on_demand_worldinfo_is_inlined_when_read_is_off() -> None:
 def test_worldinfo_tools_disappear_when_read_is_off() -> None:
     entries = [WorldbookEntry(name="旧货店", mode=WorldbookMode.ON_DEMAND, content="老城区。")]
 
-    assert "worldinfo_read" in ToolRegistry.for_session(Capabilities(), entries).names
-    assert (
-        "worldinfo_read"
-        not in ToolRegistry.for_session(Capabilities(worldinfo_read=False), entries).names
-    )
+    assert "worldinfo_read" in ToolRegistry.for_session(entries).names
+    with using(tools={"director": {"worldinfo_read": False}}):
+        assert "worldinfo_read" not in ToolRegistry.for_session(entries).names
 
 
 def _compacted(readable: bool) -> str:

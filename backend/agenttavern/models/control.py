@@ -1,9 +1,27 @@
-"""Session 元指令、控制维度、模式。
+"""Session 元指令与模式。
 
-三类东西性质不同，不可混为一表（D38）：
-  - 元指令   改变**目标**——这个 session 要什么体验。创建时设定，很少改。
-  - 控制维度 改变**处理方式**——每 run 怎么处理。会话内可调。
-  - 模式     改变**触发源**——谁触发生成。
+**「配置」这一层已经没了**（D173/D174）。曾经这里有三类东西：元指令（改变目标）、
+控制维度（改变处理方式）、能力开关（系统能做什么）。后两类**整体上调到了提示词
+层**——它们全都在改「模型收到什么」，那就该和提示词住在同一份文件里，而不是散在
+session / worldbook / 服务三个层级：
+
+| 原来在这里 | 现在在哪 |
+|---|---|
+| `ControlDimensions`（输入处理、抢话、文风、视角、铺陈） | agent YAML 里 `choice` 的 `selected` |
+| `ControlOverride`（单轮覆盖，D45） | **删掉**：没有被覆盖的对象了 |
+| `Capabilities.nudge` / `summarize` | director 的 `specials.nudge` / `.segment` 的 `enabled` |
+| `Capabilities.state` | `state_manager.yaml` 顶上的 `enabled`（这个 agent 跑不跑） |
+| `Capabilities.state_query` / `worldinfo_read` / `history_search` 等 | 各自那个工具的 `enabled` |
+| `Capabilities.upstream_runs` / `state_recent_runs` | 对应那条 `context` 上的 `runs` |
+| `Capabilities.stream` / `trace` | **`Settings`**（服务级，关于交付与运维，不关于能力） |
+
+规律是**几乎每一项都落成「某个具体条目上的开关或参数」**——这本身就是它们该
+归 agent 管理的证据：它们从来不是独立的配置，是某条提示词、某个工具、某段
+context 的属性。
+
+于是 session 上只剩**内容**：标题、目标、节点树。`SessionModes.time_driven`
+是唯一留下来的开关，因为它改的是**触发源**——「这局故事没人说话时要不要自己
+往前跑」，和 goal 的自动续跑是同一类东西。
 
 详见 docs/design/Configuration.md。
 """
@@ -14,124 +32,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-from ..config import LIMITS
 from ..llm.types import Message
-
-# --------------------------------------------------------------------------
-# 控制维度（D42，四项）
-# --------------------------------------------------------------------------
-
-
-class InputHandling(StrEnum):
-    """输入处理三档（D41）。取代了原先"转述二值 × 故事跨度"的设计。
-
-    故事跨度不再是独立维度：想快进就写在指令里（那本就是指令内容），
-    想零推进就是 NARRATE_ONLY。
-    """
-
-    NARRATE_AND_ADVANCE = "narrate_and_advance"
-    """转述用户行为，然后继续演。典型输入："我推开门"。"""
-
-    NARRATE_ONLY = "narrate_only"
-    """只写用户这一步，停下等下一步。用户完全掌控节奏。"""
-
-    ADVANCE_ONLY = "advance_only"
-    """用户输入作为前提，直接写后续。典型输入："往悬疑走"。"""
-
-
-class ModelAuthority(StrEnum):
-    """模型剧情控制权。
-
-    直接反映为 ``ask_question`` 工具的调用积极性——**控制权越高，调用积极性越低**（D39）。
-    三档均保持 run ↔ 细纲一一对应：交互式创作是在一个 run 内多次提问，
-    而非拆成多个 run（D58）。
-    """
-
-    LOW = "low"
-    """一个 run 内多次提问，边推演边问（交互式创作）。"""
-
-    MEDIUM = "medium"
-    """约 1 次，细纲成型后给候选。"""
-
-    HIGH = "high"
-    """0 次，由 goal 驱动连续多个 run（长循环自主创作）。"""
-
-
-class ExpansionDensity(StrEnum):
-    """展开密度：每单位故事时间写多少字。
-
-    与"故事跨度"正交——同一场戏可以写 200 字也可以写 2000 字。
-    同时影响两侧：细纲的事件密度（director）与正文的铺陈程度（writer）。
-    """
-
-    SPARSE = "sparse"
-    NORMAL = "normal"
-    RICH = "rich"
-
-
-class ControlDimensions(BaseModel):
-    """每 run 生效的控制维度取值。
-
-    由用户显式选择而非模型推断；与输入内容冲突时**显式优先**（D15）。
-    """
-
-    input_handling: InputHandling = InputHandling.NARRATE_AND_ADVANCE
-    model_authority: ModelAuthority = ModelAuthority.MEDIUM
-    expansion_density: ExpansionDensity = ExpansionDensity.NORMAL
-
-    allow_speaking_for_user: bool = False
-    """是否允许抢话——模型能否替用户的角色说话、行动、描写心理。
-
-    两种偏好都很常见，没有默认答案，推断必错一半，因此必须显式。
-    """
-
-    prose_style: str = "wangwen"
-    """文风档位名。仅注入 writer（D33 的隔离基础）。
-
-    **存的是 `writer.yaml` 里 `prose_style` 那个选项组的二级标题名**（`wangwen`、
-    `gufeng`、`jishi`……），不是一段自由文本：文风是最该反复调的东西，写成自由
-    文本时它散在每个 session 里，改一次只影响一个故事，而且从提示词那侧完全看
-    不见；做成选项之后，一档就是一段可编辑的提示词，加一档只是加一个二级标题。
-
-    **它在这里而不在 `SessionMeta`**，理由和 `expansion_density` 一样：文风是
-    读者这一侧的偏好，不是这个世界的属性。同一本世界设定换个文风照样成立，
-    换个人来读就该能换。题材与基调不同——那是世界自己的事，留在 `SessionMeta`。
-
-    这里**不做成枚举**：加一档不该动 Python。名字对不上时 `choice()` 会报错，
-    错误信息里带着文件名和键名。
-    """
-
-    pov: str = "third"
-    """视角。同上——读者偏好，不是世界属性。
-
-    **和文风一样是选项名，不是自由文本**：三档全文写在 `writer.yaml` 的 `pov`
-    选项组里，这里只说选哪一档。改成选项组是因为「第一人称／第二人称／第三人称」
-    本来就是三个互斥的档，写成自由文本时每个 session 各写各的措辞，
-    writer 那侧无从对齐。
-    """
-
-    def merged_with(self, override: ControlOverride | None) -> ControlDimensions:
-        """套用单轮覆盖。未指定的项沿用常驻设置（D45）。"""
-        if override is None:
-            return self
-        patch = override.model_dump(exclude_none=True)
-        return self.model_copy(update=patch) if patch else self
-
-
-class ControlOverride(BaseModel):
-    """单轮覆盖。全部字段可选；未指定即沿用常驻设置。
-
-    UI 上应做成**快捷方式**（``/只转述``）而非选择题——显式化的代价边界
-    在交互形态上，不在维度数量上（D45）。
-    """
-
-    input_handling: InputHandling | None = None
-    model_authority: ModelAuthority | None = None
-    expansion_density: ExpansionDensity | None = None
-    allow_speaking_for_user: bool | None = None
-    prose_style: str | None = None
-    pov: str | None = None
-
 
 # --------------------------------------------------------------------------
 # Session 元指令
@@ -321,8 +222,8 @@ class SessionMeta(BaseModel):
     也是成立。当时没搬，是因为 worldbook 还不是独立的东西（D92：一份 worldbook
     开启一个 session），"世界的属性"和"故事的属性"没有区别的余地。
 
-    文风和视角两样都不在这儿：它们是读者这一侧的偏好，和铺陈程度一起归
-    `ControlDimensions`。
+    文风和视角两样也不在这儿：**它们上调到了 writer.yaml**（D173），
+    和铺陈程度一样是一个 `choice` 的 `selected`。
 
     **没有「否定项」字段**（D139）。不能提前揭示的东西属于世界设定，写进
     worldinfo 或 state；「不许写什么」这类写作纪律属于提示词，写进 YAML。
@@ -334,119 +235,6 @@ class SessionMeta(BaseModel):
     可以有好几个故事，两者必须分得开。"""
 
     goal: Goal | None = None
-
-
-class SummarizeMode(StrEnum):
-    MANUAL = "manual"
-    """归段由**用户**决定：不做生成后追问，只在用户主动要求时归段。
-
-    仍然保留"到 ``MAX_SEGMENT_RUNS`` 强制断开"那条止损支路——否则关掉自动之后
-    索引会一直退化在头部截断上，而那个回退是**位置偏置**的，不是中性的。
-    """
-
-    AUTO = "auto"
-    """每轮生成后追问 director"这一段收了没有"，收了就归段（D112）。
-
-    追问放在**生成之后**而不是 tool loop 里，因为它对本轮产出毫无帮助，
-    却要占往返、分散注意力、还和 `submit_outline` 的终止语义打架。
-
-    但它**必须问 director 本人**：判据是"这场戏完了没有"，需要 state、前情和
-    故事走向——另起一个只看得见几段细纲的冷调用，判据全靠猜。追问接在它自己的
-    对话后面，因此几乎不花额外的输入 token。
-    """
-
-
-class Capabilities(BaseModel):
-    """能力开关。**关闭时对应工具不注册**——模型根本看不到它。
-
-    这是第四类配置，与元指令（目标）/ 控制维度（处理方式）/ 模式（触发源）都不同：
-    它决定**系统能做什么**，而不同故事需要的能力差别很大。这与 D74 是同一个判断——
-    不预设所有故事都一样。
-
-    「不注册」比「注册了但拒绝调用」强：后者仍然占 prompt 体量、仍会被尝试、
-    失败还要消耗一轮往返。工具面越小，模型的决策空间越小（分配原则 P9）。
-    """
-
-    nudge: bool = True
-    """模型只回文本时推它一句（D140）。
-
-    关闭时那句话根本不发——模型空手回来这一轮就算完。措辞在 `director.yaml`
-    的 `nudge` 选项组里，这个开关只决定用不用 `off` 那一档。
-    """
-
-    state: bool = True
-    """结构化状态。关闭时 ``state_query`` / ``state_write`` 都不注册，
-    且 ``submit_outline`` 不再要求先提交增量（E0 契约随之失效）。
-    """
-
-    state_query: bool = True
-    """state 的**按需展开**。关闭时 ``state_query`` 不注册，而 state **每轮全量注入**。
-
-    两件事必须绑在一起：注入时截断长值、再让模型用工具展开，是"无损降维"；
-    **一旦没了展开的路，截断就成了有损筛选**——模型看得见键名却永远拿不到内容，
-    而它不知道自己丢了什么。那正是 D62 判为不合格的形态（lorebook 关键词触发同理）。
-    """
-
-    worldinfo_read: bool = True
-    """设定的**按需展开**。关闭时 ``worldinfo_list`` / ``worldinfo_read`` 不注册，
-    所有条目（含标记为按需的）一律**全文进静态前缀**。
-
-    设定是跨轮不变的，所以它天然属于缓存前缀（D114）——全量注入的代价只付一次。
-    """
-
-    history_search: bool = False
-    """细纲历史的检索。关闭时**禁止检索**——只有近期全文 + 更早的长期总结，
-    ``history_search`` / ``history_read`` 都不注册。
-    """
-
-    upstream_runs: int = LIMITS.windows.upstream_runs
-    """给 writer 几轮**正文**上文。它只用来接住语气和现场，不是长程记忆——
-    长程记忆是 director 的事，它读细纲历史（D52/D54）。
-    """
-
-    state_recent_runs: int = LIMITS.windows.state_recent_runs
-    """给 state_manager 几轮「细纲 → 成文 → 当时记下的」示范（D143）。
-
-    **这是 state_manager 最大的一笔开销**，也是整个系统里最贵的一段上下文：
-    它是滑动窗口，每轮全变，一点缓存前缀都吃不到，而前几轮的正文是其中的大头。
-    实测 `data` 场景取 3 时，state_manager 占掉了全场 42% 的 input token。
-    往下调省钱，代价是键名和值的形状更容易漂移。
-
-    **和 `upstream_runs` 分开**：两者要的东西不一样。writer 要的是语气的连续，
-    少一轮只是接得生硬些；state_manager 要的是记法的示范，少一轮直接影响
-    键名一致性。合成一个参数会让其中一侧被另一侧的理由绑架。
-    """
-
-    summarize: SummarizeMode = SummarizeMode.AUTO
-    """**默认开**，这与其他能力开关的"默认关"相反（D78），因为它的回退项不是中性的。
-
-    没有摘要时索引回退到"细纲前 120 字"——那不是"精度低一点"，而是**位置偏置**：
-    开头的东西原样保留、结尾的东西完全消失，留下什么取决于它碰巧在哪个位置。
-    而它在上下文里还顶着「总结」的名字。**一个会误导模型的回退，不能当作安全的默认值。**
-    """
-
-    ask_question: bool = True
-    """停下来问用户。关闭时模型只能自己拿主意——注意这与控制权等级不同：
-    等级调节**积极性**，这里是**有没有这个动作**。
-    """
-
-    stream: bool = True
-    """**边生成边推**（D160）。关掉则一轮写完才整段出现。
-
-    它是这组开关里唯一一条**关于交付而不是关于能力**的：别的几条决定模型能做
-    什么，这条只决定同样的产出怎么送到眼前。放在这里是因为它和别的几条一样
-    **按 session 走**——同一台服务上，一个故事想看着它写，另一个只想要结果。
-
-    D7 说的是「不为保住逐 token 流式而扭曲 agent 结构」。这条不扭曲任何结构：
-    四个 agent 的顺序、工具循环、契约、重放全都不变，流式只是多了一条旁路。
-    """
-
-    trace: bool = False
-    """**开发者模式**。trace 服务于 eval，不是产品功能，默认关闭。
-
-    关闭时事件仍会推给 UI（"呈现 agent 工作过程"依赖它），但**不落盘**——
-    这正是 D25 要求 trace 与 UI 呈现分两层的好处：两者可以独立开关。
-    """
 
 
 class SessionModes(BaseModel):

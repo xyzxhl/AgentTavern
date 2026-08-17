@@ -24,6 +24,7 @@ from .bench.scenarios import SCENARIOS
 from .config import Settings, load_settings
 from .models import Session, TraceEvent, UserInput
 from .orchestration import execute_run
+from .prompting import selected
 from .storage import Store
 
 # --------------------------------------------------------------------------
@@ -60,8 +61,10 @@ def render_report(
         f"- 模型：`{settings.llm_model}` @ `{settings.llm_base_url}`",
         f"- 结果：{'**失败** — ' + failure if failure else '成功'}",
         f"- 指标：{json.dumps(metrics.as_dict(), ensure_ascii=False)}",
-        f"- 控制维度：{json.dumps(session.control.model_dump(mode='json'), ensure_ascii=False)}",
-        f"- 能力：{json.dumps(session.capabilities.model_dump(mode='json'), ensure_ascii=False)}",
+        # 配置整体上调到了提示词层（D174），session 上没有它们了。记下**当前
+        # 选的哪几档**——冒烟报告要能回答"这份产出是在什么设定下跑出来的"。
+        f"- 文风 / 视角 / 铺陈：{selected('writer', 'prose_style')} / "
+        f"{selected('writer', 'pov')} / {selected('writer', 'density')}",
         "",
         "## 用户输入",
         "",

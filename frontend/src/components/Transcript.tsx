@@ -1,6 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 
+import { api } from "../api";
 import type { Node } from "../protocol";
 import { useSession } from "../store";
 import { NodeEditor } from "./NodeEditor";
@@ -35,13 +36,14 @@ export function Transcript(): JSX.Element {
           <p className="text-sm text-dim">说点什么开始这个故事。</p>
         )}
 
-        {path.map((node) => (
+        {path.map((node, at) => (
           <Turn
             key={node.id}
             said={node.user_input?.text}
             simulated={node.user_input?.source === "simulated"}
             events={traces[node.id ?? ""] ?? []}
             node={node}
+            last={at === path.length - 1}
             // **落地之后思考段还留着**（D166）：它不在节点里，扔掉就再也看不到了。
             // goal_manager 更是在这一轮落地**之后**才跑的，它的思考只能挂在这儿。
             thinking={streaming[node.id ?? ""]?.process}
@@ -70,6 +72,7 @@ function Turn({
   simulated,
   events,
   node,
+  last,
   running,
   streamed,
   thinking,
@@ -78,6 +81,9 @@ function Turn({
   simulated?: boolean;
   events: import("../protocol").TraceEvent[];
   node?: Node;
+  /** 是不是路径末端。**只有它下面才给「在这里断段」**——手动归段收的是"到此
+   * 为止还没归段的那几轮"，在中间某一轮点它，收的仍然是到末端为止的那一段。 */
+  last?: boolean;
   running?: boolean;
   /** 流式攒出来的正文。**只在这一轮还没落地时用**——节点一到就让位（D160）。 */
   streamed?: string;
@@ -85,6 +91,7 @@ function Turn({
   thinking?: import("../store").Thought[];
 }): JSX.Element {
   const editing = useSession((s) => s.editing);
+  const notes = useSession((s) => s.notes[node?.id ?? ""] ?? []);
 
   // **时间线不能在正文这里倒着走**（D167）：状态维护跑在 writer 之后（D143），
   // goal 判定更在 run 末（D28），它们的思考与工具调用因此归到正文**下面**那一块。
@@ -117,7 +124,7 @@ function Turn({
       {/* 还在写：把攒出来的字直接摆出来。**不做 Markdown**——半截语法
           （没闭合的 `**`、写了一半的列表）渲染出来会跳来跳去。 */}
       {!node && streamed && (
-        <p className="whitespace-pre-wrap font-prose text-[15px] leading-[1.9] text-fg">
+        <p className="prose-body whitespace-pre-wrap">
           {streamed}
           <span className="ml-0.5 inline-block h-4 w-[2px] animate-pulse bg-accent align-text-bottom" />
         </p>
@@ -125,7 +132,7 @@ function Turn({
 
       {node &&
         (node.prose ? (
-          <div className="font-prose text-[15px] leading-[1.9] text-fg">
+          <div className="prose-body">
             <Markdown>{node.prose}</Markdown>
           </div>
         ) : (
@@ -151,8 +158,67 @@ function Turn({
         />
       )}
 
+      {/* **采样标记**（D43/D44）：服务端每轮都在算，而它从不影响运行时行为。
+          放在这一轮的末尾、收着摆——它是"这一轮有什么值得看一眼"，不是警告。 */}
+      {notes.length > 0 && (
+        <ul className="mt-3 space-y-0.5">
+          {notes.map((note, i) => (
+            <li key={i} className="flex gap-1.5 text-[11px] text-dim/70">
+              <span className="select-none">·</span>
+              <span className="min-w-0 flex-1">{note}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
       {node && editing === node.id && <NodeEditor node={node} />}
+
+      {/* 已归段的分界画出来，没归段的给一个「在这里断段」（D112 的第三条支路）。 */}
+      {node?.closes_segment && <SegmentEnd span={node.segment_span ?? 1} />}
+      {node && last && !node.closes_segment && <CloseSegment />}
     </article>
+  );
+}
+
+/** 一段剧情收在这里。**它是索引的单位**——摘要存在段落的最后一个节点上（D110）。 */
+function SegmentEnd({ span }: { span: number }): JSX.Element {
+  return (
+    <div className="my-6 flex items-center gap-3 text-[11px] text-dim">
+      <span className="h-px flex-1 bg-line" />
+      <span className="shrink-0">一段结束（{span} 轮）</span>
+      <span className="h-px flex-1 bg-line" />
+    </div>
+  );
+}
+
+/**
+ * 手动归段（D112 的第三条支路）。**用户说这一段收了，就是收了**——不再追问模型。
+ *
+ * 自动追问判早了或判晚了，用户随时可以自己断；归段追问关掉时它更是唯一的路。
+ * 后端一直有这个接口，而界面此前连方法都没有。
+ */
+function CloseSegment(): JSX.Element {
+  const sessionId = useSession((s) => s.sessionId);
+  const refreshState = useSession((s) => s.refreshState);
+  const [busy, setBusy] = useState(false);
+
+  async function close(): Promise<void> {
+    if (!sessionId) return;
+    setBusy(true);
+    try {
+      await api.closeSegment(sessionId);
+      await refreshState();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 flex justify-center opacity-0 transition-opacity group-hover:opacity-100">
+      <button className="btn" onClick={() => void close()} disabled={busy} title="到这里为止收成一段">
+        ⌄ 在这里断段
+      </button>
+    </div>
   );
 }
 

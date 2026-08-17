@@ -37,7 +37,7 @@ from __future__ import annotations
 from ..config import LIMITS
 from ..llm import Message, Role
 from ..models import Node
-from ..prompting import assemble, load, titled
+from ..prompting import rendering, special, special_messages
 
 CONTEXT_BUDGET_CHARS = LIMITS.context.budget_chars
 """越过这个体量才压缩。
@@ -47,47 +47,45 @@ CONTEXT_BUDGET_CHARS = LIMITS.context.budget_chars
 """
 
 
-APPEND_FILE = "director_append"
-"""追加输入那一条的提示词文件。
-
-它是**片段文件**：顶层直接是一条 section，没有命名块——因为它不是某个 agent
-收到的全部文字，而是**跑到一半往对话里追加的那一条**。
-"""
-
-
 def append_message(said: str) -> Message:
     """把用户追加的那一句**说明之后再追加**进对话。
 
     引导和打断插进来的那条消息，以前是裸文本前面顶一句写死在 Python 里的
     `（用户在这里插了一句）`。裸着塞进去，模型读到的是一条突然冒出来的用户
-    发言，看不出它和这一轮已经进行到一半的推演是什么关系。措辞现在归
-    `director_append.yaml`——它是提示词，跟别的提示词放在一起（同 D140）。
+    发言，看不出它和这一轮已经进行到一半的推演是什么关系。措辞在
+    `director.yaml` 的 `specials.append` 里——它是提示词，跟别的提示词放在
+    一起（D173：**一份文件 = 一个 agent 收到的全部文字**）。
     """
-    messages = assemble(APPEND_FILE, contexts={"user_additional_input": said}).messages
+    messages = special_messages("director", "append", values={"said": said})
     if len(messages) != 1:
-        raise ValueError(f"{APPEND_FILE}.yaml 只能有一条 section，现在有 {len(messages)} 条")
+        raise ValueError(f"director.yaml 的 specials.append 只能有一条，现在有 {len(messages)} 条")
     return messages[0]
 
 
-def _append_tag() -> str:
-    """追加输入那一条的**结构标记**：它的 `<标题>`。
+def _interjection_mark() -> str:
+    """追加输入那一条的**结构标记**。
 
     扁平化时要靠它把用户的插话和编排层的催促（"请调用 submit_outline……"）
     分开：前者是不可再生的用户输入，跨轮必须留；后者是脚手架，跨轮带着只会
     像一条仍然生效的指令。
 
-    **从 YAML 那一条的 title 推出来，不另写一份**——两份必然对不上，而对不上的
-    后果是插话在重放时被当成催促悄悄丢掉（同 D125）。所以那一条必须有 title，
-    没有就直接报错。
+    **装配器不再自动包标签**（D173），所以记号由用户自己写在 `body` 里，而
+    `specials.append.mark` 声明它是哪一串。**两处必须对上**——对不上的后果是
+    插话在重放时被当成催促悄悄丢掉（同 D125），所以这里当场校验。
     """
-    sections = load(APPEND_FILE).get("sections") or []
-    title = next((s["title"] for s in sections if isinstance(s, dict) and s.get("title")), None)
-    if not title:
-        raise ValueError(f"{APPEND_FILE}.yaml 那一条必须有 title——重放时靠它认出用户的插话")
-    return f"<{title}>"
+    spec = special("director", "append")
+    mark = str(spec.get("mark") or "")
+    if not mark:
+        raise ValueError("director.yaml 的 specials.append 必须有 `mark`——重放时靠它认出用户的插话")
+    bodies = "".join(str(s.get("body") or "") for s in spec.get("sections") or [])
+    if mark not in bodies:
+        raise ValueError(
+            f"director.yaml 的 specials.append 正文里没有 `{mark}`——重放时会认不出插话"
+        )
+    return mark
 
 
-INTERJECTION_MARK = _append_tag()
+INTERJECTION_MARK = _interjection_mark()
 
 
 def interjections_of(node: Node) -> list[str]:
@@ -172,9 +170,15 @@ def flatten_turn(node: Node) -> list[Message]:
                 text = node.user_input.text if node.user_input else ""
                 if text:
                     flush()
-                    # 与 director.yaml 里那条同名 section 用同一套记号（`titled`）——
-                    # 前情和这一轮的输入并排出现在同一串消息里，标签形状必须一致。
-                    out.append(Message(role=Role.USER, content=titled("用户输入", text)))
+                    # 记号在 `director.yaml` 的 `rendering.flat_user_input` 里（D173）。
+                    # 前情和这一轮的输入并排出现在同一串消息里，形状要一致——
+                    # 装配器不再自动包标签，所以两边都由用户自己写。
+                    out.append(
+                        Message(
+                            role=Role.USER,
+                            content=rendering("director", "flat_user_input", text=text),
+                        )
+                    )
             elif message.content and INTERJECTION_MARK in message.content:
                 flush()
                 out.append(message)

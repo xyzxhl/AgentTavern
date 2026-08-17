@@ -6,20 +6,18 @@ from typing import Any
 
 import httpx
 import pytest
+from conftest import using
 
 from agenttavern.config import Settings
 from agenttavern.llm import LLMGateway, ToolCall
 from agenttavern.models import (
-    Capabilities,
     EntryKind,
     Node,
     Session,
     StateDelta,
-    SummarizeMode,
     WorldbookEntry,
     WorldbookMode,
 )
-from agenttavern.prompting.assembler import text as _real_text
 from agenttavern.storage import Store
 from agenttavern.tools import (
     RunContext,
@@ -47,7 +45,7 @@ def fake_gateway(reply: str = "摘要文本") -> LLMGateway:
 
 @pytest.fixture
 def ctx(tmp_path: Path) -> RunContext:
-    repo = Store(tmp_path).create_session(Session(capabilities=ALL_ON))
+    repo = Store(tmp_path).create_session(Session())
     return RunContext(
         run_id="run_test",
         repo=repo,
@@ -60,12 +58,10 @@ async def call(reg: ToolRegistry, ctx: RunContext, name: str, **args: Any):
     return await reg.dispatch(ctx, ToolCall(id="c1", name=name, arguments=args))
 
 
-ALL_ON = Capabilities(
-    state=True,
-    history_search=True,
-    summarize=SummarizeMode.AUTO,
-    ask_question=True,
-)
+ALL_ON = {"tools": {"director": {"history_search": True}}}
+"""全部开关打开。**开关住在各 agent 的 YAML 里**（D174），所以"打开"
+现在是换一份提示词副本（`using`），不是往 session 上写一个对象。
+"""
 
 
 @pytest.fixture
@@ -76,10 +72,11 @@ def reg() -> ToolRegistry:
     起只在 state_manager 那一面（见文末的开关测试），但它的行为该在这里测。
     默认配置的工具面要小得多。
     """
-    return ToolRegistry(
-        build_tools(ALL_ON, [WorldbookEntry(name="占位", mode=WorldbookMode.ON_DEMAND)])
-        + build_state_tools(ALL_ON)
-    )
+    with using(**ALL_ON):
+        return ToolRegistry(
+            build_tools([WorldbookEntry(name="占位", mode=WorldbookMode.ON_DEMAND)])
+            + build_state_tools()
+        )
 
 
 # -- 契约 -------------------------------------------------------------------
@@ -460,10 +457,16 @@ def test_state_write_says_what_to_record() -> None:
     单说"这是状态不是事件"两类都拦不住：物件朝向确实是状态。
     （第三类误解「把设定抄进 state」不靠描述解决，靠 worldbook 种子移除诱因，D90。）
     """
-    desc = _real_text("state_manager", "what_to_record")
+    # **顶层命名块没了**（D173）：正文内联进了 section，所以这里从装配出来的
+    # 整串消息里认那一节——认头一句，不钉措辞。
+    from agenttavern.models import WorldState
+    from agenttavern.prompting import state_manager_prompt
+
+    messages = state_manager_prompt(WorldState()).messages
+    desc = next(m.content or "" for m in messages if "**事情本身已经记在细纲" in (m.content or ""))
 
     # 工具描述那侧只剩一句话——**判据不再有第二个副本**。
-    tool_desc = next(t.description for t in build_state_tools(ALL_ON) if t.name == "state_write")
+    tool_desc = next(t.description for t in build_state_tools() if t.name == "state_write")
     assert len(tool_desc) < 60
     assert "约束类" not in tool_desc
 
@@ -582,7 +585,8 @@ def test_tool_names_match_the_api_pattern() -> None:
     就撞上了——而且是整个请求被拒，不是某个工具不可用。
     """
     pattern = re.compile(r"^[a-zA-Z0-9_-]+$")
-    every = build_tools(ALL_ON, [WorldbookEntry(name="x", mode=WorldbookMode.ON_DEMAND)])
+    with using(**ALL_ON):
+        every = build_tools([WorldbookEntry(name="x", mode=WorldbookMode.ON_DEMAND)])
     for tool_ in every:
         assert pattern.match(tool_.name), tool_.name
 
@@ -590,32 +594,38 @@ def test_tool_names_match_the_api_pattern() -> None:
 # -- 能力开关：关闭即**不注册** -----------------------------------------------
 
 
-def names_for(caps: Capabilities, worldinfo: list[WorldbookEntry] | None = None) -> set[str]:
-    return set(ToolRegistry.for_session(caps, worldinfo).names)
+def names_for(worldinfo: list[WorldbookEntry] | None = None, **setup: object) -> set[str]:
+    """当前配置下 director 拿得到哪几个工具。**开关来自 YAML**（D174）。"""
+    with using(**setup):  # type: ignore[arg-type]
+        return set(ToolRegistry.for_session(worldinfo).names)
 
 
 def test_submit_outline_always_exists() -> None:
     """它是 loop 的唯一终止点（D53），不可关闭。"""
     assert "submit_outline" in names_for(
-        Capabilities(state=False, ask_question=False, history_search=False)
+        agents={"state_manager": False},
+        tools={"director": {"ask_question": False, "history_search": False}},
     )
 
 
 def test_each_switch_removes_its_tools() -> None:
     """**不注册**比「注册了但拒绝」强：模型看不到，不会浪费尝试，也不占 prompt 体量。"""
-    assert "state_query" in names_for(Capabilities(state=True))
-    assert names_for(Capabilities(state=False)).isdisjoint({"state_query", "state_write"})
+    assert "state_query" in names_for(agents={"state_manager": True})
+    assert names_for(agents={"state_manager": False}).isdisjoint({"state_query", "state_write"})
 
-    assert names_for(Capabilities(history_search=True)) >= {"history_search", "history_read"}
-    assert names_for(Capabilities(history_search=False)).isdisjoint(
+    assert names_for(tools={"director": {"history_search": True}}) >= {
+        "history_search",
+        "history_read",
+    }
+    assert names_for(tools={"director": {"history_search": False}}).isdisjoint(
         {"history_search", "history_read"}
     )
 
-    assert "summarize" in names_for(Capabilities(summarize=SummarizeMode.AUTO))
-    assert "summarize" not in names_for(Capabilities(summarize=SummarizeMode.MANUAL))
+    assert "summarize" in names_for(tools={"director": {"summarize": True}})
+    assert "summarize" not in names_for(tools={"director": {"summarize": False}})
 
-    assert "ask_question" in names_for(Capabilities(ask_question=True))
-    assert "ask_question" not in names_for(Capabilities(ask_question=False))
+    assert "ask_question" in names_for(tools={"director": {"ask_question": True}})
+    assert "ask_question" not in names_for(tools={"director": {"ask_question": False}})
 
 
 def test_worldinfo_tools_only_when_something_is_expandable() -> None:
@@ -623,9 +633,9 @@ def test_worldinfo_tools_only_when_something_is_expandable() -> None:
     always = [WorldbookEntry(name="甲", mode=WorldbookMode.ALWAYS)]
     mixed = [*always, WorldbookEntry(name="乙", mode=WorldbookMode.ON_DEMAND)]
 
-    assert names_for(Capabilities(), []).isdisjoint({"worldinfo_list", "worldinfo_read"})
-    assert names_for(Capabilities(), always).isdisjoint({"worldinfo_list", "worldinfo_read"})
-    assert names_for(Capabilities(), mixed) >= {"worldinfo_list", "worldinfo_read"}
+    assert names_for([]).isdisjoint({"worldinfo_list", "worldinfo_read"})
+    assert names_for(always).isdisjoint({"worldinfo_list", "worldinfo_read"})
+    assert names_for(mixed) >= {"worldinfo_list", "worldinfo_read"}
 
 
 def test_the_write_side_belongs_to_the_state_manager_alone(tmp_path: Path) -> None:
@@ -634,24 +644,28 @@ def test_the_write_side_belongs_to_the_state_manager_alone(tmp_path: Path) -> No
     这条隔离和 D33 那把刀是同一个性质：谁能碰什么，从工具面上就该看得出来。
     `state_query` 两边都有——写之前要知道现在是什么样。
     """
-    assert "state_write" not in names_for(ALL_ON)
-    assert {t.name for t in build_state_tools(ALL_ON)} == {"state_write", "state_query"}
+    assert "state_write" not in names_for(**ALL_ON)
+    assert {t.name for t in build_state_tools()} == {"state_write", "state_query"}
 
     # 按需展开关掉时 state 全量注入，`state_query` 两边一起消失（D62）。
-    off = Capabilities(state=True, state_query=False)
-    assert "state_query" not in names_for(off)
-    assert {t.name for t in build_state_tools(off)} == {"state_write"}
+    # **两侧各有各的开关**（D173）：同一个工具在两个 agent 手上是两条
+    # 描述、两个开关，所以要关就两边都关。
+    off = {"tools": {"director": {"state_query": False}, "state_manager": {"state_query": False}}}
+    assert "state_query" not in names_for(**off)  # type: ignore[arg-type]
+    with using(**off):  # type: ignore[arg-type]
+        assert {t.name for t in build_state_tools()} == {"state_write"}
 
 
 async def test_submit_outline_never_has_a_precondition(tmp_path: Path) -> None:
     """E0 作废之后，state 开着关着都一样能直接提交。"""
-    for caps in (Capabilities(state=True), Capabilities(state=False)):
-        repo = Store(tmp_path / caps.state.__str__()).create_session(Session(capabilities=caps))
+    for on in (True, False):
+        repo = Store(tmp_path / str(on)).create_session(Session())
         ctx = RunContext("run_x", repo, repo.load_session(), fake_gateway())
 
-        result = await call(
-            ToolRegistry.for_session(caps), ctx, "submit_outline", outline="她推门。"
-        )
+        with using(agents={"state_manager": on}):
+            result = await call(
+                ToolRegistry.for_session(), ctx, "submit_outline", outline="她推门。"
+            )
         assert not result.is_error
         assert ctx.outline == "她推门。"
 

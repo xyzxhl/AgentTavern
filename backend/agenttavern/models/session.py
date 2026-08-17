@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from .control import Capabilities, ControlDimensions, GoalRun, SessionMeta, SessionModes
+from .control import GoalRun, SessionMeta, SessionModes
 from .node import new_id
 
 
@@ -28,16 +28,16 @@ class Session(BaseModel):
     meta: SessionMeta = Field(default_factory=SessionMeta)
     """元指令：**这局故事**要什么。创建时设定，很少改。
 
-    世界那一半在 `WorldMeta`，跟着 worldbook 走（D170）。
+    世界那一半是 worldbook 的条目（D170/D175）。
     """
 
-    control: ControlDimensions = Field(default_factory=ControlDimensions)
-    """控制维度的常驻取值。单轮可被 ControlOverride 覆盖。"""
+    # `control` 与 `capabilities` **已删除**（D173/D174）：控制维度与能力开关
+    # 整体上调到了提示词层——它们全都在改「模型收到什么」，就该和提示词住在
+    # 同一份文件里。**session 上从此只有内容，没有配置。**
 
     modes: SessionModes = Field(default_factory=SessionModes)
-
-    capabilities: Capabilities = Field(default_factory=Capabilities)
-    """能力开关。关闭的能力其工具**不注册**——模型看不到。"""
+    """只剩 `time_driven` 一项。它改的是**触发源**——「这局故事没人说话时要不要
+    自己往前跑」，和 goal 的自动续跑是同一类东西，所以留在 session（D174）。"""
 
     initial_state: dict[str, Any] | None = None
     """**冻结下来的初始状态**（D158）。``None`` = 故事还没开始，现算。

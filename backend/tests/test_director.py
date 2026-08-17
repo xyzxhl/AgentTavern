@@ -4,17 +4,20 @@ import json
 from pathlib import Path
 
 import pytest
-from conftest import ScriptedLLM, text, tool, tools
+from conftest import (
+    ScriptedLLM,
+    option,
+    special_body,
+    text,
+    tool,
+    tools,
+    using,
+)
 
 from agenttavern.agents import DirectorFailed, run_director
 from agenttavern.llm import Message, Role
 from agenttavern.models import (
-    Capabilities,
-    ControlDimensions,
     EntryKind,
-    ExpansionDensity,
-    InputHandling,
-    ModelAuthority,
     Node,
     Session,
     StateDelta,
@@ -25,25 +28,21 @@ from agenttavern.models import (
     replay,
 )
 from agenttavern.prompting import assembler, director_prompt, writer_prompt
-from agenttavern.prompting.assembler import choice as _real_choice
-from agenttavern.prompting.assembler import text as _real_text
 from agenttavern.storage import Store
 from agenttavern.tools import RunContext, ToolRegistry, build_tools
 from agenttavern.tracing import Tracer
 
-ALL_ON = Capabilities(state=True, history_search=True, ask_question=True, trace=True)
-
 
 def make_ctx(tmp_path: Path, llm: ScriptedLLM, session: Session | None = None):
-    repo = Store(tmp_path).create_session(session or Session(capabilities=ALL_ON))
+    repo = Store(tmp_path).create_session(session or Session())
     ctx = RunContext(
         run_id="run_1",
         repo=repo,
         session=repo.load_session(),
         gateway=llm.gateway(),
     )
-    registry = ToolRegistry.for_session(ctx.capabilities, repo.worldbook())
-    return ctx, Tracer(repo, "run_1", persist=ctx.capabilities.trace), registry
+    registry = ToolRegistry.for_session(repo.worldbook())
+    return ctx, Tracer(repo, "run_1", persist=True), registry
 
 
 def joined(messages: list[Message]) -> str:
@@ -56,18 +55,10 @@ def joined(messages: list[Message]) -> str:
 
 
 def director_messages(
-    control: ControlDimensions | None = None,
     state: WorldState | None = None,
-    capabilities: Capabilities | None = None,
     worldinfo: list[WorldbookEntry] | None = None,
 ) -> list[Message]:
-    return director_prompt(
-        control or ControlDimensions(),
-        state or WorldState(),
-        None,
-        capabilities=capabilities or ALL_ON,
-        worldinfo=worldinfo,
-    ).messages
+    return director_prompt(state or WorldState(), None, worldinfo=worldinfo).messages
 
 
 def prompt_for(**kwargs) -> str:
@@ -81,12 +72,13 @@ def _state_block(prompt: str) -> str:
     状态现在整节就是一份 JSON（D145），所以断言直接 `json.loads` 它——
     **比钉渲染出来的句子稳**：改一句措辞不该让状态测试变红。
     """
-    body = prompt.split("<当前世界状态>", 1)[1].split("</当前世界状态>", 1)[0]
-    return body[body.index("{") : body.rindex("}") + 1]
+    # **装配器不再包标签**（D173），所以这里靠 JSON 自己的边界抠：状态整节
+    # 就是一份 JSON，而它是提示词里唯一一大块以 `{` 开头的东西。
+    return prompt[prompt.index("{\n") : prompt.rindex("}") + 1]
 
 
-def writer_text(control: ControlDimensions) -> str:
-    return joined(writer_prompt(control).messages)
+def writer_text() -> str:
+    return joined(writer_prompt().messages)
 
 
 async def test_happy_path(tmp_path: Path) -> None:
@@ -213,7 +205,7 @@ def test_director_never_sees_style_or_prose(tmp_path: Path) -> None:
     """D33 的隔离基础：文风与角色语言习惯只进 writer，正文只进 writer。"""
     prompt = prompt_for(worldinfo=make_book())
 
-    assert _real_choice("writer", "prose_style", STYLE) not in prompt
+    assert option("writer", "prose_style", STYLE) not in prompt
     assert "说话总是绕圈子" not in prompt
     # 「正文不进 director」现在由 test_run.py 守着——对话跨轮持续之后（D114），
     # 前情在**重放的消息**里而不在提示词里，那条断言必须看全部上下文才有意义。
@@ -221,23 +213,23 @@ def test_director_never_sees_style_or_prose(tmp_path: Path) -> None:
 
 def test_writer_never_sees_state_or_history(tmp_path: Path) -> None:
     """writer 只承担文风。它拿不到状态值、世界设定、用户原始指令——都已在细纲里。"""
-    prompt = joined(
-        writer_prompt(ControlDimensions(prose_style=STYLE), worldinfo=make_book()).messages
-    )
+    with using(choices={"writer": {"prose_style": STYLE}}):
+        prompt = joined(writer_prompt(worldinfo=make_book()).messages)
+        assert option("writer", "prose_style", STYLE) in prompt
+        assert "说话总是绕圈子" in prompt
+        # 题材是 director 的事——它是 `WORLD` 条目，只进 worldinfo（D175）。
+        assert "悬疑" not in prompt
+        assert "state" not in prompt.lower()
 
-    assert _real_choice("writer", "prose_style", STYLE) in prompt
-    assert "说话总是绕圈子" in prompt
-    # 题材是 director 的事——它是 `WORLD` 条目，只进 worldinfo（D175）。
-    assert "悬疑" not in prompt
-    assert "state" not in prompt.lower()
-
-    # 落笔手法归 writer——它管怎么写；推进与转述归 director——它管写什么。
-    #
-    # 断言的是**这一段在不在**，不是它的措辞。原来这里钉的是「情感落在外在」，
-    # 而那句话已经被删了：它把「不要用情绪词概括」和「一律外化成身体动作」
-    # 混成了一条，后半句会压过 session 自己的 `prose_style`（`pulp` 明写
-    # 「心理活动直接写出来」，产出里却一个念头都没有）。**钉措辞会让提示词改不动。**
-    assert "<创作指导>" in prompt
+        # 落笔手法归 writer——它管怎么写；推进与转述归 director——它管写什么。
+        #
+        # 断言的是**这一段在不在**，不是它的措辞。原来这里钉的是「情感落在外在」，
+        # 而那句话已经被删了：它把「不要用情绪词概括」和「一律外化成身体动作」
+        # 混成了一条，后半句会压过 session 自己的 `prose_style`（`pulp` 明写
+        # 「心理活动直接写出来」，产出里却一个念头都没有）。**钉措辞会让提示词改不动。**
+        # **装配器不再包标签**（D173），所以钉的是那一节的头一句——
+        # 仍然是「这一段在不在」，不是它的措辞。
+        assert "# 人物思绪描写" in prompt
 
 
 def test_authority_maps_to_ask_question_eagerness() -> None:
@@ -247,19 +239,17 @@ def test_authority_maps_to_ask_question_eagerness() -> None:
     调用它」的地方就该是 `ask_question` 自己。控制维度没变，变的是它落在哪。
     """
 
-    def ask_question_desc(authority: ModelAuthority) -> str:
-        caps = Capabilities(ask_question=True)
-        control = ControlDimensions(model_authority=authority)
-        tools = {t.name: t for t in build_tools(caps, control=control)}
-        return tools["ask_question"].description
+    def ask_question_desc(level: str) -> str:
+        with using(tool_choices={"director": {"ask_question": level}}):
+            tools = {t.name: t for t in build_tools()}
+            return tools["ask_question"].description
 
-    assert "不要调用" in ask_question_desc(ModelAuthority.HIGH)
-    assert "一轮内可以多次" in ask_question_desc(ModelAuthority.LOW)
+    assert "不要调用" in ask_question_desc("high")
+    assert "一轮内可以多次" in ask_question_desc("low")
 
     # 而 director 的提示词里**不再有这一节**。
-    assert "一轮内可以多次" not in prompt_for(
-        control=ControlDimensions(model_authority=ModelAuthority.LOW)
-    )
+    with using(tool_choices={"director": {"ask_question": "low"}}):
+        assert "一轮内可以多次" not in prompt_for()
 
 
 def test_input_handling_three_ways() -> None:
@@ -269,11 +259,12 @@ def test_input_handling_three_ways() -> None:
     一节讲「转述和推进分别是什么」，每轮一节讲「这一轮做哪个」——现在合成了一节，
     排在前情之后（它每轮都可能变，不能进缓存前缀）。
     """
-    for value in ("narrate_and_advance", "narrate_only", "advance_only"):
-        control = ControlDimensions(input_handling=InputHandling(value))
-        prompt = prompt_for(control=control)
-        for other in ("narrate_and_advance", "narrate_only", "advance_only"):
-            body = _real_choice("director", "narration_and_advancement", other)
+    picks = ("narrate_and_advance", "narrate_only", "advance_only")
+    for value in picks:
+        with using(choices={"director": {"narration_and_advancement": value}}):
+            prompt = prompt_for()
+        for other in picks:
+            body = option("director", "narration_and_advancement", other)
             assert body
             assert (body in prompt) is (other == value), f"{value} 这一轮混进了 {other}"
 
@@ -288,15 +279,16 @@ def test_speaking_rule_is_a_choice_not_a_toggle_in_code() -> None:
     后来输入契约收紧成「除非细纲已经给出，否则不要自行增加新行为、新决定、
     新心理」，用户的角色被一并盖住，再单给一条就是重复。
     """
-    forbidden = _real_choice("director", "speaking_rule", "forbidden")
-    allowed = _real_choice("director", "speaking_rule", "allowed")
+    forbidden = option("director", "speaking_rule", "forbidden")
+    allowed = option("director", "speaking_rule", "allowed")
 
-    strict = prompt_for(control=ControlDimensions(allow_speaking_for_user=False))
+    with using(choices={"director": {"speaking_rule": "forbidden"}}):
+        strict = prompt_for()
     assert forbidden and forbidden in strict
     assert not allowed or allowed not in strict
 
-    loose = prompt_for(control=ControlDimensions(allow_speaking_for_user=True))
-    assert forbidden not in loose
+    with using(choices={"director": {"speaking_rule": "allowed"}}):
+        assert forbidden not in prompt_for()
 
 
 def test_state_pack_inlines_small_values_and_defers_large_ones() -> None:
@@ -358,10 +350,15 @@ def test_state_is_json_so_the_shape_needs_no_marker() -> None:
 
 
 def test_state_off_removes_the_state_section_and_step() -> None:
-    prompt = prompt_for(
-        state=replay([StateDelta(set={"地点": "客厅"})]),
-        capabilities=Capabilities(state=False),
-    )
+    """关掉 state_manager 这个 agent，director 就不再收到状态那一节（D174）。
+
+    以前这是 `Capabilities.state`。现在它是 `state_manager.yaml` 顶上的
+    `enabled`——**它从来就是「这个 agent 跑不跑」**，而不是一条独立的能力：
+    没有 state_manager 就没人写状态，那一节自然也不必给。
+    """
+    with using(agents={"state_manager": False}):
+        prompt = prompt_for(state=replay([StateDelta(set={"地点": "客厅"})]))
+
     assert "客厅" not in prompt
     assert "state_write" not in prompt
 
@@ -390,17 +387,17 @@ def test_the_flow_steps_are_gone_and_the_tools_carry_them() -> None:
     这里钉的是"提示词里不再有第二份流程说明"——两份必然对不上，而工具描述
     才是模型照着填参数的那一份。
     """
-    prompt = prompt_for(capabilities=ALL_ON)
+    prompt = prompt_for()
 
     for gone in ("用工具查", "想清楚本轮发生什么", "调用 `submit_outline` 提交"):
         assert gone not in prompt
 
-    submit = next(t for t in build_tools(ALL_ON) if t.name == "submit_outline")
+    submit = next(t for t in build_tools() if t.name == "submit_outline")
     assert "调用即结束这一轮" in (submit.description or "")
 
 
 def test_empty_state_renders_cleanly() -> None:
-    prompt = prompt_for(capabilities=Capabilities(state=True))
+    prompt = prompt_for()
     assert "尚无记录" in prompt
 
 
@@ -412,15 +409,17 @@ def test_density_reaches_both_sides_in_opposite_directions() -> None:
     不是它们此刻的措辞。
     """
     for value in ("sparse", "normal", "rich"):
-        control = ControlDimensions(expansion_density=ExpansionDensity(value))
-        w = _real_choice("writer", "density", value)
-        d = _real_choice("director", "event_density", value)
+        w = option("writer", "density", value)
+        d = option("director", "event_density", value)
 
-        assert w and w in writer_text(control)
-        assert d and d in prompt_for(control=control)
-        # 两组文本必须不同——一样就说明有一侧被另一侧的措辞污染了。
-        assert w != d
-        assert w not in prompt_for(control=control)
+        # **两侧现在是两个独立的 `selected`**（D174）：代码不再保证它们一致。
+        # 那既是代价也是收益——现在做得到「director 紧凑、writer 铺陈」。
+        with using(choices={"writer": {"density": value}, "director": {"event_density": value}}):
+            assert w and w in writer_text()
+            assert d and d in prompt_for()
+            # 两组文本必须不同——一样就说明有一侧被另一侧的措辞污染了。
+            assert w != d
+            assert w not in prompt_for()
 
 
 def test_the_writer_never_gets_a_speaking_rule_of_its_own() -> None:
@@ -430,9 +429,11 @@ def test_the_writer_never_gets_a_speaking_rule_of_its_own() -> None:
     把用户角色往前推一步。后来输入契约收紧成「除非细纲已经给出，否则不要自行
     增加新行为、新决定、新心理」，这条更宽、更严，再单给一条抢话规则就是重复。
     """
-    for allowed in (True, False):
-        w = writer_text(ControlDimensions(allow_speaking_for_user=allowed))
+    for pick in ("allowed", "forbidden"):
+        with using(choices={"director": {"speaking_rule": pick}}):
+            w = writer_text()
         assert "抢话" not in w
+        assert "替用户的角色说话" not in w
         assert "不要自行增加" in w
 
 
@@ -474,33 +475,42 @@ def test_empty_nsfw_injects_nothing_at_all(monkeypatch) -> None:
     real = assembler.load
     monkeypatch.setattr(assembler, "load", lambda name: {**real(name), "nsfw": ""})
 
-    for prompt in (writer_text(ControlDimensions()), prompt_for(worldinfo=make_book())):
+    for prompt in (writer_text(), prompt_for(worldinfo=make_book())):
         assert "情色" not in prompt
 
 
-def test_nsfw_and_jailbreak_reach_both_agents(monkeypatch) -> None:
-    """**两侧都要**（同 D35 的理由）。
+def test_the_jailbreak_is_the_last_system_message(monkeypatch) -> None:
+    """**破限两侧都要**（同 D35 的理由），而且它的**位置**是约定的一部分。
 
-    director 决定这一轮发生什么，writer 决定怎么落笔；只给一侧，
-    另一侧会按自己的默认来，两边对不上。破限则是因为 director 与 writer
-    是两次独立的模型调用——只解开一半等于没解开。
+    director 决定这一轮发生什么，writer 决定怎么落笔；只给一侧，另一侧会按
+    自己的默认来。破限尤其如此——两者是两次独立的模型调用，只解开一半等于
+    没解开。
+
+    与 SillyTavern 的约定有一处不同：那边压在整个请求的最后（历史之后），
+    取最高的近因权重。我们放在系统消息的末尾，因为对话跨轮持续（D114），
+    那一段是缓存前缀，放这里只付一次钱。**哪个更有效没有实测过。**
+    想换成 ST 的做法，把 YAML 里那一条移到 history 之后即可——这正是 D137
+    把 role 写进条目要换来的东西。
+
+    **钉的是位置，不是内容**（D173 之后正文内联进了 section，没有顶层命名块
+    可以整块替换了）：把两份 YAML 里的 system 条目换成一个标记，再看它落在哪。
     """
+    import copy
+
     real = assembler.load
-    filled = {"nsfw": "情色指导占位", "jailbreak": "破限占位"}
-    monkeypatch.setattr(assembler, "load", lambda name: {**real(name), **filled})
 
-    both = (writer_prompt(ControlDimensions()).messages, director_messages())
+    def marked(name: str) -> dict:
+        doc = copy.deepcopy(real(name))
+        for item in doc.get("sections") or []:
+            if item.get("role") == "system":
+                item["body"] = "破限占位"
+        return doc
 
-    for messages in both:
-        assert "情色指导占位" in joined(messages)
-        # 位置是约定的一部分：破限是**最后一条 system 消息**。
-        #
-        # 与 SillyTavern 的约定有一处不同：那边压在整个请求的最后（历史之后），
-        # 取最高的近因权重。我们放在系统消息的末尾，因为对话跨轮持续（D114），
-        # 那一段是缓存前缀，放这里只付一次钱。**哪个更有效没有实测过。**
-        # 想换成 ST 的做法，把 YAML 里那一条移到 history 之后即可——
-        # 这正是 D137 把 role 写进条目要换来的东西。
+    monkeypatch.setattr(assembler, "load", marked)
+
+    for messages in (writer_prompt().messages, director_messages()):
         system = [m for m in messages if m.role is Role.SYSTEM]
+        assert system, "这一侧一个 system 槽都没有——破限没地方放"
         assert system[-1].content == "破限占位"
 
 
@@ -514,23 +524,23 @@ def test_each_side_gets_its_own_sections_and_none_of_the_others() -> None:
     真正的不变量是 D33：哪一节进哪一侧。写法、措辞、例子都可以随便改，
     但 writer 永远拿不到 director 的推进与转述规则，director 永远拿不到文风。
     """
-    w = writer_text(ControlDimensions())
+    w = writer_text()
     d = prompt_for(worldinfo=make_book())
 
-    writer_only = ["input_contract", "creation_guidance", "dialogue"]
-    director_only = ["output_contract", "creation_guidance"]
+    # **顶层命名块没了**（D173：`key` 引用删掉，正文内联进 section），所以
+    # 认的是每一节的头一句。仍然钉的是**结构不是措辞**：哪一节进哪一侧。
+    writer_only = ["你收到的细纲描述的是", "# 人物思绪描写", "细纲中的对白不是台词草稿"]
+    director_only = ["细纲不是压缩版正文", "# 人物驱动情节"]
 
-    for key in writer_only:
-        body = _real_text("writer", key)
-        assert body and body in w, f"writer.yaml 的 {key} 没进 writer"
-        assert body not in d, f"writer.yaml 的 {key} 漏进了 director"
+    for head in writer_only:
+        assert head in w, f"writer.yaml 的「{head}」那一节没进 writer"
+        assert head not in d, f"writer.yaml 的「{head}」那一节漏进了 director"
 
-    for key in director_only:
-        body = _real_text("director", key)
-        assert body and body in d, f"director.yaml 的 {key} 没进 director"
-        assert body not in w, f"director.yaml 的 {key} 漏进了 writer"
+    for head in director_only:
+        assert head in d, f"director.yaml 的「{head}」那一节没进 director"
+        assert head not in w, f"director.yaml 的「{head}」那一节漏进了 writer"
 
-    narration = _real_choice("director", "narration_and_advancement", "narrate_and_advance")
+    narration = option("director", "narration_and_advancement", "narrate_and_advance")
     assert narration and narration in d and narration not in w
 
 
@@ -538,7 +548,7 @@ def test_style_and_prose_never_reach_the_director() -> None:
     """D33 的隔离基础，用 session 自己的配置来验——它不随提示词改动而变。"""
     d = prompt_for(worldinfo=make_book())
 
-    assert _real_choice("writer", "prose_style", STYLE) not in d
+    assert option("writer", "prose_style", STYLE) not in d
     assert "说话总是绕圈子" not in d
     # 否定项那个字段已经整个删掉了（D139），所以这里没有它的断言——
     # 「不许写什么」现在只有两个入口：世界设定（数据）和 YAML（提示词）。
@@ -557,8 +567,8 @@ def test_sections_order_comes_from_yaml(monkeypatch) -> None:
         monkeypatch,
         {
             "sections": [
-                {"role": "system", "title": "乙", "text": "第二段"},
-                {"role": "system", "title": "甲", "text": "第一段"},
+                {"type": "text", "role": "system", "body": "第二段乙"},
+                {"type": "text", "role": "system", "body": "第一段甲"},
             ]
         },
     )
@@ -568,10 +578,12 @@ def test_sections_order_comes_from_yaml(monkeypatch) -> None:
 
 def test_a_new_section_needs_only_yaml(monkeypatch) -> None:
     """新增一节**只写 YAML**，不动代码——这正是这个组装器存在的理由。"""
-    fake_yaml(monkeypatch, {"sections": [{"role": "user", "title": "新加的", "text": "随便写点"}]})
-    assert assembler.assemble("writer").messages == [
-        Message(role=Role.USER, content="<新加的>\n随便写点\n</新加的>")
-    ]
+    fake_yaml(
+        monkeypatch,
+        {"sections": [{"type": "text", "role": "user", "body": "随便写点"}]},
+    )
+    # **装配出来的就是你写的那几个字**（D173）：装配器不再加标题标签。
+    assert assembler.assemble("writer").messages == [Message(role=Role.USER, content="随便写点")]
 
 
 def test_each_section_is_one_message_and_carries_its_own_role(monkeypatch) -> None:
@@ -584,9 +596,9 @@ def test_each_section_is_one_message_and_carries_its_own_role(monkeypatch) -> No
         monkeypatch,
         {
             "sections": [
-                {"role": "system", "text": "你是谁"},
-                {"role": "user", "text": "这一轮的输入"},
-                {"role": "assistant", "text": "好的"},
+                {"type": "text", "role": "system", "body": "你是谁"},
+                {"type": "text", "role": "user", "body": "这一轮的输入"},
+                {"type": "text", "role": "assistant", "body": "好的"},
             ]
         },
     )
@@ -599,7 +611,7 @@ def test_each_section_is_one_message_and_carries_its_own_role(monkeypatch) -> No
 
 def test_a_section_without_a_role_raises(monkeypatch) -> None:
     """**role 必须写出来。** 默认成 system 会让人忘了这是个决定。"""
-    fake_yaml(monkeypatch, {"sections": [{"text": "没写 role"}]})
+    fake_yaml(monkeypatch, {"sections": [{"type": "text", "body": "没写 role"}]})
     with pytest.raises(KeyError):
         assembler.assemble("writer")
 
@@ -613,31 +625,39 @@ def test_empty_section_is_skipped_message_and_all(monkeypatch) -> None:
         monkeypatch,
         {
             "sections": [
-                {"role": "system", "title": "有内容", "text": "在"},
-                {"role": "system", "title": "空的", "context": "nothing"},
+                {"type": "text", "role": "system", "body": "在"},
+                {"type": "context", "role": "system", "source": "nothing"},
             ]
         },
     )
     assert assembler.assemble("writer", contexts={"nothing": "  "}).messages == [
-        Message(role=Role.SYSTEM, content="<有内容>\n在\n</有内容>")
+        Message(role=Role.SYSTEM, content="在")
     ]
 
 
 def test_three_kinds_of_content_are_declared_separately(monkeypatch) -> None:
-    """一节的内容有三种来源，YAML 里**分别声明**（D136）。
+    """一节的内容**只有三类，而且类型是显式字段**（D136/D173）。
 
-    看一眼 sections 就知道这一节是系统控制的 context、模板替换，还是按选项切换——
-    以前它们全叫 `slot`，从 YAML 那侧分不出来。
+    `type` 写出来而不是靠「出现了哪个键」去猜——拖动排序的界面要先读出这一条
+    是什么类型才画得出来。三类之外的都删掉了（`key` / `title` / `intro` / `outro`）。
+
+    **`selected` 住在条目自己身上**：以前「有哪些档」在 YAML、「选哪一档」
+    由代码通过 `options` 参数传进来，改一档文风要动两个地方。
     """
     fake_yaml(
         monkeypatch,
         {
             "sections": [
-                {"role": "system", "title": "系统控制的 context", "context": "worldinfo"},
-                {"role": "system", "title": "模板替换", "text": "视角：{{pov}}"},
-                {"role": "system", "title": "选择控制", "choice": "density"},
+                {"type": "context", "role": "system", "source": "worldinfo"},
+                {"type": "text", "role": "system", "body": "视角：{{pov}}"},
+                {
+                    "type": "choice",
+                    "role": "system",
+                    "name": "density",
+                    "selected": "rich",
+                    "options": {"sparse": "少写点", "rich": "多写点"},
+                },
             ],
-            "density": {"sparse": "少写点", "rich": "多写点"},
         },
     )
     out = joined(
@@ -645,7 +665,6 @@ def test_three_kinds_of_content_are_declared_separately(monkeypatch) -> None:
             "writer",
             contexts={"worldinfo": "### 教团\n信奉旧神。"},
             values={"pov": "第三人称限知"},
-            options={"density": "rich"},
         ).messages
     )
     assert "### 教团" in out
@@ -664,12 +683,23 @@ def test_a_context_can_be_a_run_of_messages(monkeypatch) -> None:
         Message(role=Role.USER, content="上一轮的输入"),
         Message(role=Role.ASSISTANT, content="上一轮的细纲"),
     ]
-    fake_yaml(monkeypatch, {"sections": [{"context": "history"}, {"role": "user", "text": "现在"}]})
+    fake_yaml(
+        monkeypatch,
+        {
+            "sections": [
+                {"type": "context", "source": "history"},
+                {"type": "text", "role": "user", "body": "现在"},
+            ]
+        },
+    )
     prompt = assembler.assemble("writer", contexts={"history": history})
     assert prompt.messages[:2] == history
     assert prompt.starts["history"] == 0
 
-    fake_yaml(monkeypatch, {"sections": [{"role": "user", "context": "history"}]})
+    fake_yaml(
+        monkeypatch,
+        {"sections": [{"type": "context", "role": "user", "source": "history"}]},
+    )
     with pytest.raises(KeyError):
         assembler.assemble("writer", contexts={"history": history})
 
@@ -684,13 +714,13 @@ def test_an_empty_variable_takes_its_line_with_it(monkeypatch) -> None:
         monkeypatch,
         {
             "sections": [
-                {"role": "system", "title": "设定", "text": "题材：{{genre}}\n视角：{{pov}}"},
-                {"role": "system", "title": "目标", "text": "本次目标：{{goal}}。"},
+                {"type": "text", "role": "system", "body": "题材：{{genre}}\n视角：{{pov}}"},
+                {"type": "text", "role": "system", "body": "本次目标：{{goal}}。"},
             ]
         },
     )
     prompt = assembler.assemble("writer", values={"genre": "悬疑", "pov": "", "goal": ""})
-    assert joined(prompt.messages) == "<设定>\n题材：悬疑\n</设定>"
+    assert joined(prompt.messages) == "题材：悬疑"
 
 
 def test_injected_context_is_not_parsed_as_a_template(monkeypatch) -> None:
@@ -699,7 +729,10 @@ def test_injected_context_is_not_parsed_as_a_template(monkeypatch) -> None:
     用户的世界设定里完全可能出现 `{{` ——按模板解析它，轻则报错，
     重则把用户的设定当成变量名吞掉。
     """
-    fake_yaml(monkeypatch, {"sections": [{"role": "system", "context": "worldinfo"}]})
+    fake_yaml(
+        monkeypatch,
+        {"sections": [{"type": "context", "role": "system", "source": "worldinfo"}]},
+    )
     prompt = assembler.assemble("writer", contexts={"worldinfo": "{{不是变量}}"})
     assert prompt.messages[0].content == "{{不是变量}}"
 
@@ -711,9 +744,20 @@ def test_names_that_do_not_line_up_raise(monkeypatch) -> None:
     那是最难查的一类问题（同 D125：没生效的东西不会报错）。
     """
     cases: list[dict] = [
-        {"sections": [{"role": "system", "context": "根本没有这个"}]},
-        {"sections": [{"role": "system", "text": "{{没人给值}}"}]},
-        {"sections": [{"role": "system", "choice": "density"}], "density": {"rich": "多写点"}},
+        {"sections": [{"type": "context", "role": "system", "source": "根本没有这个"}]},
+        {"sections": [{"type": "text", "role": "system", "body": "{{没人给值}}"}]},
+        {
+            "sections": [
+                {
+                    "type": "choice",
+                    "role": "system",
+                    "name": "density",
+                    "selected": "根本没这一档",
+                    "options": {"rich": "多写点"},
+                }
+            ]
+        },
+        {"sections": [{"role": "system", "body": "没写 type"}]},
     ]
     for doc in cases:
         fake_yaml(monkeypatch, doc)
@@ -734,9 +778,9 @@ def test_the_turn_starts_after_the_history(monkeypatch) -> None:
         monkeypatch,
         {
             "sections": [
-                {"role": "system", "text": "前缀"},
-                {"context": "history"},
-                {"role": "user", "text": "本轮输入"},
+                {"type": "text", "role": "system", "body": "前缀"},
+                {"type": "context", "source": "history"},
+                {"type": "text", "role": "user", "body": "本轮输入"},
             ]
         },
     )
@@ -755,8 +799,8 @@ def test_an_appended_input_is_wrapped_with_an_explanation() -> None:
     """引导 / 打断插进来的那条**不能裸着塞**。
 
     裸文本塞进对话，模型读到的是一条突然冒出来的用户发言，看不出它和这一轮
-    已经进行到一半的推演是什么关系。措辞归 `director_append.yaml`——它是提示词，
-    跟别的提示词放在一起（同 D140），不写死在 Python 里。
+    已经进行到一半的推演是什么关系。措辞在 `director.yaml` 的 `specials.append`
+    里（D173：**一份文件 = 一个 agent 收到的全部文字**），不写死在 Python 里。
     """
     from agenttavern.agents.replay import INTERJECTION_MARK, append_message
 
@@ -764,16 +808,26 @@ def test_an_appended_input_is_wrapped_with_an_explanation() -> None:
 
     assert message.role is Role.USER
     assert "等等，先别问他" in (message.content or "")
-    # **结构标记从 YAML 那一条的 title 推出来，不另写一份。** 对不上的后果是
-    # 插话在重放时被当成编排层的催促悄悄丢掉（同 D125）。
+    # **记号由用户自己写在 body 里，`mark` 声明它是哪一串**（D173：装配器不再
+    # 自动包标签）。两处对不上就当场报错——对不上的后果是插话在重放时被当成
+    # 编排层的催促悄悄丢掉（同 D125）。
     assert INTERJECTION_MARK in (message.content or "")
 
 
-def test_a_fragment_file_may_be_a_bare_section_list() -> None:
-    """片段文件顶层可以直接是列表——它不是某个 agent 收到的全部文字，
-    只是跑到一半往对话里追加的那一条，没有别的东西要跟它放在一起。
+def test_the_attached_prompts_live_with_their_agent() -> None:
+    """**片段文件没了**（D173）：追加输入并进了 `director.yaml` 的 `specials`。
+
+    它们不在 director 的消息序列里，是**运行时另外追加的整条消息**——但那不是
+    「另一份文件」的理由。判据是 D33：**一份文件 = 一个 agent 收到的全部文字**，
+    而这几条同样是它收到的字。顺带删掉了装配器里「顶层直接是列表」那条特例，
+    它本来就只有这一个用户。
     """
-    assert isinstance(assembler.load("director_append")["sections"], list)
+    specials = assembler.load("director")["specials"]
+    assert {"append", "nudge", "nudge_final", "converge", "segment", "no_input"} <= set(specials)
+    assert special_body("director", "nudge"), "空回催促的措辞得在 YAML 里"
+    # 归段追问以前是 `postrun.py` 里一段四百多字的 Python 字符串——**模型每轮
+    # 都会读到它，而它从界面完全够不着**（D173 那次审计新发现的）。
+    assert "断在第几条之后" in special_body("director", "segment")
 
 
 def test_the_tool_list_is_not_a_message() -> None:
@@ -785,8 +839,8 @@ def test_the_tool_list_is_not_a_message() -> None:
     这条容易反复：那一节当初是有意加的（D140，为了让「有哪些工具」在提示词的顺序
     里看得见），加的时候没意识到工具根本不在 messages 里。
     """
-    prompt = prompt_for(capabilities=ALL_ON)
-    for name in ToolRegistry.for_session(ALL_ON).names:
+    prompt = prompt_for()
+    for name in ToolRegistry.for_session().names:
         assert name not in prompt or name == "submit_outline", f"{name} 不该出现在消息里"
 
     # `submit_outline` 是例外：它出现在「流程指导」那一句里，讲的是**什么时候调**，

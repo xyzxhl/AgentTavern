@@ -59,14 +59,16 @@ async def summarize_text(
     写摘要的那一刻，无从知道台账上那行日期以后会成为关键（D106 的交集盲区）。
     而具体项占的字数很少、丢了不可再生；概括项占字数多、随时能从事实里重新读出来。
 
-    判据本身写在 `summarizer.yaml` 里，这里只装配（D140）。``enabled=False`` 时
-    那一档是空串，指示整条不发——留这个开关是为了能从外部关掉，不是推荐这么做。
+    判据本身写在 `summarizer.yaml` 里，这里只装配（D140）。**选哪一档也在那儿**
+    （D173：`selected` 住在条目上）——`off` 那一档是空串，整条不发。留这个档位
+    是为了能从外部关掉，不是推荐这么做。
+
+    ``enabled=False`` 是**调用方这一侧的短路**（比如整条摘要链路都不想跑），
+    和 YAML 里选了 `off` 是两回事：前者连这次调用都不发生。
     """
-    prompt = assemble(
-        "summarizer",
-        contexts={"content": content},
-        options={"compression": "on" if enabled else "off"},
-    )
+    if not enabled:
+        return ""
+    prompt = assemble("summarizer", contexts={"content": content})
     response = await gateway.complete(prompt.messages, user_id=user_id)
     # 开发者模式下这一次往返也要留下原文（D156）。摘要是**不可逆**的——一段压完
     # 原细纲就不再进上下文了，压坏了事后只能从这里看出是压的时候丢的还是本来就没有。

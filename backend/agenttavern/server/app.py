@@ -12,8 +12,6 @@ from ..config import Settings, load_settings
 from ..llm import LLMGateway
 from ..models import (
     Actor,
-    Capabilities,
-    ControlDimensions,
     Goal,
     GoalRun,
     Node,
@@ -31,9 +29,9 @@ from ..models import (
     new_id,
 )
 from ..orchestration import close_segment
-from ..prompting import choices_of
 from ..storage import SessionRepository, Store, WorldbookRepository
 from ..tracing import Tracer
+from .agents import router as agents_router
 from .protocol import (
     Answer,
     Branches,
@@ -56,10 +54,14 @@ from .runner import SessionRunner
 
 
 class SessionPatch(BaseModel):
+    """**session 上只剩内容，没有配置**（D174）。
+
+    `control` 与 `capabilities` 已经删掉：控制维度与能力开关整体上调到了提示词层，
+    改它们走 `/agents`。这里只剩标题、目标（`meta`）和触发源（`modes`）。
+    """
+
     meta: SessionMeta | None = None
-    control: ControlDimensions | None = None
     modes: SessionModes | None = None
-    capabilities: Capabilities | None = None
 
 
 class NodePatch(BaseModel):
@@ -101,6 +103,11 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
 
     app = FastAPI(title="AgentTavern", lifespan=lifespan)
 
+    # agent 管理：提示词、工具描述、附属提示词、渲染文案（D173）。
+    # **单独一个模块**——它和 session / worldbook 不共享任何状态，读写的是
+    # `prompting/` 底下那几份 YAML。
+    app.include_router(agents_router())
+
     # **旧数据在这里搬家**（D170）：worldbook 以前躺在 session 目录里。
     # 跑一次就是空操作，所以放在这里比放一条命令可靠——没人会记得去跑那条命令。
     store.migrate()
@@ -119,15 +126,13 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
 
         模式在启动服务时就定了，不是运行时开关——所以这里只读，没有对应的写接口。
         """
+        # `options`（有哪些文风 / 视角档）**已删除**（D173）：档位和当前取值都
+        # 住在 agent 的 YAML 里，前端要看就去 `/agents/{name}`——这里再给一份
+        # 就是同一件事的第二个入口。
         return {
             "developer": resolved.developer,
             "model": resolved.llm_model,
-            # **档位从 YAML 现读**，不在前端写死一份（同 D149 的理由）：用户加一档
-            # 文风，设置面板里就该多一个选项，而不是等谁想起来同步。
-            "options": {
-                "prose_style": choices_of("writer", "prose_style"),
-                "pov": choices_of("writer", "pov"),
-            },
+            "stream": resolved.stream,
         }
 
     # -- session ------------------------------------------------------------
@@ -217,15 +222,16 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
     @app.patch("/sessions/{session_id}/nodes/{node_id}")
     def patch_node(session_id: str, node_id: str, patch: NodePatch) -> Node:
         repo = repo_of(session_id)
-        return _apply_node_patch(repo, node_id, patch, developer=resolved.developer)
+        return _apply_node_patch(
+            repo, node_id, patch, developer=resolved.developer, persist_trace=resolved.trace
+        )
 
     @app.post("/sessions/{session_id}/close-segment")
     async def close_current_segment(session_id: str) -> dict[str, Any]:
         """用户手动归段（D112 的第三条支路）。
 
-        **用户说这一段收了，就是收了**——不再追问模型。这条路在
-        `SummarizeMode.MANUAL` 下是唯一的归段方式，在 AUTO 下也保留：
-        自动追问判早了或判晚了，用户随时可以自己断。
+        **用户说这一段收了，就是收了**——不再追问模型。归段追问关掉时它是唯一的
+        归段方式，开着时也保留：自动追问判早了或判晚了，用户随时可以自己断。
         """
         repo = repo_of(session_id)
         session = repo.load_session()
@@ -239,7 +245,7 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
             Tracer(
                 repo,
                 session.active_leaf_id,
-                persist=resolved.developer,
+                persist=resolved.trace or resolved.developer,
                 developer=resolved.developer,
             ),
             forced=True,
@@ -410,7 +416,14 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
         async def broadcast(message: ServerMessage) -> None:
             await websocket.send_text(message.model_dump_json())
 
-        runner = SessionRunner(repo, active, broadcast, developer=resolved.developer)
+        runner = SessionRunner(
+            repo,
+            active,
+            broadcast,
+            developer=resolved.developer,
+            stream=resolved.stream,
+            persist_trace=resolved.trace,
+        )
         runner.start()
 
         session = repo.load_session()
@@ -424,7 +437,14 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
         try:
             while True:
                 raw = await websocket.receive_text()
-                await _handle(raw, runner, repo, broadcast, developer=resolved.developer)
+                await _handle(
+                    raw,
+                    runner,
+                    repo,
+                    broadcast,
+                    developer=resolved.developer,
+                    persist_trace=resolved.trace,
+                )
         except WebSocketDisconnect:
             pass
         finally:
@@ -440,6 +460,7 @@ async def _handle(
     broadcast: Any,
     *,
     developer: bool = False,
+    persist_trace: bool = False,
 ) -> None:
     try:
         message = ClientEnvelope.model_validate_json(f'{{"message":{raw}}}').message
@@ -448,7 +469,7 @@ async def _handle(
         return
 
     if isinstance(message, Submit):
-        await runner.submit(message.text, message.control_override)
+        await runner.submit(message.text)
 
     elif isinstance(message, Interject):
         # 没有 run 在跑（或已经进了 writer，那里没有操作边界）就回落到开新的一轮——
@@ -484,7 +505,9 @@ async def _handle(
         except ValidationError as exc:
             await broadcast(ServerError(message=str(exc.errors()[0]["msg"])))
             return
-        node = _apply_node_patch(repo, message.node_id, patch, developer=developer)
+        node = _apply_node_patch(
+            repo, message.node_id, patch, developer=developer, persist_trace=persist_trace
+        )
         await broadcast(NodeUpdated(node=node))
         # **状态要按当前叶重放，不是按被改的那个节点。** 改的是历史某一轮时，
         # 用户看的仍然是路径末端的状态——发被改节点处的快照会让侧栏往回跳。
@@ -569,7 +592,12 @@ async def _handle(
 
 
 def _apply_node_patch(
-    repo: SessionRepository, node_id: str, patch: NodePatch, *, developer: bool = False
+    repo: SessionRepository,
+    node_id: str,
+    patch: NodePatch,
+    *,
+    developer: bool = False,
+    persist_trace: bool = False,
 ) -> Node:
     """用户编辑直接改写节点数据（D65），**不做依赖检查**。
 
@@ -606,11 +634,10 @@ def _apply_node_patch(
     repo.save_node(node)
 
     if touched:
-        session = repo.load_session()
         Tracer(
             repo,
             node_id,
-            persist=session.capabilities.trace or developer,
+            persist=persist_trace or developer,
             developer=developer,
         ).emit(
             TraceEventType.USER_EDIT,

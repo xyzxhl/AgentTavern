@@ -19,17 +19,14 @@ from ..agents import advance_goal, sync_conversation
 from ..config import Settings
 from ..llm import LLMGateway, Usage
 from ..models import (
-    Capabilities,
-    ControlDimensions,
     GoalRun,
     InputSource,
     Node,
-    Session,
     TraceEvent,
     UserInput,
 )
 from ..orchestration import execute_run
-from ..prompting import player_character
+from ..prompting import PromptSetup, player_character, prompts_as
 from ..storage import SessionRepository, Store
 from ..tracing import Tracer
 from .metrics import Metrics, collect
@@ -38,23 +35,40 @@ from .scenarios import Scenario
 
 @dataclass(frozen=True)
 class Variant:
-    """一个消融/对照配置。``None`` 表示沿用场景自带的设置。
+    """一个消融/对照配置。**它改的是提示词，不是 session**（D174）。
 
-    变体只改 **session 级配置**，不改题材与输入——否则比的就不是同一件事了（P19）。
+    以前它往 session 上写 `capabilities` / `control`。那两个类整体上调到了
+    提示词层之后，这条路失去了全部着力点——而 P19 要求同一批素材跑多档，
+    回归集不能就这么散掉。
+
+    **补法是换一份 YAML，不是开一个 `overrides` 后门**：一个"只有程序能用"
+    的第二取值入口迟早会有第二个调用者，而那正是 D173 要消掉的东西。
+    `prompts_as` 把 `prompting/` 复制一份、在副本上改那几档，跑完就删。
+
+    变体只改配置，不改题材与输入——否则比的就不是同一件事了（P19）。
     """
 
     name: str
-    capabilities: Capabilities | None = None
-    control: ControlDimensions | None = None
+    prompts: PromptSetup = field(default_factory=PromptSetup)
     note: str = ""
 
-    def apply(self, session: Session) -> Session:
-        update: dict[str, Any] = {}
-        if self.capabilities is not None:
-            update["capabilities"] = self.capabilities
-        if self.control is not None:
-            update["control"] = self.control
-        return session.model_copy(update=update) if update else session
+    def over(self, base: PromptSetup) -> PromptSetup:
+        """叠在场景自带那份之上。**场景先定，变体再改**——变体提到的那几档
+        盖掉场景的，没提到的沿用（比如换 `history_search` 不该顺手把文风也换了）。
+        """
+        return PromptSetup(
+            choices=_layer(base.choices, self.prompts.choices),
+            tools=_layer(base.tools, self.prompts.tools),
+            tool_choices=_layer(base.tool_choices, self.prompts.tool_choices),
+            agents={**base.agents, **self.prompts.agents},
+        )
+
+
+def _layer(base: Any, top: Any) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {k: dict(v) for k, v in base.items()}
+    for agent, items in top.items():
+        out.setdefault(agent, {}).update(items)
+    return out
 
 
 BASELINE = Variant(name="baseline", note="场景自带配置")
@@ -194,9 +208,28 @@ async def run_scenario(
 
     **一轮失败不终止整条序列**——后续轮次仍会在最后一个成功节点上继续。
     否则第一轮的偶发错误会让整批样本作废，而我们要的正是失败样本。
+
+    **整条序列跑在一份改过的提示词副本上**（D174）：场景自带的那几档（文风、
+    要不要检索）加上变体要消融的那几处，一起写进副本，跑完删掉——仓库里那份
+    不会被动过。
     """
+    with prompts_as(variant.over(scenario.prompts)):
+        return await _run_scenario(
+            scenario, gateway, settings, variant=variant, limit=limit, on_turn=on_turn
+        )
+
+
+async def _run_scenario(
+    scenario: Scenario,
+    gateway: LLMGateway,
+    settings: Settings,
+    *,
+    variant: Variant = BASELINE,
+    limit: int | None = None,
+    on_turn: Any = None,
+) -> BenchResult:
     store = Store(settings.data_dir)
-    session = variant.apply(scenario.make_session())
+    session = scenario.make_session()
     repo = store.create_session(session)
     # 设定是**一级资产**（D170）：场景把整份都建起来。**它只有条目**（D175）——
     # 题材与基调也是其中一条，worldbook 上除了名字没有别的字段。
@@ -288,18 +321,15 @@ async def _drive_goal(
         return None
 
     run = session.goal_run or GoalRun(started_at_leaf_id=repo.load_node(leaf_id).parent_id)
-    tracer = Tracer(repo, leaf_id, events.append, persist=session.capabilities.trace)
+    tracer = Tracer(repo, leaf_id, events.append, persist=True)
 
     sync_conversation(
         player_character(repo.worldbook()),
         goal,
         run,
         repo.path_to(leaf_id),
-        density=session.control.expansion_density,
     )
-    step = await advance_goal(
-        gateway, tracer, goal, run, density=session.control.expansion_density, user_id=session.id
-    )
+    step = await advance_goal(gateway, tracer, goal, run, user_id=session.id)
     run.spent_runs += 1
     run.spent_tokens += (
         usage.tokens_in + usage.tokens_out + tracer.usage.tokens_in + tracer.usage.tokens_out

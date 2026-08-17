@@ -8,7 +8,7 @@ from conftest import GOAL_MARK, ScriptedLLM, text, tool, tools
 from fastapi.testclient import TestClient
 
 from agenttavern.config import Settings
-from agenttavern.models import Capabilities, Goal, Session, SessionMeta
+from agenttavern.models import Goal, Session, SessionMeta
 from agenttavern.server import create_app
 from agenttavern.storage import SessionRepository
 
@@ -37,9 +37,11 @@ def happy_llm(prose: str = "门轴发出一声长长的呻吟。") -> ScriptedLL
 
 @pytest.fixture
 def client_for(tmp_path: Path):
-    def build(llm: ScriptedLLM, *, developer: bool = False):
+    def build(llm: ScriptedLLM, *, developer: bool = False, stream: bool = True):
+        # `stream` / `trace` 是**服务级**的（D174）：一条关于交付，一条关于
+        # 运维，两条都跟模型收到什么无关，所以它们没跟着配置一起上调到提示词层。
         app = create_app(
-            Settings(data_dir=tmp_path, llm_model="m", developer=developer),
+            Settings(data_dir=tmp_path, llm_model="m", developer=developer, stream=stream),
             gateway=llm.gateway(),
         )
         return TestClient(app)
@@ -1642,8 +1644,8 @@ def test_streaming_can_be_switched_off(client_for) -> None:
         text("门轴响了。"),
         state=one_state(),
     )
-    client = client_for(llm)
-    session = Session(capabilities=Capabilities(stream=False))
+    client = client_for(llm, stream=False)
+    session = Session()
     client.post("/sessions", json=session.model_dump(mode="json"))
 
     with client.websocket_connect(f"/sessions/{session.id}/ws") as ws:
@@ -1771,18 +1773,18 @@ def test_the_frontend_can_tell_which_mode_the_service_started_in(client_for) -> 
     assert client_for(happy_llm(), developer=True).get("/meta").json()["developer"] is True
 
 
-def test_meta_lists_the_control_options_read_from_the_prompts(client_for) -> None:
-    """**档位从提示词 YAML 现读**，前端不写死一份。
+def test_meta_no_longer_carries_the_control_options(client_for) -> None:
+    """**`options` 已经删掉**（D173）。
 
-    写死的话，用户在 `writer.yaml` 里加一档文风，设置面板里就得等谁想起来同步；
-    漏同步的症状是「新档位存在但选不到」——和 D149 把装配约定收进一处是同一条理由。
+    档位和当前取值都住在 agent 的 YAML 里，前端要看就去 `/agents/{name}`——
+    `/meta` 再给一份就是同一件事的第二个入口，而两个入口迟早对不上。
+
+    留下的三样都是**服务自己的性质**，运行时改不了：开发者模式、模型名、
+    流不流式。
     """
-    from agenttavern.prompting import choices_of
-
-    options = client_for(happy_llm()).get("/meta").json()["options"]
-    assert options["prose_style"] == choices_of("writer", "prose_style")
-    assert options["pov"] == choices_of("writer", "pov")
-    assert "wangwen" in options["prose_style"] and "third" in options["pov"]
+    meta = client_for(happy_llm()).get("/meta").json()
+    assert "options" not in meta
+    assert set(meta) == {"developer", "model", "stream"}
 
 
 def test_no_goal_means_no_autocontinue(client_for) -> None:

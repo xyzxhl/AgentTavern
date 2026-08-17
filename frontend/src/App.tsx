@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 
+import { apply, load, watchSystem } from "./appearance";
+import { AgentsPage } from "./components/AgentsPage";
 import { Composer } from "./components/Composer";
 import { DeveloperPanel } from "./components/DeveloperPanel";
 import { GoalBar } from "./components/GoalBar";
 import { Notice } from "./components/Notice";
 import { QuestionPrompt } from "./components/QuestionPrompt";
 import { SessionList } from "./components/SessionList";
-import { SettingsPanel } from "./components/SettingsPanel";
+import { SettingsPage } from "./components/SettingsPage";
 import { Sidebar } from "./components/Sidebar";
 import { Transcript } from "./components/Transcript";
 import { WorldbookLibrary } from "./components/WorldbookLibrary";
@@ -27,8 +29,14 @@ export function App(): JSX.Element {
   const page = useSession((s) => s.page);
 
   useEffect(() => {
+    // 外观在最早一刻贴上去——晚一帧就是一次可见的闪白（D178）。
+    apply(load());
+    const stop = watchSystem(load);
     void bootstrap();
-    return disconnect;
+    return () => {
+      stop();
+      disconnect();
+    };
   }, [bootstrap, disconnect]);
 
   return (
@@ -38,7 +46,8 @@ export function App(): JSX.Element {
       <main className="relative flex min-w-0 flex-1 flex-col">
         {page.kind === "story" ? <Story /> : null}
         {page.kind === "worldbooks" ? <WorldbookLibrary /> : null}
-        {page.kind === "prompts" ? <Placeholder /> : null}
+        {page.kind === "agents" ? <AgentsPage /> : null}
+        {page.kind === "settings" ? <SettingsPage /> : null}
       </main>
 
       {/* 侧栏只在正文流下出现——独立页面要宽。 */}
@@ -54,11 +63,12 @@ function Story(): JSX.Element {
   const developer = useSession((s) => s.meta?.developer ?? false);
   const worldbookId = useSession((s) => s.session?.worldbook_id ?? "");
   const books = useSession((s) => s.sessions);
+  const usage = useSession((s) => s.usage);
   const go = useSession((s) => s.go);
-  const [settings, setSettings] = useState(false);
   const [devtools, setDevtools] = useState(false);
 
   const worldbookName = books.find((c) => c.id === sessionId)?.worldbook_name;
+  const spent = usage.tokensIn + usage.tokensOut;
 
   return (
     <>
@@ -86,10 +96,16 @@ function Story(): JSX.Element {
           </button>
         )}
         <div className="flex-1" />
-        {sessionId && (
-          <button className="btn" onClick={() => setSettings(true)}>
-            配置
-          </button>
+        {/* **成本要看得见**（D28 那条「实时显示消耗，由用户手动打断」）。
+            store 每轮都在累加，而界面此前一个字都没有。只算这次连接之后的——
+            它是"刚才这一段花了多少"，不是这局故事的总账。 */}
+        {spent > 0 && (
+          <span
+            className="font-mono text-[11px] text-dim"
+            title={`本次连接：入 ${usage.tokensIn} / 出 ${usage.tokensOut}`}
+          >
+            {compact(spent)} tok
+          </span>
         )}
       </header>
 
@@ -108,25 +124,12 @@ function Story(): JSX.Element {
         </div>
       )}
 
-      {/* 这两个仍然是浮层：它们的语义确实是「临时打断，看完就关」。 */}
-      {settings && sessionId && <SettingsPanel onClose={() => setSettings(false)} />}
+      {/* 这个仍然是浮层：它的语义确实是「临时打断，看完就关」。 */}
       {devtools && sessionId && <DeveloperPanel onClose={() => setDevtools(false)} />}
     </>
   );
 }
 
-/** 提示词页还没做（UI.md §6 定了形态，实现排在批 3）。 */
-function Placeholder(): JSX.Element {
-  return (
-    <div className="grid flex-1 place-items-center px-8 text-center text-sm text-dim">
-      <div>
-        <p>提示词管理还没做。</p>
-        <p className="mt-2 text-xs text-dim/70">
-          形态见 docs/design/UI.md §6：左 agent 列表 / 右「上下文 · 工具 · 特殊」，
-          <br />
-          三类条目（text / context / choice）可拖动排序。
-        </p>
-      </div>
-    </div>
-  );
+function compact(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }

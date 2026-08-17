@@ -3,6 +3,36 @@
 @tailwind utilities;
 
 @layer base {
+  /* **两套配色，切换只换变量**（D178）。深色是默认——这个界面一次要读很久。
+     通道值分开写，为的是 Tailwind 的 `/10`、`/70` 这类透明度修饰符继续有效。 */
+  :root,
+  [data-theme="dark"] {
+    --ink-900: 13 15 18;
+    --ink-800: 20 23 28;
+    --ink-700: 28 32 39;
+    --ink-600: 38 43 52;
+    --line: 44 50 60;
+    --dim: 139 147 161;
+    --fg: 223 227 234;
+    --accent: 122 162 247;
+  }
+
+  [data-theme="light"] {
+    --ink-900: 252 252 253;
+    --ink-800: 245 246 248;
+    --ink-700: 236 238 242;
+    --ink-600: 223 226 232;
+    --line: 214 218 226;
+    --dim: 105 113 127;
+    --fg: 32 37 46;
+    --accent: 47 100 200;
+  }
+
+  :root {
+    --prose-family: Georgia, "Songti SC", SimSun, serif;
+    --prose-size: 15px;
+  }
+
   html,
   body,
   #root {
@@ -10,7 +40,7 @@
   }
 
   body {
-    @apply bg-ink-900 text-fg font-sans antialiased;
+    @apply bg-ink-900 font-sans text-fg antialiased;
   }
 
   /* 滚动条不抢戏——三栏布局里到处都是可滚动区域。 */
@@ -35,5 +65,12 @@
     @apply rounded border border-line px-2.5 py-1 text-xs text-dim transition-colors;
     @apply hover:border-dim hover:text-fg disabled:cursor-not-allowed disabled:opacity-40;
     @apply disabled:hover:border-line disabled:hover:text-dim;
+  }
+
+  /* 正文的字号也归设置（D178）：`text-[15px]` 写死在组件里的话，
+     "字大一点"这件事就得改代码。 */
+  .prose-body {
+    font-size: var(--prose-size);
+    @apply font-prose leading-[1.9] text-fg;
   }
 }
