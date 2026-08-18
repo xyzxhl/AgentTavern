@@ -378,14 +378,23 @@ function Editor(props: EditorProps): JSX.Element {
         {isCharacter && (
           <Field
             label="用户扮演的就是他"
-            hint="**用户扮演的角色是一般角色的子类**：它就是个角色，只是多回答一个「用户是谁」。一份设定里至多一条。"
+            hint="**用户扮演的角色是一般角色的子类**：它就是个角色，只是多回答一个「用户是谁」。一份设定里至多一条——选了他，原来那个会自动取消。"
           >
-            <button
-              onClick={() => setDraft({ ...draft, is_player: !draft.is_player })}
-              className={`btn ${draft.is_player ? "border-accent text-fg" : ""}`}
-            >
-              {draft.is_player ? "是" : "否"}
-            </button>
+            {/* **和别的字段一样是选择，不是开关**（D180）。`kind`、`是否可展开`
+                都是「一排按钮选一个」，只有这里是是/否 toggle，形态上没有理由
+                不一致；而且它本来就是**单选**（一份设定至多一个用户角色），
+                toggle 的形状会让人以为可以多标几个。 */}
+            <div className="flex gap-2">
+              {[true, false].map((yes) => (
+                <button
+                  key={String(yes)}
+                  onClick={() => setDraft({ ...draft, is_player: yes })}
+                  className={`btn ${draft.is_player === yes ? "border-accent text-fg" : ""}`}
+                >
+                  {yes ? "是" : "否"}
+                </button>
+              ))}
+            </div>
           </Field>
         )}
 

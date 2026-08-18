@@ -19,7 +19,6 @@ export function SessionList(): JSX.Element {
   const newSession = useSession((s) => s.newSession);
   const refreshSessions = useSession((s) => s.refreshSessions);
   const refreshState = useSession((s) => s.refreshState);
-  const developer = useSession((s) => s.meta?.developer ?? false);
 
   function open(id: string): void {
     void connect(id);
@@ -37,16 +36,16 @@ export function SessionList(): JSX.Element {
   return (
     <aside className="flex w-56 shrink-0 flex-col border-r border-line bg-ink-800">
       <nav className="border-b border-line p-2">
-        {/* **提示词是部署方写的东西**（D35），且改坏了整台服务不工作——所以跟
-            开发者模式同一个开关（D156）。放开只是去掉这个条件。 */}
-        {developer && (
-          <Entry
-            label="提示词管理"
-            active={page.kind === "agents"}
-            page={{ kind: "agents" }}
-            go={go}
-          />
-        )}
+        {/* **提示词管理一直在**（D180）。它曾经跟开发者模式同一个开关，理由是
+            「提示词是部署方写的东西、改坏了整台服务不工作」——但**这台服务的
+            部署方就是用户自己**，而调提示词是这个项目里最日常的动作。
+            开发者模式管的是另一件事：**能不能看到每次模型往返的完整输入输出**。 */}
+        <Entry
+          label="提示词管理"
+          active={page.kind === "agents"}
+          page={{ kind: "agents" }}
+          go={go}
+        />
         <Entry
           label="世界书管理"
           active={page.kind === "worldbooks"}

@@ -103,7 +103,27 @@ class WorldbookRepository:
         return good, bad
 
     def save_entry(self, entry: WorldbookEntry) -> None:
+        """写一条设定。**「用户扮演谁」的唯一性在这里保证**（D180）。
+
+        `player_character()` 取的是**第一条**标了 `is_player` 的角色条目，而
+        `entries()` 按名字排序——于是标了两个的话，「谁是用户」取决于名字的
+        字典序，另一个静默失效。这正是 D171 要消掉的形态：**对不上的时候不报错，
+        只是其中一个悄悄没生效。**
+
+        **写时收敛而不是读时挑一个**：读时挑等于让每个读的人各自去猜，而且盘上
+        始终躺着一份自相矛盾的数据。写入路径只有这一个（界面、导入、迁移都走它），
+        所以在这里收敛就够了——**不必也不该指望界面自觉**：导入一份别人做的包
+        同样能塞进两个。
+        """
         write_model(self.entry_path(entry.id), entry)
+        if entry.kind is EntryKind.CHARACTER and entry.is_player:
+            self._demote_other_players(entry.id)
+
+    def _demote_other_players(self, keep: str) -> None:
+        for other in self.entries():
+            if other.id != keep and other.is_player:
+                demoted = other.model_copy(update={"is_player": False})
+                write_model(self.entry_path(other.id), demoted)
 
     def load_entry(self, entry_id: str) -> WorldbookEntry | None:
         return read_model_or_none(self.entry_path(entry_id), WorldbookEntry)

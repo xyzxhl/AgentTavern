@@ -2010,3 +2010,52 @@ def test_old_entry_kinds_are_migrated_on_startup(tmp_path) -> None:
     assert entries["b"].kind is EntryKind.CHARACTER
     assert entries["b"].is_player is True, "「用户扮演谁」搬到标记上，不是丢掉"
     assert entries["b"].voice == "话少"
+
+
+def test_only_one_character_can_be_the_player(client_for) -> None:
+    """**「用户扮演谁」在写入时收敛**（D180）。
+
+    `player_character()` 取的是**第一条**标了 `is_player` 的角色条目，而
+    `entries()` 按名字排序——标了两个的话，「谁是用户」取决于名字的字典序，
+    另一个静默失效。这正是 D171 要消掉的形态：对不上的时候不报错，
+    只是其中一个悄悄没生效。
+
+    **写时收敛而不是读时挑一个**：读时挑等于让每个读的人各自去猜，而且盘上
+    始终躺着一份自相矛盾的数据。
+    """
+    client = client_for(happy_llm())
+    wid = client.post("/worldbooks", json={"name": "旧城区"}).json()["id"]
+
+    def put(name: str, is_player: bool) -> dict:
+        return client.put(
+            f"/worldbooks/{wid}/entries",
+            json={"name": name, "kind": "character", "content": "…", "is_player": is_player},
+        ).json()
+
+    first = put("阿甲", True)
+    second = put("阿乙", True)
+
+    entries = {e["name"]: e for e in client.get(f"/worldbooks/{wid}").json()["entries"]}
+    assert entries["阿乙"]["is_player"] is True, "最后标的那个说了算"
+    assert entries["阿甲"]["is_player"] is False, "原来那个要被自动取消，不能两个都挂着"
+    assert first["id"] != second["id"]
+
+
+def test_demoting_the_player_leaves_everyone_alone(client_for) -> None:
+    """把唯一那个取消掉，不该顺手动别人——收敛只在**标上**的时候发生。"""
+    client = client_for(happy_llm())
+    wid = client.post("/worldbooks", json={"name": "旧城区"}).json()["id"]
+
+    def put(name: str, is_player: bool, entry_id: str | None = None) -> dict:
+        body = {"name": name, "kind": "character", "content": "…", "is_player": is_player}
+        if entry_id:
+            body["id"] = entry_id
+        return client.put(f"/worldbooks/{wid}/entries", json=body).json()
+
+    put("阿甲", False)
+    me = put("阿乙", True)
+    put("阿乙", False, me["id"])
+
+    entries = client.get(f"/worldbooks/{wid}").json()["entries"]
+    assert not any(e["is_player"] for e in entries)
+    assert len(entries) == 2, "谁也没被删掉"
