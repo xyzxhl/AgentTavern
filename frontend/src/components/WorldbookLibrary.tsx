@@ -18,6 +18,7 @@ import { WorldbookPanel } from "./WorldbookPanel";
 export function WorldbookLibrary(): JSX.Element {
   const [cards, setCards] = useState<WorldbookCard[]>([]);
   const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState("");
   const file = useRef<HTMLInputElement>(null);
   const newSession = useSession((s) => s.newSession);
   // **要打开哪一份写在路由上**，不写在这个组件的局部状态里——头部那个
@@ -26,12 +27,35 @@ export function WorldbookLibrary(): JSX.Element {
   const go = useSession((s) => s.go);
   const setEditing = (id: string | null) => go({ kind: "worldbooks", open: id ?? undefined });
 
+  /**
+   * **每个动作都包在这里面。** 出错就显示出来，不是让它静默消失。
+   *
+   * 这是批 0 那条教训的第二遍（D179）：那次 `json()` 加了 content-type 校验，
+   * 让失败**抛得更早更响**——但**没有人接**，于是同一个症状又来了一次。
+   * 「新建无效」的真相是：新建成功了，紧接着的列表刷新 500 了，异常在
+   * `try/finally` 里悄悄没了，界面看起来像什么都没发生。
+   *
+   * **前端的失败要出声，光会抛不算出声。**
+   */
+  async function guard(work: () => Promise<void>): Promise<void> {
+    setBusy(true);
+    setProblem("");
+    try {
+      await work();
+    } catch (err) {
+      setProblem((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function reload(): Promise<void> {
     setCards(await api.listWorldbooks());
   }
 
   useEffect(() => {
-    void reload();
+    void guard(reload);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 条目编辑复用同一个面板：从故事里打开和从这里打开是同一件事，只是入口不同。
@@ -46,51 +70,47 @@ export function WorldbookLibrary(): JSX.Element {
 
   /** 导入一份文件 → **一份新设定**（D172）。拿到别人分享的文件时要的就是这个。 */
   async function importAsNew(picked: File): Promise<void> {
-    setBusy(true);
-    try {
+    await guard(async () => {
       const bundle = JSON.parse(await picked.text()) as WorldbookBundle;
       const book = await api.importAsNewWorldbook(bundle);
       await reload();
       setEditing(book.id ?? null);
-    } catch (err) {
-      alert(`导入失败：${(err as Error).message}`);
-    } finally {
-      setBusy(false);
-      if (file.current) file.current.value = "";
-    }
+    });
+    if (file.current) file.current.value = "";
   }
 
   async function create(): Promise<void> {
-    setBusy(true);
-    try {
+    await guard(async () => {
       const book = await api.createWorldbook({ name: "新的设定" });
       await reload();
       setEditing(book.id ?? null);
-    } finally {
-      setBusy(false);
-    }
+    });
   }
 
   async function start(book: Worldbook): Promise<void> {
-    await newSession(book.id ?? undefined);
+    await guard(() => newSession(book.id ?? undefined));
   }
 
   async function rename(card: WorldbookCard): Promise<void> {
     const name = prompt("设定叫什么？", card.worldbook.name ?? "");
     if (name === null) return;
-    await api.patchWorldbook(card.worldbook.id ?? "", name);
-    await reload();
+    await guard(async () => {
+      await api.patchWorldbook(card.worldbook.id ?? "", name);
+      await reload();
+    });
   }
 
   async function remove(card: WorldbookCard): Promise<void> {
     // **有故事在用就不让删**：服务端也会拦（409），这里先说清是为什么。
     if (card.sessions.length) {
-      alert(`还有 ${card.sessions.length} 局故事开在这份设定上。先删掉那些故事。`);
+      setProblem(`还有 ${card.sessions.length} 局故事开在这份设定上。先删掉那些故事。`);
       return;
     }
     if (!confirm(`删除「${card.worldbook.name || "未命名"}」？`)) return;
-    await api.deleteWorldbook(card.worldbook.id ?? "");
-    await reload();
+    await guard(async () => {
+      await api.deleteWorldbook(card.worldbook.id ?? "");
+      await reload();
+    });
   }
 
   return (
@@ -117,6 +137,13 @@ export function WorldbookLibrary(): JSX.Element {
         </button>
       </header>
 
+      {/* **失败要出声**（D179）：静默消失的异常正是「新建无效」那次的真相。 */}
+      {problem && (
+        <p className="border-b border-line bg-ink-800 px-5 py-2 text-[11px] leading-snug text-accent">
+          {problem}
+        </p>
+      )}
+
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         <div className="mx-auto max-w-2xl space-y-2">
           {cards.length === 0 && (
@@ -136,6 +163,15 @@ export function WorldbookLibrary(): JSX.Element {
                 </h3>
                 <span className="shrink-0 font-mono text-[11px] text-dim">{card.entries} 条</span>
               </div>
+
+              {/* **读不出来的条目要点出来**（D179）：悄悄少一条比报错更糟——
+                  模型据此写出矛盾的剧情，而用户根本不知道自己丢了什么。 */}
+              {card.broken?.length > 0 && (
+                <p className="mt-1 text-[11px] text-accent">
+                  有 {card.broken.length} 条读不出来（{card.broken.join("、")}）——
+                  多半是旧格式，服务启动时会自动搬迁；还在的话就是那个文件坏了。
+                </p>
+              )}
 
               {/* **谁在用**：改设定对它们全都生效，删之前更得看得见（D170）。 */}
               <p className="mt-1 text-[11px] text-dim">

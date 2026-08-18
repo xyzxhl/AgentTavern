@@ -279,15 +279,25 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
     def list_worldbooks() -> list[dict[str, Any]]:
         """**带上「谁在用」**：一份设定可以开出好几个故事（D170），而删之前
         必须看得见这件事——被三局故事用着的设定被删掉，那三局会当场失忆。
+
+        **一条读不出来的条目不该让整张列表 500**（D179）。这里走 `survey()`：
+        它数得出好的、也点得出坏的。列表只为了显示"几条"，不喂模型——
+        喂模型那条路径（`entries()`）照旧严格抛。
         """
-        return [
-            {
-                "worldbook": store.worldbook(wid).load(),
-                "entries": len(store.worldbook(wid).entries()),
-                "sessions": store.sessions_of(wid),
-            }
-            for wid in store.list_worldbooks()
-        ]
+        out: list[dict[str, Any]] = []
+        for wid in store.list_worldbooks():
+            book = store.worldbook(wid)
+            good, bad = book.survey()
+            out.append(
+                {
+                    "worldbook": book.load(),
+                    "entries": good,
+                    "sessions": store.sessions_of(wid),
+                    # **坏的要说出来，不能悄悄跳过**：用户得知道自己丢了什么。
+                    "broken": bad,
+                }
+            )
+        return out
 
     @app.post("/worldbooks")
     def create_worldbook(book: Worldbook | None = None) -> Worldbook:

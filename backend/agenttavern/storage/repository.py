@@ -280,6 +280,48 @@ class Store:
     # -- 旧数据 -------------------------------------------------------------
 
     def migrate(self) -> int:
+        """跑所有的旧数据搬迁。返回搬了几个 session（`migrate_kinds` 不计入）。
+
+        **两件事，顺序要紧**：先把条目的 `kind` 改成现在的写法，再搬 worldbook——
+        后者会 `create_worldbook`，而那之后任何一次列表都会去读条目。
+        """
+        self.migrate_kinds()
+        return self._migrate_worldbooks()
+
+    def migrate_kinds(self) -> int:
+        """条目的 `kind` 换过两次名，把旧值改成现在的（D159/D171/D175）。返回改了几条。
+
+        | 旧值 | 现在 |
+        |---|---|
+        | `lore` | `world` |
+        | `player` | `character` + `is_player: true` |
+
+        `player` 那条尤其要紧：**用户扮演的角色不是第四种 kind**，它是一条角色
+        条目加一个标记（D159）——那次改形状时**漏了迁移**，于是盘上留着一批
+        读不出来的条目。
+
+        **读原始 JSON，不经模型**（同 D170 的理由，只是这次更硬）：这些值现在
+        根本不在 `EntryKind` 里，照模型读会直接抛 `ValidationError`——而那正是
+        这个函数要修的东西，用它自己去读要修的数据是个死结。
+        """
+        renamed = 0
+        for path in (self.root / "worldbooks").glob("*/entries/*.json"):
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            kind = raw.get("kind")
+            if kind == "lore":
+                raw["kind"] = EntryKind.WORLD.value
+            elif kind == "player":
+                # 名字、正文、语言习惯全都留着——变的只是"他是不是用户扮演的那个"
+                # 从 kind 挪到了一个标记上。
+                raw["kind"] = EntryKind.CHARACTER.value
+                raw["is_player"] = True
+            else:
+                continue
+            path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+            renamed += 1
+        return renamed
+
+    def _migrate_worldbooks(self) -> int:
         """把 worldbook 从 session 目录里搬出来（D170）。返回搬了几个 session。
 
         **启动时跑一次，之后是空操作。** 旧布局是 `sessions/<id>/worldinfo/`，

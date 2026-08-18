@@ -16,6 +16,9 @@ export interface WorldbookCard {
   worldbook: Worldbook;
   entries: number;
   sessions: string[];
+  /** 读不出来的那几条（D179）。**一条坏数据不该让整张列表 500**，但也不能
+   * 悄悄跳过——用户得知道自己丢了什么。 */
+  broken: string[];
 }
 
 /** 会话列表里的一条。**带标题**——一串 `sess_a1b2c3…` 认不出哪局是哪局（D172）。 */

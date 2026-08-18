@@ -68,11 +68,39 @@ class WorldbookRepository:
         return self.entries_dir / f"{entry_id}.json"
 
     def entries(self) -> list[WorldbookEntry]:
-        """**全部**条目，不做预筛选（D62/D63）。索引覆盖全集是准入标准。"""
+        """**全部**条目，不做预筛选（D62/D63）。索引覆盖全集是准入标准。
+
+        **读不出来的条目在这里照抛**（D179）。这条路径喂模型——静默跳过等于让
+        一条设定悄悄消失，而模型据此写出矛盾的剧情，没有任何地方会报错。
+        要「能列出来、别整个瘫掉」那种宽容，走 `survey()`。
+        """
         if not self.entries_dir.exists():
             return []
         entries = [read_model(p, WorldbookEntry) for p in self.entries_dir.glob("*.json")]
         return sorted(entries, key=lambda e: (e.name, e.id))
+
+    def survey(self) -> tuple[int, list[str]]:
+        """``(读得出来的条数, 读不出来的文件名)``。**列表用它，模型不用**（D179）。
+
+        实测踩过：盘上一条 `kind: "lore"` 的旧条目（那个值早改叫 `world` 了），
+        于是 `GET /worldbooks` **整个 500**——设定库列不出来，新建之后的刷新也炸，
+        用户看到的症状是「新建没反应」。**一条八百年前的脏数据让整个功能瘫痪，
+        而报错离原因十万八千里。**
+
+        所以列表这一层要宽容：它只是为了显示"几条"，不喂模型。坏的那几条**报出来
+        而不是跳过**——悄悄少一条比 500 更糟，用户根本不知道自己丢了什么（D62）。
+        """
+        if not self.entries_dir.exists():
+            return 0, []
+        good, bad = 0, []
+        for path in sorted(self.entries_dir.glob("*.json")):
+            try:
+                read_model(path, WorldbookEntry)
+            except Exception:  # noqa: BLE001 — 坏成什么样都算坏，这里只负责数
+                bad.append(path.name)
+            else:
+                good += 1
+        return good, bad
 
     def save_entry(self, entry: WorldbookEntry) -> None:
         write_model(self.entry_path(entry.id), entry)

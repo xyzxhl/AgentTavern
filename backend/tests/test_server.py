@@ -8,7 +8,7 @@ from conftest import GOAL_MARK, ScriptedLLM, text, tool, tools
 from fastapi.testclient import TestClient
 
 from agenttavern.config import Settings
-from agenttavern.models import Goal, Session, SessionMeta
+from agenttavern.models import Goal, Session, SessionMeta, Worldbook
 from agenttavern.server import create_app
 from agenttavern.storage import SessionRepository
 
@@ -1915,3 +1915,98 @@ def test_importing_a_file_can_create_a_new_worldbook(client_for) -> None:
         client.post("/worldbooks/import", json={"format": "别的", "version": 1}).status_code == 400
     )
     assert len(client.get("/worldbooks").json()) == 1
+
+
+# -- 一条坏条目不该让整个设定库瘫痪（D179）------------------------------------
+
+
+def _plant(root, worldbook_id: str, name: str, body: dict) -> None:
+    """往盘上直接放一条**模型读不出来**的条目。
+
+    必须绕开模型写：`WorldbookEntry` 根本装不下这些旧值——而那正是要测的东西。
+    """
+    where = root / "worldbooks" / worldbook_id / "entries"
+    where.mkdir(parents=True, exist_ok=True)
+    (where / f"{name}.json").write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
+
+
+def test_a_stale_entry_does_not_take_the_whole_list_down(client_for, tmp_path) -> None:
+    """**实测踩过的那个**：盘上一条 `kind: "lore"` 的旧条目让 `GET /worldbooks`
+    整个 500——设定库列不出来，新建之后的刷新也炸，而用户看到的症状是
+    「新建没反应」。**一条八百年前的脏数据让整个功能瘫痪，报错离原因十万八千里。**
+
+    列表这一层只为了显示"几条"，不喂模型，所以它要宽容：好的照数，
+    坏的**点出来**（不是跳过——悄悄少一条用户根本不知道自己丢了什么，D62）。
+    """
+    client = client_for(happy_llm())
+    wid = client.post("/worldbooks", json={"name": "旧城区"}).json()["id"]
+    client.put(
+        f"/worldbooks/{wid}/entries",
+        json={"name": "好的", "kind": "world", "content": "旧货店在窄巷尽头。"},
+    )
+    _plant(tmp_path, wid, "wi_broken", {"id": "wi_broken", "name": "坏的", "kind": "根本不是档位"})
+
+    res = client.get("/worldbooks")
+    assert res.status_code == 200, "一条读不出来不该让整张列表挂掉"
+
+    card = next(c for c in res.json() if c["worldbook"]["id"] == wid)
+    assert card["entries"] == 1, "好的那条照数"
+    assert card["broken"] == ["wi_broken.json"], "坏的那条要点出来，不能悄悄跳过"
+
+
+def test_the_model_facing_path_still_refuses_to_guess(client_for, tmp_path) -> None:
+    """**喂模型那条路径照旧严格抛。**
+
+    宽容只属于列表。`entries()` 静默跳过一条设定，模型就会据此写出矛盾的剧情，
+    而没有任何地方会报错——那比 500 坏得多。
+    """
+    from pydantic import ValidationError
+
+    from agenttavern.storage import Store
+
+    client = client_for(happy_llm())
+    wid = client.post("/worldbooks").json()["id"]
+    _plant(tmp_path, wid, "wi_broken", {"id": "wi_broken", "name": "坏的", "kind": "lore"})
+
+    with pytest.raises(ValidationError):
+        Store(tmp_path).worldbook(wid).entries()
+
+
+def test_old_entry_kinds_are_migrated_on_startup(tmp_path) -> None:
+    """`kind` 换过两次名，旧值要搬过来（D159/D171/D175）。
+
+    - `lore` → `world`
+    - `player` → `character` + `is_player`：**用户扮演的角色不是第四种 kind**，
+      它是一条角色条目加一个标记。那次改形状时漏了迁移，于是盘上留着一批
+      读不出来的条目——直到某天整个设定库 500。
+
+    正文、名字、语言习惯**一个字都不能丢**：这是用户自己写的世界。
+    """
+    from agenttavern.models import EntryKind
+    from agenttavern.storage import Store
+
+    store = Store(tmp_path)
+    book = store.create_worldbook(Worldbook(name="旧城区"))
+    _plant(
+        tmp_path,
+        book.worldbook_id,
+        "a",
+        {"id": "a", "name": "女多男少", "kind": "lore", "content": "男女比例失衡。"},
+    )
+    _plant(
+        tmp_path,
+        book.worldbook_id,
+        "b",
+        {"id": "b", "name": "程飞", "kind": "player", "content": "唯一的男教师。", "voice": "话少"},
+    )
+
+    assert store.migrate_kinds() == 2
+    assert store.migrate_kinds() == 0, "跑第二遍是空操作"
+
+    entries = {e.id: e for e in book.entries()}
+    assert entries["a"].kind is EntryKind.WORLD
+    assert entries["a"].content == "男女比例失衡。", "正文一个字都不能丢"
+
+    assert entries["b"].kind is EntryKind.CHARACTER
+    assert entries["b"].is_player is True, "「用户扮演谁」搬到标记上，不是丢掉"
+    assert entries["b"].voice == "话少"
