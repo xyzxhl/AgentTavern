@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { type Appearance, type Mode, type ProseFont, apply, load } from "../appearance";
 import { useSession } from "../store";
+import { Pick } from "./Pick";
 
 /**
  * 全局设置，**只有两组**（D174/D178）。
@@ -37,23 +38,23 @@ export function SettingsPage(): JSX.Element {
           <Group name="界面" hint="存在这台浏览器里，不跟着故事走。">
             <Row label="色彩模式">
               <Pick<Mode>
-                now={look.mode}
+                value={look.mode}
                 options={[
                   ["system", "跟随系统"],
                   ["dark", "深色"],
                   ["light", "浅色"],
                 ]}
-                onPick={(mode) => change({ mode })}
+                onChange={(mode) => change({ mode })}
               />
             </Row>
             <Row label="正文字体" hint="只管正文那一块；界面别处一直是无衬线。">
               <Pick<ProseFont>
-                now={look.font}
+                value={look.font}
                 options={[
                   ["serif", "衬线"],
                   ["sans", "无衬线"],
                 ]}
-                onPick={(font) => change({ font })}
+                onChange={(font) => change({ font })}
               />
             </Row>
             <Row label="正文字号">
@@ -125,30 +126,6 @@ function Row({
         {hint && <div className="mt-0.5 text-[11px] leading-snug text-dim">{hint}</div>}
       </div>
       <div className="min-w-0 flex-1">{children}</div>
-    </div>
-  );
-}
-
-function Pick<T extends string>({
-  now,
-  options,
-  onPick,
-}: {
-  now: T;
-  options: [T, string][];
-  onPick: (next: T) => void;
-}): JSX.Element {
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {options.map(([value, label]) => (
-        <button
-          key={value}
-          onClick={() => onPick(value)}
-          className={`btn ${now === value ? "border-accent text-fg" : ""}`}
-        >
-          {label}
-        </button>
-      ))}
     </div>
   );
 }

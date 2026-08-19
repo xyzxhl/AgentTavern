@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { api, type AgentCard, type AgentDoc, type Section } from "../api";
 import { useSession } from "../store";
+import { Pick, YesNo } from "./Pick";
 
 /**
  * agent 管理：**所有被输入模型的内容，用户都能审查和修改**（D173）。
@@ -91,24 +92,24 @@ export function AgentsPage(): JSX.Element {
           <span className="text-sm text-fg">{LABEL[picked] ?? picked}</span>
           <span className="font-mono text-[11px] text-dim">{picked}</span>
           {"enabled" in data && (
-            <button
-              className={`btn ${data.enabled === false ? "" : "border-accent text-fg"}`}
-              onClick={() => patch({ enabled: data.enabled === false })}
-              title="关掉这个 agent，它这一路整个不跑"
-            >
-              {data.enabled === false ? "已关闭" : "启用中"}
-            </button>
+            <span className="flex items-center gap-1.5" title="关掉这个 agent，它这一路整个不跑">
+              <span className="text-[11px] text-dim">启用</span>
+              <YesNo
+                value={data.enabled !== false}
+                onChange={(on) => patch({ enabled: on })}
+              />
+            </span>
           )}
           <div className="flex-1" />
-          {(["context", "tools", "specials"] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`btn ${tab === t ? "border-accent text-fg" : ""}`}
-            >
-              {TAB[t]}
-            </button>
-          ))}
+          <Pick<"context" | "tools" | "specials">
+            value={tab}
+            options={[
+              ["context", TAB.context],
+              ["tools", TAB.tools],
+              ["specials", TAB.specials],
+            ]}
+            onChange={setTab}
+          />
           <button className="btn" onClick={() => void save()} disabled={!doc}>
             保存
           </button>
@@ -277,15 +278,11 @@ function Choice({
     <>
       <div className="mb-2 flex flex-wrap items-center gap-1.5">
         <span className="text-[11px] text-dim">当前选：</span>
-        {Object.keys(options).map((name) => (
-          <button
-            key={name}
-            onClick={() => onChange({ selected: name })}
-            className={`btn ${item.selected === name ? "border-accent text-fg" : ""}`}
-          >
-            {name}
-          </button>
-        ))}
+        <Pick<string>
+          value={item.selected ?? ""}
+          options={Object.keys(options).map((name) => [name, name])}
+          onChange={(selected) => onChange({ selected })}
+        />
       </div>
       {Object.entries(options).map(([name, body]) => (
         <div key={name} className="mb-2">
@@ -334,12 +331,13 @@ function Tools({
             <span className="font-mono text-xs text-fg">{name}</span>
             <div className="flex-1" />
             {"enabled" in spec && (
-              <button
-                className={`btn ${spec.enabled === false ? "" : "border-accent text-fg"}`}
-                onClick={() => edit(name, { enabled: spec.enabled === false })}
-              >
-                {spec.enabled === false ? "已关闭" : "启用中"}
-              </button>
+              <>
+                <span className="text-[11px] text-dim">注册</span>
+                <YesNo
+                  value={spec.enabled !== false}
+                  onChange={(on) => edit(name, { enabled: on })}
+                />
+              </>
             )}
           </div>
 
@@ -407,12 +405,11 @@ function Specials({
               <span className="text-xs text-fg">{SPECIAL[key] ?? key}</span>
               <span className="font-mono text-[10px] text-dim">{key}</span>
               <div className="flex-1" />
-              <button
-                className={`btn ${spec.enabled === false ? "" : "border-accent text-fg"}`}
-                onClick={() => editSpecial(key, { enabled: spec.enabled === false })}
-              >
-                {spec.enabled === false ? "已关闭" : "启用中"}
-              </button>
+              <span className="text-[11px] text-dim">发送</span>
+              <YesNo
+                value={spec.enabled !== false}
+                onChange={(on) => editSpecial(key, { enabled: on })}
+              />
             </div>
             {typeof spec.mark === "string" && (
               <p className="mt-1 text-[10px] text-dim">

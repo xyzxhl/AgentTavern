@@ -4,6 +4,7 @@ import { api } from "../api";
 import type { EntryKind, Worldbook, WorldbookBundle, WorldbookEntry } from "../protocol";
 import { useSession } from "../store";
 import { JsonEditor } from "./JsonEditor";
+import { Pick, YesNo } from "./Pick";
 
 const KINDS = ["world", "character", "state"] as const;
 
@@ -318,17 +319,11 @@ function Editor(props: EditorProps): JSX.Element {
     <div className="min-w-0 flex-1 overflow-y-auto px-6 py-5">
       <div className="mx-auto max-w-2xl space-y-5">
         <Field label="类型" hint={KIND_HINT[kind]}>
-          <div className="flex gap-2">
-            {KINDS.map((option) => (
-              <button
-                key={option}
-                onClick={() => setDraft({ ...draft, kind: option })}
-                className={`btn ${kind === option ? "border-accent text-fg" : ""}`}
-              >
-                {KIND_LABEL[option]}
-              </button>
-            ))}
-          </div>
+          <Pick<EntryKind>
+            value={kind}
+            options={KINDS.map((k) => [k, KIND_LABEL[k]])}
+            onChange={(next) => setDraft({ ...draft, kind: next })}
+          />
         </Field>
 
         <Field label="名称">
@@ -347,17 +342,14 @@ function Editor(props: EditorProps): JSX.Element {
               : "常驻：整段每轮进上下文。按需：只进索引，模型用 worldinfo_read 展开。全部条目都常驻时，展开工具根本不注册。"
           }
         >
-          <div className="flex gap-2">
-            {(["always", "on_demand"] as const).map((mode) => (
-              <button
-                key={mode}
-                onClick={() => setDraft({ ...draft, mode })}
-                className={`btn ${draft.mode === mode ? "border-accent text-fg" : ""}`}
-              >
-                {mode === "always" ? "常驻" : "按需展开"}
-              </button>
-            ))}
-          </div>
+          <Pick<"always" | "on_demand">
+            value={draft.mode ?? "always"}
+            options={[
+              ["always", "常驻"],
+              ["on_demand", "按需展开"],
+            ]}
+            onChange={(mode) => setDraft({ ...draft, mode })}
+          />
         </Field>
 
         {isState && draft.mode === "on_demand" && (
@@ -380,21 +372,10 @@ function Editor(props: EditorProps): JSX.Element {
             label="用户扮演的就是他"
             hint="**用户扮演的角色是一般角色的子类**：它就是个角色，只是多回答一个「用户是谁」。一份设定里至多一条——选了他，原来那个会自动取消。"
           >
-            {/* **和别的字段一样是选择，不是开关**（D180）。`kind`、`是否可展开`
-                都是「一排按钮选一个」，只有这里是是/否 toggle，形态上没有理由
-                不一致；而且它本来就是**单选**（一份设定至多一个用户角色），
-                toggle 的形状会让人以为可以多标几个。 */}
-            <div className="flex gap-2">
-              {[true, false].map((yes) => (
-                <button
-                  key={String(yes)}
-                  onClick={() => setDraft({ ...draft, is_player: yes })}
-                  className={`btn ${draft.is_player === yes ? "border-accent text-fg" : ""}`}
-                >
-                  {yes ? "是" : "否"}
-                </button>
-              ))}
-            </div>
+            <YesNo
+              value={draft.is_player ?? false}
+              onChange={(yes) => setDraft({ ...draft, is_player: yes })}
+            />
           </Field>
         )}
 
