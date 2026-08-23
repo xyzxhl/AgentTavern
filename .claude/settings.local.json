@@ -1,5 +1,14 @@
 {
+  "env": {
+    "PYTHONIOENCODING": "utf-8"
+  },
   "permissions": {
-    "allow": ["Bash", "PowerShell", "WebFetch"]
+    "allow": [
+      "Bash",
+      "PowerShell",
+      "WebFetch",
+      "Edit",
+      "Write"
+    ]
   }
 }
