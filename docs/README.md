@@ -33,6 +33,21 @@ state_manager（tool loop，run 末）
 
 **run = node = 一份细纲 = 一份正文**，四者一一对应。节点构成分支树，**状态是路径的函数**——切换分支必须同时重放状态，否则会出现"文本对、状态悄悄错"这类最隐蔽的 bug。
 
+## 跑起来
+
+仓库根的 `dev.ps1` 一条命令起前后端（后端 8000、前端 5173，日志打在同一个控制台，Ctrl+C 一起停）：
+
+```powershell
+.\dev.ps1 -Setup     # 第一次：建 venv、装 pip 与 npm 依赖，再起
+.\dev.ps1            # 之后
+```
+
+然后打开 <http://127.0.0.1:5173>。
+
+**先填 `backend/.env`**（`copy backend\.env.example backend\.env`，填 `LLM_API_KEY` 与 `LLM_MODEL`）。任何 OpenAI 兼容端点都行。不填也起得来——但要到第一次真调模型才 401，那时报错离原因已经很远，所以 `dev.ps1` 在启动前就拦掉。
+
+端口写死在 `frontend/vite.config.ts`（监听 5173、代理目标 8000），要换在那一处换。**别只换一边**：漏掉代理那条不会报错，Vite 会把请求当成前端路由回一份 `index.html` 且状态码 200（D172）。
+
 ## 文档
 
 | | |
@@ -62,7 +77,7 @@ state_manager（tool loop，run 末）
 
 ## 状态
 
-**后端基本完成**，可独立运行（262 项测试，ruff / mypy strict 全绿）。四个 agent、分支与挂起、三项可选能力（goal / summarize / ask_question）都在真实模型上跑通过。剩余为三类：
+**后端基本完成**，可独立运行（331 项测试，ruff / mypy strict 全绿）。四个 agent、分支与挂起、三项可选能力（goal / summarize / ask_question）都在真实模型上跑通过。剩余为三类：
 
 1. **需要实验数据**的两项——文风的结构层能否留在 writer 侧、细纲的粒度下限。二者是同一张力的两端，须一起测。**后者实测已成问题**：`chapters` 12 轮里 `ratio_avg` 只有 1.21、最低 0.70（正文比细纲还短），细纲里出现了描写。
 2. **仍开放的设计**——实体级检索的"信息需求在推演中才产生"这个鸡生蛋没解决，只是从代码手里交给了模型。
