@@ -114,7 +114,7 @@
 
 ## 五、输入与配置
 
-见 [design/Configuration.md](design/Configuration.md)、[design/InputHandling.md](design/InputHandling.md)。
+见 [spec/Prompting.md](spec/Prompting.md)、[design/InputHandling.md](design/InputHandling.md)。
 
 | # | 决策 | 说明 |
 |---|---|---|

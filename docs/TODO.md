@@ -25,7 +25,7 @@
 不会以单点错误的形式暴露，只能靠专门一类去查。
 
 连带六处仍写着「五类」：`Principles.md` P18、`README.md`、`Optimization.md` ×2、
-`models/trace.py`、`bench/grader.py`。`design/Prose.md` 写的是「六类」——
+`models/trace.py`、`bench/grader.py`。`spec/Prose.md` 写的是「六类」——
 **同一个库里两种说法并存**。
 
 新的 [`spec/Architecture.md` S12](spec/Architecture.md) 已按六类写，并在条目下
