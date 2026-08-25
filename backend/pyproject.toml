@@ -30,8 +30,11 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["agenttavern"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"agenttavern/agents/prompt_text" = "agenttavern/agents/prompt_text"
+# 提示词 YAML 与 config.yaml 就躺在包目录里，hatchling 默认会一起打进去，
+# 不需要 force-include。这里曾经指着 `agenttavern/agents/prompt_text`，那个
+# 目录在提示词搬进 `prompting/*.yaml` 之后就没了（D173），而 force-include
+# 指向不存在的路径会让 `pip install -e` 直接失败——**已装好的环境看不见这个**，
+# 只有新机器上第一次装才会撞上。
 
 [tool.ruff]
 line-length = 100

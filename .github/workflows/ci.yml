@@ -15,8 +15,8 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -39,8 +39,8 @@ jobs:
   frontend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v5
         with:
           node-version: "20"
           cache: npm
@@ -56,7 +56,7 @@ jobs:
       # **生成物漂移**：protocol.ts 由后端 Pydantic 模型生成且已入库。
       # 改了模型忘了重新生成，前端不会报错——某个字段只是悄悄变成 undefined。
       # 这里重跑一遍生成，有 diff 就红。
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - run: pip install -e "backend[dev]"
@@ -68,8 +68,8 @@ jobs:
   decisions:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       # 只用标准库，不装依赖。

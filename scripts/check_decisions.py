@@ -15,6 +15,16 @@
 **"无人引用的决策"只是提示，不算失败**：不少决策是方法论或产品定位，本来就
 落不到某一行代码上。
 
+有一种合法的例外：**把某条决策当反面标本举例**（`docs/Workflow.md` 的"不要/要"
+对照表就是），那不是拿它当理由。这种地方用一对注释把范围圈掉——必须显式写，
+不做启发式猜测：
+
+    <!-- check-decisions: off -->
+    ... 这几行里的 D 编号不算引用 ...
+    <!-- check-decisions: on -->
+
+Python 与 TS 里同样识别（`# check-decisions: off` / `// check-decisions: off`）。
+
     python scripts/check_decisions.py
 """
 
@@ -42,6 +52,29 @@ def tracked_files() -> list[Path]:
     return [ROOT / rel for rel in out]
 
 
+OFF = re.compile(r"check-decisions:\s*off")
+ON = re.compile(r"check-decisions:\s*on")
+
+
+def cited(body: str) -> set[str]:
+    """文件里**当作理由引用**的 D 编号。
+
+    `check-decisions: off` / `on` 之间的行不算——那是把某条决策当反面标本举例。
+    落单的 `off`（忘了写 `on`）就一直关到文件末尾，这是刻意的：宁可漏报，也
+    不要因为一对标记没配平而把整个 CI 判红。
+    """
+    found: set[str] = set()
+    live = True
+    for line in body.splitlines():
+        if OFF.search(line):
+            live = False
+        elif ON.search(line):
+            live = True
+        elif live:
+            found.update(re.findall(r"\bD\d{1,3}\b", line))
+    return found
+
+
 def main() -> int:
     text = LEDGER.read_text(encoding="utf-8")
 
@@ -60,7 +93,7 @@ def main() -> int:
             body = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, FileNotFoundError):
             continue
-        for d in set(re.findall(r"\bD\d{1,3}\b", body)):
+        for d in cited(body):
             refs.setdefault(d, set()).add(rel)
 
     problems: list[str] = []
