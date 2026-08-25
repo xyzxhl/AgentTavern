@@ -68,7 +68,7 @@
 
 ## 四、state
 
-见 [design/State.md](design/State.md)、[design/Retrieval.md](design/Retrieval.md)。
+见 [spec/State.md](spec/State.md)、[design/Retrieval.md](design/Retrieval.md)。
 
 | # | 决策 | 说明 |
 |---|---|---|
@@ -143,7 +143,7 @@
 
 ## 七、控制面与存储
 
-见 [design/Branching.md](design/Branching.md)。
+见 [spec/Branching.md](spec/Branching.md)。
 
 | # | 决策 | 说明 |
 |---|---|---|
