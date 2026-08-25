@@ -24,9 +24,12 @@
 无人负责。而**冗余的代价是慢性的**（状态越长越容易看漏要紧的那几条），
 不会以单点错误的形式暴露，只能靠专门一类去查。
 
-连带七处文档写着「五类」（`Principles.md` P18、`README.md`、`Optimization.md` ×2、
-`design/Architecture.md` §8、`models/trace.py`、`bench/grader.py`），
-而 `design/Prose.md` 写着「六类」——**同一个库里两种说法并存**。
+连带六处仍写着「五类」：`Principles.md` P18、`README.md`、`Optimization.md` ×2、
+`models/trace.py`、`bench/grader.py`。`design/Prose.md` 写的是「六类」——
+**同一个库里两种说法并存**。
+
+新的 [`spec/Architecture.md` S12](spec/Architecture.md) 已按六类写，并在条目下
+标了「这条规格没有落地」。
 
 > 补它要动代码与测试，不在文档迁移范围内。
 

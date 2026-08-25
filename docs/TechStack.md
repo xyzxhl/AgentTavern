@@ -101,7 +101,7 @@ backend/agenttavern/
   models/         节点、state 增量、控制维度、goal 运行时、trace 事件
   storage/        JSON 文件、节点树、路径重放
   llm/            gateway（裸 HTTP + OpenAI 格式）
-  tools/          design/Tools.md 的实现 + 注册表与调度（四份工具面）
+  tools/          spec/Tools.md 的实现 + 注册表与调度（四份工具面）
   agents/         director / writer / state_manager / goal_manager
                   + summarizer（摘要）/ postrun（归段追问）/ replay（上下文重建）
   prompting/      提示词 YAML + 装配器。约定见 prompting/README.md

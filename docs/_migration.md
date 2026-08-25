@@ -172,9 +172,9 @@ git grep -nE 'D[0-9]{1,3}' -- . ':!docs/sillytavern_preset_example'
 D59 定为六类、D100 专门补了「写入冗余」并说明它为什么必须单独一类，
 但 `AttributionClass` 至今**只有 5 个成员**，`WRITE_REDUNDANCY` 不存在。
 
-连带七处仍写着「五类」：`Principles.md` P18、`README.md`、`Optimization.md` ×2、
-`models/trace.py:114`、`bench/grader.py:1`、`design/Architecture.md` §8。
-而 `design/Prose.md:8` 写的是「六类」——**同一个库里两种说法并存**。
+连带仍写着「五类」的：`Principles.md` P18、`README.md`、`Optimization.md` ×2、
+`models/trace.py:114`、`bench/grader.py:1`。而 `design/Prose.md:8` 写的是「六类」。
+新的 `spec/Architecture.md` S12 已按六类写并标注未落地。
 
 这是一条**孤儿 spec**：决策记了，代码没有，测试也没有。
 

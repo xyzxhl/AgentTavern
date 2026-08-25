@@ -59,18 +59,21 @@ state_manager（tool loop，run 末）
 | [Optimization.md](Optimization.md) | **怎么改提示词/工具/装配规则**，以及怎么知道改对了 |
 | [TechStack.md](TechStack.md) | 库选型与理由、目录结构、前后端契约 |
 
-### design/
+### spec/ 与 design/
+
+> 文档正在从 `design/` 迁往 `req/` + `spec/`（进度见 [_migration.md](_migration.md)）。
+> **以 `spec/` 为准**；`design/` 里的是还没迁的。
 
 | | |
 |---|---|
-| [Architecture.md](design/Architecture.md) | 组件拓扑、一个 run 的时序、职责覆盖表、归因五类 |
-| [Generation.md](design/Generation.md) | director / writer 拆分的**论证**：为什么两侧都读正文时不可分，换一刀就可分 |
+| [spec/Architecture.md](spec/Architecture.md) | 拓扑、一个 run 的时序、归因六类 |
+| [spec/Generation.md](spec/Generation.md) | director / writer 拆分的**论证**：为什么两侧都读正文时不可分，换一刀就可分 |
 | [Configuration.md](design/Configuration.md) | 元指令 / 控制维度 / 模式 / 能力开关 |
 | [InputHandling.md](design/InputHandling.md) | 为何不对输入做显式分类；要避免的失败模式 |
 | [State.md](design/State.md) | 为何取消固定核心 schema；代码能做什么、不能做什么 |
 | [Retrieval.md](design/Retrieval.md) | 规则检索的准入标准；渐进式披露；写入侧靠用户兜底 |
 | [Prose.md](design/Prose.md) | 文风怎么量：参考文本、诊断指标、**只产数不判分**的铁律，以及量出来之后改了哪几行提示词 |
-| [Tools.md](design/Tools.md) | 四份工具面（谁拿到哪几个），以及**明确不提供**的部分 |
+| [spec/Tools.md](spec/Tools.md) | 四份工具面（谁拿到哪几个），以及**明确不提供**的部分 |
 | [Branching.md](design/Branching.md) | 分支树；"状态是路径的函数" |
 | [NonTurnBased.md](design/NonTurnBased.md) | 创新点 (b)：非轮次形态的生成器与统一机制 |
 | [Optional.md](design/Optional.md) | 真实性与戏剧性的取舍、强度旋钮 |
@@ -84,7 +87,7 @@ state_manager（tool loop，run 末）
 2. **仍开放的设计**——实体级检索的"信息需求在推演中才产生"这个鸡生蛋没解决，只是从代码手里交给了模型。
 3. **前端已实现，尚未在浏览器里走过一遍**——会话、分支与回头、设定库、提示词管理、全局设置都在，验证靠的是 TestClient、真实服务加 curl、`tsc` 与构建，**没有人工点过界面**。
 
-三处**已知未验证**（都在 [Architecture.md](design/Architecture.md) §10 记着）：摘要的"越界后换成摘要"从未被真实模型触发过（12 轮才用掉 `budget_chars` 的 15%）；`ask_question` 在刻意造出的岔路上 9 次只问 3 次；渐进式披露在几百实体下的规模表现。
+三处**已知未验证**：摘要的"越界后换成摘要"从未被真实模型触发过（12 轮才用掉 `budget_chars` 的 15%）；`ask_question` 在刻意造出的岔路上 9 次只问 3 次；渐进式披露在几百实体下的规模表现。
 
 ## 参考项目
 

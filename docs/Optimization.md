@@ -69,7 +69,7 @@
 
 ### 归属：写什么 vs 怎么写
 
-预设是一整坨，拆进我们的拓扑时要逐条判断给谁（[design/Architecture.md](design/Architecture.md) §3）：
+预设是一整坨，拆进我们的拓扑时要逐条判断给谁（[spec/Architecture.md](spec/Architecture.md) §3）：
 
 | 内容 | 归 |
 |---|---|

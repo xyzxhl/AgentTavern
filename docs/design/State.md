@@ -1,6 +1,6 @@
 # state
 
-> 三种数据的区分见 [../Glossary.md](../Glossary.md)；检索方案见 [Retrieval.md](Retrieval.md)；谁读谁写见 [Architecture.md](Architecture.md)。
+> 三种数据的区分见 [../Glossary.md](../Glossary.md)；检索方案见 [Retrieval.md](Retrieval.md)；谁读谁写见 [Architecture.md](../spec/Architecture.md)。
 >
 > 一句话：**有限建模、结构化存储、模型判断、代码只管契约。**
 

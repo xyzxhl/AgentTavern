@@ -25,7 +25,7 @@
 | 整个输出多候选 | 约 1 次（细纲成型后给候选） |
 | 交互式创作 | 多次，边推演边问 |
 
-**三档均保持 run ↔ 细纲一一对应**——交互式创作是在**一个 run 内**多次提问，而非拆成多个 run。见 [Architecture.md](Architecture.md) §7。
+**三档均保持 run ↔ 细纲一一对应**——交互式创作是在**一个 run 内**多次提问，而非拆成多个 run。见 [Architecture.md](../spec/Architecture.md) §7。
 
 该频率**就是**模型剧情控制权这一控制维度的操作化定义。落到实现上：**控制权等级直接反映为调用 `ask_question` 工具的积极性——控制权越高，调用积极性越低**（D39）。它是倾向而非硬计数，但 `ask_question` 的调用频率在 trace 里直接可观测，各档位表现可测量校准。见 [Configuration.md](Configuration.md)。
 

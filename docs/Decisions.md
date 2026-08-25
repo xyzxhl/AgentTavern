@@ -43,7 +43,7 @@
 
 ## 三、生成侧拓扑
 
-见 [design/Architecture.md](design/Architecture.md)、[design/Generation.md](design/Generation.md)。
+见 [spec/Architecture.md](spec/Architecture.md)、[spec/Generation.md](spec/Generation.md)。
 
 | # | 决策 | 说明 |
 |---|---|---|
