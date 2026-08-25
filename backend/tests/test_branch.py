@@ -318,7 +318,7 @@ async def test_a_draft_from_another_branch_is_dropped(tmp_path: Path) -> None:
 
 
 async def test_a_half_written_turn_becomes_a_draft_not_a_node(tmp_path: Path) -> None:
-    """writer 阶段被打断：**细纲存进草稿，节点不落**（D142，推翻 D60 的后半句）。
+    """writer 阶段被打断：**细纲存进草稿，节点不落**（D142）。
 
     这条以前测的是反面（保留正文片段、落一个 PARTIAL 节点）。改掉的理由是
     半截正文不是产出而是一个失败的阶段：下一轮会接着那半句往下写，而用户按

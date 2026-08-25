@@ -30,7 +30,7 @@ SSE 三条都不满足。不用 socket.io——不需要它的房间与 fallback
 
 ### 用官方 SDK，不用 agent SDK
 
-**不用 agent SDK / 编排框架**（LangChain、LangGraph、各家 agent SDK）：本项目对 tool loop 的控制粒度要求很高——run 内暂存区、`submit_outline` 的终止语义、契约校验、分阶段打断（D60）、无超时挂起（D66）。框架会挡在中间。
+**不用 agent SDK / 编排框架**（LangChain、LangGraph、各家 agent SDK）：本项目对 tool loop 的控制粒度要求很高——run 内暂存区、`submit_outline` 的终止语义、契约校验、按阶段打断（D142）、无超时挂起（D66）。框架会挡在中间。
 
 **但官方 SDK 可以用。** 区别在于它只负责**一次调用**（重试、错误分类、超时、解析），**loop 完全由我们自己写**——SDK 不会挡在中间。省下的是一整套自己写的 HTTP 管道。
 

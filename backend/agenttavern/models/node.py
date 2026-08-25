@@ -141,8 +141,8 @@ class Node(BaseModel):
     deviation_report: str | None = None
     """writer 若为通顺而增删了实质内容则报告，通常为空（D57）。
 
-    D36「细纲更新为实际发生的」由此落地：writer 不改写细纲，只报告偏离，
-    编排层记录；下一 run 的 director 读 history 时可见。
+    **细纲不回写**：writer 只报告偏离，编排层记录；下一 run 的 director
+    读 history 时可见。
     """
 
     state_delta: StateDelta = Field(default_factory=StateDelta)

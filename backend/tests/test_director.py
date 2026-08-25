@@ -275,7 +275,7 @@ def test_speaking_rule_is_a_choice_not_a_toggle_in_code() -> None:
     以前这是代码里的 if：allowed 返回一段、forbidden 返回另一段，YAML 那边
     看不出还有第二种可能。现在两档都写在 YAML 里，改一档不用碰 Python。
 
-    **只有 director 侧有这一节。** writer 侧那条曾经也在（D35：否定项两边都要），
+    **只有 director 侧有这一节。** writer 侧那条曾经也在，
     后来输入契约收紧成「除非细纲已经给出，否则不要自行增加新行为、新决定、
     新心理」，用户的角色被一并盖住，再单给一条就是重复。
     """
@@ -425,7 +425,7 @@ def test_density_reaches_both_sides_in_opposite_directions() -> None:
 def test_the_writer_never_gets_a_speaking_rule_of_its_own() -> None:
     """writer 侧不再单给抢话规则——**由输入契约统一盖住**。
 
-    那条曾经在（D35：否定项两边都要），理由是 writer 一旦真的在展开，就会顺手
+    那条曾经在，理由是 writer 一旦真的在展开，就会顺手
     把用户角色往前推一步。后来输入契约收紧成「除非细纲已经给出，否则不要自行
     增加新行为、新决定、新心理」，这条更宽、更严，再单给一条抢话规则就是重复。
     """
@@ -465,7 +465,7 @@ def test_empty_nsfw_injects_nothing_at_all(monkeypatch) -> None:
 
     **它钉的是空槽位的行为，不是仓库里填了什么。** 早先这条断言的是"出厂为空"，
     理由是"写任何示例都会被当成推荐值"；那个理由针对的是我们，不是部署方，
-    而这份 YAML 现在是部署方自己在维护（D35 的分工）。继续钉着它，等于每次
+    而这份 YAML 现在是部署方自己在维护。继续钉着它，等于每次
     有人按自己的模型填上一段就红一次——`test_each_side_gets_its_own_sections`
     那条已经吃过一模一样的亏：钉内容的测试不保护不变量，只是把文案冻住。
 
@@ -480,7 +480,7 @@ def test_empty_nsfw_injects_nothing_at_all(monkeypatch) -> None:
 
 
 def test_the_jailbreak_is_the_last_system_message(monkeypatch) -> None:
-    """**破限两侧都要**（同 D35 的理由），而且它的**位置**是约定的一部分。
+    """**破限两侧都要**，而且它的**位置**是约定的一部分。
 
     director 决定这一轮发生什么，writer 决定怎么落笔；只给一侧，另一侧会按
     自己的默认来。破限尤其如此——两者是两次独立的模型调用，只解开一半等于

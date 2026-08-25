@@ -1,0 +1,79 @@
+# 提交前该跑的那一串，交给机器跑。规则本身在 docs/Workflow.md。
+#
+# 分三个 job 而不是串成一个：前端红的时候后端结果照样看得见。三者互不依赖，
+# 只有 drift 那一步同时要 Python 和 Node——它跑在 frontend job 里。
+
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e "backend[dev]"
+      - name: ruff
+        run: |
+          ruff check backend
+          ruff format --check backend
+      - name: mypy (strict)
+        run: mypy agenttavern
+        working-directory: backend
+      # 固定 basetemp 到项目内（pyproject 里已配），超时 30s——WebSocket
+      # 测试等不到消息会永久阻塞，宁可失败也不要把 runner 挂满。
+      - name: pytest
+        run: python -m pytest -q
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - name: typecheck
+        run: npm run lint
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+
+      # **生成物漂移**：protocol.ts 由后端 Pydantic 模型生成且已入库。
+      # 改了模型忘了重新生成，前端不会报错——某个字段只是悄悄变成 undefined。
+      # 这里重跑一遍生成，有 diff 就红。
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e "backend[dev]"
+      - name: protocol.ts 是否与后端模型一致
+        run: |
+          npm run gen:types --prefix frontend
+          git diff --exit-code -- frontend/src/protocol.ts
+
+  decisions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # 只用标准库，不装依赖。
+      - name: 台账与引用是否一致
+        run: python scripts/check_decisions.py
+        env:
+          PYTHONIOENCODING: utf-8

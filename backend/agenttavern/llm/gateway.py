@@ -2,8 +2,8 @@
 
 **用官方 SDK，但不用任何 agent SDK / 编排框架。** 区别是：SDK 只负责一次调用
 （重试、错误分类、超时、解析），**tool loop 完全由我们自己写**——本项目对它的控制
-粒度要求很高：run 内暂存区、``submit_outline`` 的终止语义、契约校验、分阶段打断
-（D60）、无超时挂起（D66）。框架会挡在中间，SDK 不会。
+粒度要求很高：run 内暂存区、``submit_outline`` 的终止语义、契约校验、按阶段打断
+（D142）、无超时挂起（D66）。框架会挡在中间，SDK 不会。
 
 只用 chat completions 这一个面意味着任何兼容端点都能接：OpenAI、OpenRouter、
 DeepSeek、本地 llama.cpp / vLLM。配置见 ``.env``。

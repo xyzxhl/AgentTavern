@@ -41,7 +41,7 @@ def test_shared_models_are_defined_once() -> None:
     "类型不兼容"，而它们本来就是同一个东西。
     """
     defs = export_schema()["$defs"]
-    # `ControlOverride` 已经删掉（D174，推翻 D45）：控制维度的取值上调到
+    # `ControlOverride` 已经删掉（D174）：控制维度的取值上调到
     # 提示词层之后，「覆盖」没有被覆盖的对象了。
     for shared in ("Node", "TraceEvent", "StateDelta"):
         assert shared in defs, f"{shared} 应当作为共享定义出现"

@@ -180,7 +180,7 @@ async def execute_run(
             written = await run_writer(ctx, tracer, outline)
             prose, deviation = written.prose, written.deviation
         except asyncio.CancelledError:
-            # **半截正文不留**（D142，推翻 D60 的这一半）。留着看似省事，实则是
+            # **半截正文不留**（D142）。留着看似省事，实则是
             # 把一个失败的阶段当成了产出：下一轮会接着那半句往下写，而用户按停止
             # 恰恰是因为不想要那半句。细纲留着，它是上游、已经完成了。
             _suspend(
@@ -343,7 +343,7 @@ def _suspend(
     """把这一段挂起：上游产物存进草稿，节点不落。
 
     **不落节点是关键**。留半截产出看似省事，实则会让下一轮接着那半句往下写，
-    而用户按停止恰恰是因为不想要它（D142 推翻 D60 的后半句）。
+    而用户按停止恰恰是因为不想要它（D142）。
     """
     ctx.repo.save_draft(
         RunDraft(

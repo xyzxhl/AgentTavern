@@ -150,7 +150,7 @@ async def test_deviation_report_is_extracted(tmp_path: Path) -> None:
 
 
 async def test_the_current_choice_lives_in_the_yaml_not_the_session(tmp_path: Path) -> None:
-    """**单轮覆盖已经删掉**（D174，推翻 D45）：取值只剩一处，没有被覆盖的对象了。
+    """**没有单轮覆盖**（D174）：取值只剩一处，没有被覆盖的对象了。
 
     取而代之的是这条：换一档就是改 `director.yaml` 里那个 `choice` 的
     `selected`，而它必须真的发到模型手上。
@@ -176,8 +176,8 @@ async def test_the_current_choice_lives_in_the_yaml_not_the_session(tmp_path: Pa
 async def test_interrupt_during_director_lands_no_node(tmp_path: Path) -> None:
     """director 阶段被打断：细纲未成型，**不落节点**。
 
-    早先这条测的是"什么都不留"，那是 D60 的原始语义。**现在推演本身会被存成
-    草稿等续跑**（D118）——不落节点这一点没变，变的是被截断的推演去了哪。
+    早先这条测的是"什么都不留"。**现在推演本身会被存成草稿等续跑**（D118）
+    ——不落节点这一点没变，变的是被截断的推演去了哪。
     挂起与续跑的行为见 `test_branch.py`。
     """
 
@@ -203,9 +203,9 @@ async def test_interrupt_during_director_lands_no_node(tmp_path: Path) -> None:
 
 
 async def test_interrupt_during_writer_drops_the_half_written_prose(tmp_path: Path) -> None:
-    """**半截正文不留**（D142，推翻 D60 的后半句）。
+    """**半截正文不留**（D142）。
 
-    D60 原来说「保留已生成的正文片段——那段剧情确实发生了」。那是把一个失败的
+    曾经的做法是「保留已生成的正文片段——那段剧情确实发生了」。那是把一个失败的
     阶段当成了产出：下一轮会接着那半句往下写，而用户按停止恰恰是因为不想要它。
     细纲留着，它是上游、已经写完了。
     """

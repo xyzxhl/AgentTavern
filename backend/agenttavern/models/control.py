@@ -8,7 +8,7 @@ session / worldbook / 服务三个层级：
 | 原来在这里 | 现在在哪 |
 |---|---|
 | `ControlDimensions`（输入处理、抢话、文风、视角、铺陈） | agent YAML 里 `choice` 的 `selected` |
-| `ControlOverride`（单轮覆盖，D45） | **删掉**：没有被覆盖的对象了 |
+| `ControlOverride`（单轮覆盖） | **删掉**：没有被覆盖的对象了 |
 | `Capabilities.nudge` / `summarize` | director 的 `specials.nudge` / `.segment` 的 `enabled` |
 | `Capabilities.state` | `state_manager.yaml` 顶上的 `enabled`（这个 agent 跑不跑） |
 | `Capabilities.state_query` / `worldinfo_read` / `history_search` 等 | 各自那个工具的 `enabled` |
