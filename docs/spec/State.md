@@ -229,7 +229,7 @@ JSON 从根上消掉它：`[…]` 不是 `"…"`、`3` 不是 `"3"`、`{}` 不�
 实测模型在 `沈砚.冷却` 已存在时另起裸键 `冷却`，两键并存值还不一样，
 下一轮它自己发现并删掉，但中间那一轮是脏的。
 
-**验收** —（缺，见 [TODO.md](../TODO.md)）
+**验收** `test_a_bare_key_shadowing_a_namespaced_one_is_flagged` · `test_sibling_keys_under_different_owners_are_not_flagged` · `test_ordinary_state_values_are_not_flagged`
 
 ### S40 · 用户改状态：改指令与改结果，都作用在当轮增量上
 

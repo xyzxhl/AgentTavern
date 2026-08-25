@@ -69,15 +69,15 @@ state_manager（tool loop，run 末）
 | [spec/Architecture.md](spec/Architecture.md) | 拓扑、一个 run 的时序、归因六类 |
 | [spec/Generation.md](spec/Generation.md) | director / writer 拆分的**论证**：为什么两侧都读正文时不可分，换一刀就可分 |
 | [Configuration.md](spec/Prompting.md) | 元指令 / 控制维度 / 模式 / 能力开关 |
-| [InputHandling.md](design/InputHandling.md) | 为何不对输入做显式分类；要避免的失败模式 |
+| [InputHandling.md](spec/InputHandling.md) | 为何不对输入做显式分类；要避免的失败模式 |
 | [State.md](spec/State.md) | 为何取消固定核心 schema；代码能做什么、不能做什么 |
 | [Retrieval.md](spec/Retrieval.md) | 规则检索的准入标准；渐进式披露；写入侧靠用户兜底 |
 | [Prose.md](spec/Prose.md) | 文风怎么量：参考文本、诊断指标、**只产数不判分**的铁律，以及量出来之后改了哪几行提示词 |
 | [spec/Tools.md](spec/Tools.md) | 四份工具面（谁拿到哪几个），以及**明确不提供**的部分 |
 | [Branching.md](spec/Branching.md) | 分支树；"状态是路径的函数" |
-| [NonTurnBased.md](design/NonTurnBased.md) | 创新点 (b)：非轮次形态的生成器与统一机制 |
-| [Optional.md](design/Optional.md) | 真实性与戏剧性的取舍、强度旋钮 |
-| [UI.md](design/UI.md) | 界面形态与信息架构；**第一版缺了「回头」整个方向**的审计与补法 |
+| [NonTurnBased.md](Ideas.md) | 创新点 (b)：非轮次形态的生成器与统一机制 |
+| [Optional.md](Ideas.md) | 真实性与戏剧性的取舍、强度旋钮 |
+| [UI.md](spec/UI.md) | 界面形态与信息架构；**第一版缺了「回头」整个方向**的审计与补法 |
 
 ## 状态
 

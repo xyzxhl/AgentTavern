@@ -97,7 +97,7 @@ agent 之后，那一步就是它的全部工作，跑完必然有一个增量�
 **为什么** 一条 20 轮的路径会因此打 20 个请求，而这份数据**只在重生成之后才变**——
 平常推进落的是独苗，兄弟关系没动。
 
-**验收** —（缺，见 [TODO.md](../TODO.md)）
+**验收** `test_session_detail_carries_the_sibling_map` · `test_siblings_endpoint` · `test_siblings_are_ordered_deterministically`
 
 ### S47 · trace 全局 append-only，不随分支切换
 
@@ -209,7 +209,7 @@ agent 之后，那一步就是它的全部工作，跑完必然有一个增量�
 WebSocket handler 挂死。加旗标区分"是谁在取消"只是把不死性从所有人缩小到一个人，
 仍然错。
 
-**验收** —（缺，见 [TODO.md](../TODO.md)）
+**验收** `test_stop_cancels_only_the_run_not_the_loop` · `test_the_loop_is_cancellable_by_anyone_not_only_by_aclose` · `test_aclose_returns_while_a_run_is_in_flight` · `test_aclose_returns_when_idle`
 
 ---
 
