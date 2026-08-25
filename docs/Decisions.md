@@ -68,7 +68,7 @@
 
 ## 四、state
 
-见 [spec/State.md](spec/State.md)、[design/Retrieval.md](design/Retrieval.md)。
+见 [spec/State.md](spec/State.md)、[spec/Retrieval.md](spec/Retrieval.md)。
 
 | # | 决策 | 说明 |
 |---|---|---|
