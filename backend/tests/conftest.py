@@ -72,6 +72,15 @@ class ScriptedLLM:
         self._on_goal_request = on_goal_request
         self.requests: list[dict[str, Any]] = []
 
+        self.on_writer_request: Callable[[], None] | None = None
+        """在**应答 writer 那次请求的同一刻**被调用。
+
+        它抢的是「tool loop 已经结束、这一轮还没落地」那个窗口——信箱此时已经
+        关了，而 `drain()` 还没发生。**从外面靠轮询抢不到**：脚本化的模型没有
+        真实延迟，两次轮询之间整轮就跑完了。公开属性而非构造参数，是因为回调
+        通常要引用 runner，而 runner 得先拿到这个 llm 才能建出来。
+        """
+
     def _reply(self, message: dict[str, Any], *, streaming: bool = False) -> httpx2.Response:
         body = {
             "choices": [{"message": message, "finish_reason": "stop"}],
@@ -89,6 +98,13 @@ class ScriptedLLM:
 
         if self._on_goal_request and GOAL_MARK in messages[0].get("content", ""):
             self._on_goal_request()
+
+        if (
+            self.on_writer_request
+            and STATE_MARK not in messages[0].get("content", "")
+            and WRITER_MARK in str(messages)
+        ):
+            self.on_writer_request()
 
         if self._auto_close and FOLLOWUP_MARK in messages[-1].get("content", ""):
             return self._reply(text(self._auto_close), streaming=streaming)

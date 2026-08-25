@@ -247,21 +247,29 @@ async def test_guidance_left_in_the_inbox_becomes_the_next_turn(tmp_path: Path) 
     **走不到边界**），或者落在 writer 阶段（那是一次不可分的生成，本来就没有边界）。
     用户的输入在任何情况下都不该消失，所以改开新的一轮。
 
-    这里卡在 writer 那次调用上，因为那一刻**可以确定**信箱已经关了——
-    卡在 `submit_outline` 上要赌调度顺序，会时红时绿。
+    **在 writer 那次调用里推信箱**，因为那一刻同时满足两个条件：tool loop
+    已经结束（信箱关了），而这一轮还没落地（`drain()` 还没发生）。
+
+    早先这里是在外面轮询等 `not inbox.accepting` 再推。那是**竞态**：脚本化
+    的模型没有真实延迟，两次轮询之间整轮就跑完并 drain 了，推进去的是一个
+    已经排空的信箱。Windows 上一直是绿的（计时器粒度粗、文件写入慢，窗口
+    恰好够宽），**Linux 上稳定失败**——CI 第一次跑就抓到了。
     """
     llm = ScriptedLLM(*one_run(), *one_run("阳台", "她走到阳台。", "风起来了。"))
     runner, repo, _ = make_runner(tmp_path, llm)
+
+    def push_while_the_turn_is_still_running() -> None:
+        # 只推第一轮那一次：第二轮也会走到 writer，再推一次就无限开新轮。
+        llm.on_writer_request = None
+        inbox = runner._inbox
+        assert inbox is not None, "run 在跑，信箱必须存在"
+        assert not inbox.accepting, "tool loop 已经结束，信箱此时必须是关的"
+        inbox.push("等等，让她去阳台")
+
+    llm.on_writer_request = push_while_the_turn_is_still_running
     runner.start()
 
     await runner.submit("我推开门")
-
-    # 先等信箱开，再等它关——`accepting` 起始就是 False，只等"关"会立刻命中，
-    # 那样测的是 run 还没开始的时刻，什么也说明不了。
-    assert await _until(lambda: runner._inbox is not None and runner._inbox.accepting)
-    inbox = runner._inbox
-    assert await _until(lambda: not inbox.accepting), "tool loop 结束后信箱必须关掉"
-    inbox.push("等等，让她去阳台")
 
     assert await _until(lambda: len(repo.all_nodes()) == 2), "落进信箱的话应该变成新的一轮"
     inputs = [n.user_input.text for n in repo.all_nodes().values() if n.user_input]
