@@ -2,8 +2,8 @@
 
 两件事合在一起测，因为它们问的是**同一个问题**：一条路径上该看见什么。
 
-- **分支**：两支从同一个节点岔出，谁都不该看见对方（D48/D114）。
-- **打断**：被截断的推演该被下一条输入接下去，而不是丢掉（D118）。
+- **分支**：两支从同一个节点岔出，谁都不该看见对方（S42/S60）。
+- **打断**：被截断的推演该被下一条输入接下去，而不是丢掉（S48）。
 
 分支是**纯代码层面的正确性**，不需要真实模型——要验的是"上下文里有没有别支的
 东西"，而这是三个确定的数据通道：`user_input`、`state`、重放出来的 `history`。
@@ -24,7 +24,7 @@ from agenttavern.tools import Inbox, ToolRegistry
 
 
 def _turn(outline: str, prose: str) -> list[dict]:
-    """一轮的两次模型调用。状态那一次不在这里——它跑在 writer 之后（D143），
+    """一轮的两次模型调用。状态那一次不在这里——它跑在 writer 之后（S7），
     由 `ScriptedLLM(state=...)` 应答。
     """
     return [tool("submit_outline", outline=outline), text(prose)]
@@ -63,7 +63,7 @@ async def test_a_sibling_branch_leaks_into_neither_input_nor_history(tmp_path: P
     )
 
     # B 支从**同一个**分岔点岔出——此刻 active_leaf_id 指着 A 的叶子，
-    # 父节点若从活跃叶取，B 就直接长在 A 后面了（D103）。
+    # 父节点若从活跃叶取，B 就直接长在 A 后面了。
     b_llm = ScriptedLLM(*_turn("B 支：便签放上柜台。", "B 支正文"), state=_state("B物", "便签"))
     branch_b = await execute_run(
         repo,
@@ -81,13 +81,13 @@ async def test_a_sibling_branch_leaks_into_neither_input_nor_history(tmp_path: P
     assert "我推开门" in context
     assert "有人送来一只铁皮盒" not in context, "A 支的用户输入串过来了"
     assert "铁皮盒" not in context, "A 支的细纲串过来了"
-    assert "A 支正文" not in context, "director 本来就不该看见任何正文（D54）"
+    assert "A 支正文" not in context, "director 本来就不该看见任何正文（S5）"
 
 
 async def test_a_sibling_branch_leaks_no_tool_traffic(tmp_path: Path) -> None:
     """连**工具调用与结果**都不能串。
 
-    D114 之后这条才成立得起来：持续对话把工具往返也留在上下文里，所以它多了一条
+    S60 之后这条才成立得起来：持续对话把工具往返也留在上下文里，所以它多了一条
     以前不存在的泄漏通道。查细纲查不到它——工具结果不出现在细纲里。
     """
     trunk_llm = ScriptedLLM(*_turn("主干：她推开门。", "主干正文"), state=_state("地点", "钟表铺"))
@@ -120,14 +120,14 @@ async def test_a_sibling_branch_leaks_no_tool_traffic(tmp_path: Path) -> None:
 
     context = str(b_llm.messages_of(0))
     # **查的是那次调用留下的痕迹，不是工具名**——工具面的索引每轮都在，
-    # 它列出所有注册了的工具（D140），名字出现在上下文里是正常的。
+    # 它列出所有注册了的工具（S10），名字出现在上下文里是正常的。
     assert "A物" not in context
     assert "铁皮盒" not in context
     assert "state_query(" not in context
 
 
 async def test_state_of_a_sibling_never_folds_in(tmp_path: Path) -> None:
-    """状态是**路径**的函数，不是 session 的函数（D48）。
+    """状态是**路径**的函数，不是 session 的函数（S42）。
 
     单独测一遍是因为它坏起来最隐蔽：文本可以完全正确，状态悄悄错，
     要等很多轮之后才以"角色行为不合理"的形式暴露。
@@ -161,7 +161,7 @@ async def test_state_of_a_sibling_never_folds_in(tmp_path: Path) -> None:
     assert repo.state_at(trunk.node.id).values["灵石"] == "3"
 
 
-# -- 打断：挂起，不作废（D118） -------------------------------------------------
+# -- 打断：挂起，不作废（S48） -------------------------------------------------
 
 
 class _CancelAfter(ScriptedLLM):
@@ -201,7 +201,7 @@ async def test_an_interrupted_deduction_is_suspended_not_discarded(tmp_path: Pat
     assert draft is not None
     assert draft.parent_id is None
     # **草稿里剩下的就是查过的东西**。它以前还存 `staged_delta` / `state_write_count`，
-    # 那时 director 边推演边写状态；D143 把状态维护整个搬到 writer 之后，
+    # 那时 director 边推演边写状态；S7 把状态维护整个搬到 writer 之后，
     # 这一阶段的暂存区恒为空，两个字段一并删了。
     assert any("state_query" in str(m.tool_calls) for m in draft.messages if m.tool_calls)
 
@@ -282,7 +282,7 @@ def test_the_trimmer_drops_a_call_whose_result_never_arrived() -> None:
 
 
 async def test_a_draft_from_another_branch_is_dropped(tmp_path: Path) -> None:
-    """草稿按父节点认领。用户切了分支，这份推演就接不上了（D48）。"""
+    """草稿按父节点认领。用户切了分支，这份推演就接不上了（S42）。"""
     first_llm = ScriptedLLM(*_turn("第一轮。", "第一轮正文"), state=_state("地点", "钟表铺"))
     repo, session, gw, reg = _setup(tmp_path, first_llm)
     first = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
@@ -318,7 +318,7 @@ async def test_a_draft_from_another_branch_is_dropped(tmp_path: Path) -> None:
 
 
 async def test_a_half_written_turn_becomes_a_draft_not_a_node(tmp_path: Path) -> None:
-    """writer 阶段被打断：**细纲存进草稿，节点不落**（D142）。
+    """writer 阶段被打断：**细纲存进草稿，节点不落**（S49）。
 
     这条以前测的是反面（保留正文片段、落一个 PARTIAL 节点）。改掉的理由是
     半截正文不是产出而是一个失败的阶段：下一轮会接着那半句往下写，而用户按
@@ -345,7 +345,7 @@ async def test_a_half_written_turn_becomes_a_draft_not_a_node(tmp_path: Path) ->
     assert repo.load_draft() is None
 
 
-# -- 引导与打断：单位是一次操作，不是一轮（D119） --------------------------------
+# -- 引导与打断：单位是一次操作，不是一轮（S50） --------------------------------
 
 
 class _Watched(ScriptedLLM):
@@ -432,7 +432,7 @@ async def test_an_interrupt_kills_only_the_operation_in_flight(tmp_path: Path) -
 
 
 async def test_an_interrupt_with_nothing_to_say_suspends_the_run(tmp_path: Path) -> None:
-    """打断但不说话 = "停下别跑了"：挂起成草稿，不落节点（D118）。"""
+    """打断但不说话 = "停下别跑了"：挂起成草稿，不落节点（S48）。"""
     inbox = Inbox()
     inbox.accepting = True
     inbox.push(interrupt=True)

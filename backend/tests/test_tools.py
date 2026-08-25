@@ -59,7 +59,7 @@ async def call(reg: ToolRegistry, ctx: RunContext, name: str, **args: Any):
 
 
 ALL_ON = {"tools": {"director": {"history_search": True}}}
-"""全部开关打开。**开关住在各 agent 的 YAML 里**（D174），所以"打开"
+"""全部开关打开。**开关住在各 agent 的 YAML 里**（S80），所以"打开"
 现在是换一份提示词副本（`using`），不是往 session 上写一个对象。
 """
 
@@ -68,7 +68,7 @@ ALL_ON = {"tools": {"director": {"history_search": True}}}
 def reg() -> ToolRegistry:
     """全部能力打开，**两个 agent 的工具面并在一起**。
 
-    这个 fixture 测的是工具本身怎么工作，不是谁能看到它。`state_write` 从 D143
+    这个 fixture 测的是工具本身怎么工作，不是谁能看到它。`state_write` 从 S7
     起只在 state_manager 那一面（见文末的开关测试），但它的行为该在这里测。
     默认配置的工具面要小得多。
     """
@@ -83,7 +83,7 @@ def reg() -> ToolRegistry:
 
 
 async def test_submit_outline_has_no_precondition(reg, ctx) -> None:
-    """**E0 契约已作废**（D143）。
+    """**E0 契约已作废**（S7）。
 
     它原先要求提交细纲前必须写过一次 `state_write`，为的是区分"确实没变化"与
     "模型忘了提交"。director 不再维护状态，这个前置条件也就没有对象了。
@@ -122,7 +122,7 @@ async def test_unmentioned_keys_survive(reg, ctx) -> None:
 
     after = ctx.current_state().values
     assert after["陈"]["在场"] is False
-    # **深合并**：只动提到的那一项，同一个角色名下别的原样留着（D157）。
+    # **深合并**：只动提到的那一项，同一个角色名下别的原样留着（S31）。
     assert after["陈"]["知情"] == ["照片"]
 
     await call(reg, ctx, "state_write", set={"陈": {"在场": True}})
@@ -132,7 +132,7 @@ async def test_unmentioned_keys_survive(reg, ctx) -> None:
 async def test_any_shape_of_key_is_accepted(reg, ctx) -> None:
     """时间、地点、角色属性的粒度与形态都取决于故事，存储层不预设任何维度。
 
-    从属关系用嵌套，深浅由模型自己定（D157）：这里「地点」有一层，
+    从属关系用嵌套，深浅由模型自己定（S31）：这里「地点」有一层，
     「林与陈」也有一层，而「时间」就是个裸值——三种都合法。
     """
     await call(
@@ -149,7 +149,7 @@ async def test_any_shape_of_key_is_accepted(reg, ctx) -> None:
 
 
 async def test_staged_delta_is_not_persisted_until_run_ends(reg, ctx) -> None:
-    """D56：run 内暂存。否则中途失败会造成"增量已落盘但正文不存在"。"""
+    """S20：run 内暂存。否则中途失败会造成"增量已落盘但正文不存在"。"""
     await call(reg, ctx, "state_write", set={"地点": "厨房"})
     assert ctx.repo.all_nodes() == {}
     assert ctx.current_state().values["地点"] == "厨房"
@@ -195,7 +195,7 @@ async def test_state_query_reads_staged_value(reg, ctx) -> None:
 
 
 async def test_querying_a_branch_gives_the_whole_subtree(reg, ctx) -> None:
-    """路径可以停在中间层——**取一整棵子树**（D157）。
+    """路径可以停在中间层——**取一整棵子树**（S31）。
 
     展开层级把深处折成了「N 项」，模型看到的就是那一层的位置，
     所以它必须能照着那个位置直接要下去。
@@ -209,7 +209,7 @@ async def test_querying_a_branch_gives_the_whole_subtree(reg, ctx) -> None:
 
 
 async def test_history_search_marks_hits_without_filtering(reg, ctx) -> None:
-    """**命中只做标注，不筛掉任何一轮**（D62）。
+    """**命中只做标注，不筛掉任何一轮**（P13）。
 
     此前 `query` 是子串过滤器：查不中就返回空列表，而模型会把"空"读成
     "没这回事"——这正是 lorebook 关键词触发不合格的那条理由，我们自己却犯了。
@@ -233,7 +233,7 @@ async def test_history_search_marks_hits_without_filtering(reg, ctx) -> None:
 
 
 async def test_history_read_expands_the_whole_segment(reg, ctx) -> None:
-    """**索引按段给 ref，展开也必须按段给回全文**（D110）。
+    """**索引按段给 ref，展开也必须按段给回全文**（S57）。
 
     摘要在上下文里顶替的是**整段**——那几轮的细纲、当时查了什么，全被它替掉了。
     只还回末节点那一轮比不展开更糟：模型会以为自己已经看全了。
@@ -262,7 +262,7 @@ async def test_history_read_rejects_unknown_ids(reg, ctx) -> None:
 #
 # **隐藏不是截断。** 长值换成"用 state_query 展开"是无损降维，展开的路还在；
 # 这里几处是真的砍掉了尾巴，砍掉了就必须说清丢了多少、怎么拿回来——否则模型
-# 拿到一份看起来完整的结果，而它不知道自己丢了什么（D62 同一条理由）。
+# 拿到一份看起来完整的结果，而它不知道自己丢了什么（P13 同一条理由）。
 
 
 async def test_an_index_entry_says_how_much_it_left_out(reg, ctx) -> None:
@@ -309,7 +309,7 @@ async def test_worldinfo_read_says_where_to_resume(reg, ctx) -> None:
 
 
 async def test_worldinfo_index_covers_everything(reg, ctx) -> None:
-    """索引必须覆盖**全部**条目，不做预筛选（D62）——筛选子集式的规则不合格，
+    """索引必须覆盖**全部**条目，不做预筛选（P13）——筛选子集式的规则不合格，
     因为漏掉时模型根本不知道条目存在。
     """
     for i in range(3):
@@ -326,7 +326,7 @@ async def test_worldinfo_index_covers_everything(reg, ctx) -> None:
 
 
 async def test_summarize_caches_and_reuses(reg, ctx) -> None:
-    """懒惰生成 + 系统缓存（D69）：第二次调用不再打模型。"""
+    """懒惰生成 + 系统缓存（S25）：第二次调用不再打模型。"""
     entry = WorldbookEntry(name="教团", content="很长的设定" * 100)
     ctx.repo.book().save_entry(entry)
 
@@ -341,7 +341,7 @@ async def test_summarize_caches_and_reuses(reg, ctx) -> None:
 
 
 async def test_summary_falls_back_to_head_in_index(reg, ctx) -> None:
-    """尚无摘要的条目回退到"前 N 字 + 字数"——仍满足 D62。"""
+    """尚无摘要的条目回退到"前 N 字 + 字数"——仍满足 P13。"""
     ctx.repo.book().save_entry(
         WorldbookEntry(name="教团", content="甲乙丙丁" * 100, mode=WorldbookMode.ON_DEMAND)
     )
@@ -376,7 +376,7 @@ async def test_ask_question_awaits_user(reg, ctx) -> None:
 
 
 async def test_a_question_takes_exactly_three_options(reg, ctx) -> None:
-    """**恰好三个**（D155）。两个把岔路压成二选一，四个开始出现凑数的那条。
+    """**恰好三个**（S23）。两个把岔路压成二选一，四个开始出现凑数的那条。
 
     不留「其他」位是因为用户随时可以自己写一条——实测模型自己造过这么一个选项
     （「其他：你另指定这一轮实际要用的手段」），那是在没有一等自由作答入口时的
@@ -389,7 +389,7 @@ async def test_a_question_takes_exactly_three_options(reg, ctx) -> None:
 
 
 async def test_an_answer_outside_the_options_reads_differently(reg, ctx) -> None:
-    """三选一和自由作答**对后续推演的分量不同**，回执必须分得清（D155）。
+    """三选一和自由作答**对后续推演的分量不同**，回执必须分得清（S23）。
 
     合成一句「用户选择：…」会把后者说成前者，于是模型照着"这是我列过的选项"
     去理解一句它其实没列过的话。
@@ -414,7 +414,7 @@ async def _pick_first(question: str, options: list[str]) -> str:
 
 
 async def test_history_never_leaks_prose(reg, ctx) -> None:
-    """D54 的基础：director 从不读 run 的正文。它能覆盖五倍历史跨度正是因为这一点，
+    """S5 的基础：director 从不读 run 的正文。它能覆盖五倍历史跨度正是因为这一点，
     这条一破，整个隔离设计作废。
 
     行为检查而非字符串检查：history 的两个工具都必须只吐细纲。
@@ -441,23 +441,23 @@ async def test_specs_are_valid_json_schema(reg) -> None:
 
 
 def test_state_write_says_what_to_record() -> None:
-    """判据在 **state_manager 的提示词**里，不在工具描述里（D152）。
+    """判据在 **state_manager 的提示词**里，不在工具描述里（S27）。
 
     它以前整整两千字堆在 `state_write` 的描述里。工具描述该只说「作用 + 参数
     格式」——判据是提示词，而提示词该在 YAML 里，用户能改。
 
     **判据本身一个字没变**，下面逐条钉的还是它：
 
-    **state 是 history 的捷径，不是第二份记录**（D99）。这一句定位撑起了整个判据：
+    **state 是 history 的捷径，不是第二份记录**（S36）。这一句定位撑起了整个判据：
     它是**双条件**的，两条各排掉一类实测出现过的错记——
 
     - 「照片朝向」过不了"约束后面能写什么"；
     - 「本轮剧情摘要」过不了"值得随时看见"（前情里就是它）。
 
     单说"这是状态不是事件"两类都拦不住：物件朝向确实是状态。
-    （第三类误解「把设定抄进 state」不靠描述解决，靠 worldbook 种子移除诱因，D90。）
+    （第三类误解「把设定抄进 state」不靠描述解决，靠 worldbook 种子移除诱因，S68。）
     """
-    # **顶层命名块没了**（D173）：正文内联进了 section，所以这里从装配出来的
+    # **顶层命名块没了**（R31）：正文内联进了 section，所以这里从装配出来的
     # 整串消息里认那一节——认头一句，不钉措辞。
     from agenttavern.models import WorldState
     from agenttavern.prompting import state_manager_prompt
@@ -478,7 +478,7 @@ def test_state_write_says_what_to_record() -> None:
     assert "不该为它去翻前情" in desc
 
     # **两类，忘了的后果不同。** 只有约束类时判据是"会不会出逻辑错误"，
-    # 而契诃夫之枪过不了这一关：忘了它不产生任何矛盾，只会烂尾（D109）。
+    # 而契诃夫之枪过不了这一关：忘了它不产生任何矛盾，只会烂尾（S34）。
     assert "约束类" in desc
     assert "悬置类" in desc
     assert "最容易漏的一类" in desc
@@ -488,13 +488,13 @@ def test_state_write_says_what_to_record() -> None:
     # 悬置项兑现即删，否则欠账清单只增不减
     assert "兑现了" in desc
 
-    # **存续时长不是判据**：冷却只剩两回合，活不过几轮却必须记（D95 的修正，
+    # **存续时长不是判据**：冷却只剩两回合，活不过几轮却必须记（S34 的修正，
     # 由数据化世界暴露）。这条否定必须在描述里，否则"只在这一两轮有意义的不记"
     # 这类经验会把资源与冷却一起误杀。
     assert "存在时间长短不是判据" in desc
     assert "冷却" in desc
 
-    # 鼓励结构化——不设 schema，但要说清形状（D99）
+    # 鼓励结构化——不设 schema，但要说清形状（S36）
     assert "能用数字就别用句子" in desc
     assert "同类的事用同一套键名" in desc
     assert "一个键只装一件事" in desc
@@ -522,7 +522,7 @@ def test_state_write_says_what_to_record() -> None:
 
 
 def test_state_entries_become_the_replay_base(tmp_path: Path) -> None:
-    """条目分两类（D158）：静态的进 worldinfo，会变的作为**初始状态**进 state。
+    """条目分两类（S67）：静态的进 worldinfo，会变的作为**初始状态**进 state。
 
     这样模型不必把设定抄进 state——那种副本会在设定被改动后与之分叉。
     诱因消失了，比在提示词里禁止可靠。
@@ -544,12 +544,12 @@ def test_state_entries_become_the_replay_base(tmp_path: Path) -> None:
     repo.save_node(node)
     after = repo.state_at(node.id).values
     assert after["林昭"]["在场"] is True
-    # **深合并**：没提到的原样留着（D157）。
+    # **深合并**：没提到的原样留着（S31）。
     assert after["林昭"]["知情"] == ["匿名信里的照片"]
 
 
 def test_the_initial_state_freezes_once_the_story_starts(tmp_path: Path) -> None:
-    """**开始之后改初始状态，不再回头改写既有的每一轮**（D158）。
+    """**开始之后改初始状态，不再回头改写既有的每一轮**（S67）。
 
     早先它一直是现算的，说法是"同改角色卡"。那个类比不成立：改角色卡改的是设定，
     而这里改的是**已经发生过的剧情所依赖的事实**——某一轮写着"她掏出钥匙"，
@@ -595,13 +595,13 @@ def test_tool_names_match_the_api_pattern() -> None:
 
 
 def names_for(worldinfo: list[WorldbookEntry] | None = None, **setup: object) -> set[str]:
-    """当前配置下 director 拿得到哪几个工具。**开关来自 YAML**（D174）。"""
+    """当前配置下 director 拿得到哪几个工具。**开关来自 YAML**（S80）。"""
     with using(**setup):  # type: ignore[arg-type]
         return set(ToolRegistry.for_session(worldinfo).names)
 
 
 def test_submit_outline_always_exists() -> None:
-    """它是 loop 的唯一终止点（D53），不可关闭。"""
+    """它是 loop 的唯一终止点（S4），不可关闭。"""
     assert "submit_outline" in names_for(
         agents={"state_manager": False},
         tools={"director": {"ask_question": False, "history_search": False}},
@@ -639,16 +639,16 @@ def test_worldinfo_tools_only_when_something_is_expandable() -> None:
 
 
 def test_the_write_side_belongs_to_the_state_manager_alone(tmp_path: Path) -> None:
-    """**director 读状态，state_manager 写状态**（D143）。
+    """**director 读状态，state_manager 写状态**（S7）。
 
-    这条隔离和 D33 那把刀是同一个性质：谁能碰什么，从工具面上就该看得出来。
+    这条隔离和 S3 那把刀是同一个性质：谁能碰什么，从工具面上就该看得出来。
     `state_query` 两边都有——写之前要知道现在是什么样。
     """
     assert "state_write" not in names_for(**ALL_ON)
     assert {t.name for t in build_state_tools()} == {"state_write", "state_query"}
 
-    # 按需展开关掉时 state 全量注入，`state_query` 两边一起消失（D62）。
-    # **两侧各有各的开关**（D173）：同一个工具在两个 agent 手上是两条
+    # 按需展开关掉时 state 全量注入，`state_query` 两边一起消失（P13）。
+    # **两侧各有各的开关**（R31）：同一个工具在两个 agent 手上是两条
     # 描述、两个开关，所以要关就两边都关。
     off = {"tools": {"director": {"state_query": False}, "state_manager": {"state_query": False}}}
     assert "state_query" not in names_for(**off)  # type: ignore[arg-type]
@@ -671,7 +671,7 @@ async def test_submit_outline_never_has_a_precondition(tmp_path: Path) -> None:
 
 
 def test_base_state_uses_parent_path(tmp_path: Path) -> None:
-    """状态是路径的函数（D48）：run 的基线来自它挂载的父节点，不是全局。"""
+    """状态是路径的函数（S42）：run 的基线来自它挂载的父节点，不是全局。"""
     repo = Store(tmp_path).create_session(Session())
     root = Node(state_delta=StateDelta(set={"地点": "门口"}))
     left = Node(parent_id=root.id, state_delta=StateDelta(set={"地点": "客厅"}))

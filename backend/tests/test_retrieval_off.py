@@ -1,8 +1,8 @@
-"""关闭按需展开时的三种行为（D115）。
+"""关闭按需展开时的三种行为（S55）。
 
 三条各自关，但**共用一条原则**：截断 + 按需展开是无损降维，
 一旦没了展开的路，截断就变成有损筛选——模型看得见名字却永远拿不到内容，
-而且不知道自己丢了什么。那正是 D62 判 lorebook 关键词触发不合格的理由。
+而且不知道自己丢了什么。那正是 P13 判 lorebook 关键词触发不合格的理由。
 """
 
 from conftest import using
@@ -37,9 +37,9 @@ def test_state_query_disappears_from_both_sides_but_write_stays() -> None:
     """关的是**按需展开**，不是 state 本身——写入照常。
 
     `state_query` 两侧都有（director 读状态推演，state_manager 写之前先看），
-    所以这个开关一关就两边一起消失（D143）。
+    所以这个开关一关就两边一起消失（S7）。
     """
-    # **两侧各有各的开关**（D173）：同一个工具在两个 agent 手上是两条描述、
+    # **两侧各有各的开关**（R31）：同一个工具在两个 agent 手上是两条描述、
     # 两个开关，所以「按需展开」这件事要在两边各关一次。
     off = {
         "director": {"state_query": False},
@@ -53,7 +53,7 @@ def test_state_query_disappears_from_both_sides_but_write_stays() -> None:
 def test_on_demand_worldinfo_is_inlined_when_read_is_off() -> None:
     """关闭 `worldinfo_read` → 按需条目也**全文进静态前缀**。
 
-    设定跨轮不变，所以它天然属于缓存前缀，全量注入的代价只付一次（D114）。
+    设定跨轮不变，所以它天然属于缓存前缀，全量注入的代价只付一次（S60）。
     """
     entries = [
         WorldbookEntry(name="旧货店", mode=WorldbookMode.ON_DEMAND, content=LONG),
@@ -76,7 +76,7 @@ def test_worldinfo_tools_disappear_when_read_is_off() -> None:
 
 
 def _compacted(readable: bool) -> str:
-    # 体量要顶在**扁平化之后仍然留下的东西**上（D121）：细纲留、轮次提示不留。
+    # 体量要顶在**扁平化之后仍然留下的东西**上（S61）：细纲留、轮次提示不留。
     # 塞在提示里会被扁平化吃掉，压根越不了界。
     filler = CONTEXT_BUDGET_CHARS
     node = Node(outline="第一轮" + "长" * filler, outline_summary="她进店，他锁了门。")
@@ -90,7 +90,7 @@ def _compacted(readable: bool) -> str:
 def test_compacted_history_is_gone_for_good_when_search_is_off() -> None:
     """关闭 `history_search` → 被压缩的原文**永久隐去**。
 
-    但**摘要仍然留着**：模型必须知道那几轮存在过，只是精度低了（D62）。
+    但**摘要仍然留着**：模型必须知道那几轮存在过，只是精度低了（P13）。
     整段抹掉才是不合格的——那会让它不知道自己丢了什么。
     """
     off = _compacted(readable=False)

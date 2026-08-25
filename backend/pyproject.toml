@@ -3,7 +3,7 @@ name = "agenttavern"
 version = "0.1.0"
 description = "Agent-based AI roleplay backend"
 requires-python = ">=3.11"
-# **每条都封主版本上界**（D181）。这是一个应用不是一个库，没人需要它去适配未来的
+# **每条都封主版本上界**（见 docs/Workflow.md）。这是一个应用不是一个库，没人需要它去适配未来的
 # 大版本；而无上界意味着「同一份代码，今天装和明天装跑的是两套依赖」。
 # 实测撞过一次：`openai>=1.55` 让 CI 装到 3.3.1（本地是 2.53.0），而 3.x 把
 # HTTP 客户端从 `httpx` 换成了 `httpx2`，于是本地全绿、CI 上 mypy 直接红。
@@ -40,7 +40,7 @@ packages = ["agenttavern"]
 
 # 提示词 YAML 与 config.yaml 就躺在包目录里，hatchling 默认会一起打进去，
 # 不需要 force-include。这里曾经指着 `agenttavern/agents/prompt_text`，那个
-# 目录在提示词搬进 `prompting/*.yaml` 之后就没了（D173），而 force-include
+# 目录在提示词搬进 `prompting/*.yaml` 之后就没了（R31），而 force-include
 # 指向不存在的路径会让 `pip install -e` 直接失败——**已装好的环境看不见这个**，
 # 只有新机器上第一次装才会撞上。
 

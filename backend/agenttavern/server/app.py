@@ -54,7 +54,7 @@ from .runner import SessionRunner
 
 
 class SessionPatch(BaseModel):
-    """**session 上只剩内容，没有配置**（D174）。
+    """**session 上只剩内容，没有配置**（S80）。
 
     `control` 与 `capabilities` 已经删掉：控制维度与能力开关整体上调到了提示词层，
     改它们走 `/agents`。这里只剩标题、目标（`meta`）和触发源（`modes`）。
@@ -65,7 +65,7 @@ class SessionPatch(BaseModel):
 
 
 class NodePatch(BaseModel):
-    """用户直接编辑节点数据（D65）。
+    """用户直接编辑节点数据（R22）。
 
     **直接改写，不做依赖检查**——乐观假设用户只改最新输出，此时本无下游。
 
@@ -103,12 +103,12 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
 
     app = FastAPI(title="AgentTavern", lifespan=lifespan)
 
-    # agent 管理：提示词、工具描述、附属提示词、渲染文案（D173）。
+    # agent 管理：提示词、工具描述、附属提示词、渲染文案（R31）。
     # **单独一个模块**——它和 session / worldbook 不共享任何状态，读写的是
     # `prompting/` 底下那几份 YAML。
     app.include_router(agents_router())
 
-    # **旧数据在这里搬家**（D170）：worldbook 以前躺在 session 目录里。
+    # **旧数据在这里搬家**（S63）：worldbook 以前躺在 session 目录里。
     # 跑一次就是空操作，所以放在这里比放一条命令可靠——没人会记得去跑那条命令。
     store.migrate()
 
@@ -122,11 +122,11 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
 
     @app.get("/meta")
     def server_meta() -> dict[str, Any]:
-        """服务级信息。**前端据此决定要不要显示开发者面板**（D156）。
+        """服务级信息。**前端据此决定要不要显示开发者面板**（S113）。
 
         模式在启动服务时就定了，不是运行时开关——所以这里只读，没有对应的写接口。
         """
-        # `options`（有哪些文风 / 视角档）**已删除**（D173）：档位和当前取值都
+        # `options`（有哪些文风 / 视角档）**已删除**（R31）：档位和当前取值都
         # 住在 agent 的 YAML 里，前端要看就去 `/agents/{name}`——这里再给一份
         # 就是同一件事的第二个入口。
         return {
@@ -141,7 +141,7 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
     def create_session(session: Session | None = None) -> Session:
         """**返回落盘的那一份，不是传进来的那一份。**
 
-        没指定设定时 `create_session` 会现建一份并写进 `worldbook_id`（D170），
+        没指定设定时 `create_session` 会现建一份并写进 `worldbook_id`（S63），
         而它是在一个 `model_copy` 上写的——把入参原样回给客户端，那个字段就是空的。
         """
         return store.create_session(session or Session()).load_session()
@@ -150,7 +150,7 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
     def list_sessions() -> list[dict[str, Any]]:
         """**带标题，不只是 id。** 列表上一串 `sess_a1b2c3…` 认不出哪局是哪局。
 
-        顺带给出它开在哪份设定上——那是会话列表里唯一需要的第二行信息（D172）。
+        顺带给出它开在哪份设定上——那是会话列表里唯一需要的第二行信息（R17）。
         """
         out: list[dict[str, Any]] = []
         for sid in store.list_sessions():
@@ -171,7 +171,7 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
         session = repo.load_session()
         leaf = session.active_leaf_id
         path = repo.path_to(leaf) if leaf else []
-        # **哪几轮有兄弟，随路径一起给**（D46/D147）。切换器要显示 `⟨2/3⟩` 就得
+        # **哪几轮有兄弟，随路径一起给**（S44/S44）。切换器要显示 `⟨2/3⟩` 就得
         # 先知道有没有第 2 支；一个节点一次 `siblings` 请求会让一条 20 轮的路径
         # 打 20 个请求，而这份数据只在重生成之后才变。
         #
@@ -228,7 +228,7 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
 
     @app.post("/sessions/{session_id}/close-segment")
     async def close_current_segment(session_id: str) -> dict[str, Any]:
-        """用户手动归段（D112 的第三条支路）。
+        """用户手动归段（S22 的第三条支路）。
 
         **用户说这一段收了，就是收了**——不再追问模型。归段追问关掉时它是唯一的
         归段方式，开着时也保留：自动追问判早了或判晚了，用户随时可以自己断。
@@ -256,10 +256,10 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
 
     @app.get("/sessions/{session_id}/trace/{run_id}")
     def read_trace(session_id: str, run_id: str) -> list[TraceEvent]:
-        """回看某一轮落盘的 trace（D162）。
+        """回看某一轮落盘的 trace（S115）。
 
         **开发者面板离了它只能看当前连接期间的轮次**：事件是推过来的，刷新一次
-        页面之前那些就没了。而开发者模式本来就强制落盘（D156）——查问题总是事后，
+        页面之前那些就没了。而开发者模式本来就强制落盘（S113）——查问题总是事后，
         记了不给读回来的路等于没记。
 
         没开发者模式时文件多半不存在，返回空列表而不是 404：那不是错误，
@@ -267,7 +267,7 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
         """
         return repo_of(session_id).read_trace(run_id)
 
-    # -- worldbook（一级资产，D170） -----------------------------------------
+    # -- worldbook（一级资产，S63） -----------------------------------------
 
     def book_of(worldbook_id: str) -> WorldbookRepository:
         repo = store.worldbook(worldbook_id)
@@ -277,10 +277,10 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
 
     @app.get("/worldbooks")
     def list_worldbooks() -> list[dict[str, Any]]:
-        """**带上「谁在用」**：一份设定可以开出好几个故事（D170），而删之前
+        """**带上「谁在用」**：一份设定可以开出好几个故事（S63），而删之前
         必须看得见这件事——被三局故事用着的设定被删掉，那三局会当场失忆。
 
-        **一条读不出来的条目不该让整张列表 500**（D179）。这里走 `survey()`：
+        **一条读不出来的条目不该让整张列表 500**（S73）。这里走 `survey()`：
         它数得出好的、也点得出坏的。列表只为了显示"几条"，不喂模型——
         喂模型那条路径（`entries()`）照旧严格抛。
         """
@@ -307,7 +307,7 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
 
     @app.post("/worldbooks/import")
     def import_as_new(bundle: WorldbookBundle) -> Worldbook:
-        """导入一份文件，**得到一份新设定**（D172）。
+        """导入一份文件，**得到一份新设定**（R17）。
 
         和 `/worldbooks/{id}/import` 分开是因为它们回答不同的问题：那条是「往这
         一份里追加或替换」，这条是「把别人给我的这份变成我的一份」。**后者才是
@@ -338,7 +338,7 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
 
     @app.patch("/worldbooks/{worldbook_id}")
     def patch_worldbook(worldbook_id: str, patch: Rename) -> Worldbook:
-        """改名。**只有名字可改**——worldbook 上没有别的字段了（D175），
+        """改名。**只有名字可改**——worldbook 上没有别的字段了（S64），
         题材与尺度都是 `WORLD` 条目，走 `/entries`。
         """
         repo = book_of(worldbook_id)
@@ -365,7 +365,7 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
 
     @app.delete("/worldbooks/{worldbook_id}/entries/{entry_id}")
     def delete_entry(worldbook_id: str, entry_id: str) -> dict[str, Any]:
-        """删一条设定。故事开始之后删初始状态条目不影响既有的每一轮（D158）。"""
+        """删一条设定。故事开始之后删初始状态条目不影响既有的每一轮（S67）。"""
         if not book_of(worldbook_id).delete_entry(entry_id):
             raise HTTPException(404, f"设定条目不存在：{entry_id}")
         return {"deleted": entry_id}
@@ -386,10 +386,10 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
         带着它导入要么撞上已有条目静默覆盖，要么两份文件里的同名 id 指向完全
         不同的东西。
 
-        **不改已经冻结的初始状态**（D158）：故事一旦开始，起点就定死了，导入
+        **不改已经冻结的初始状态**（S67）：故事一旦开始，起点就定死了，导入
         只影响"以后新建的会话"。还没开始时导入会立刻改变当前状态——那时没有
         任何一轮依赖它，改了是对的。**这里报的是「有几局故事已经开始了」**——
-        一份设定可以开出好几个（D170），而它们各自冻结在各自的第一轮。
+        一份设定可以开出好几个（S63），而它们各自冻结在各自的第一轮。
         """
         if (bad := bundle.check()) is not None:
             raise HTTPException(400, bad)
@@ -398,7 +398,7 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
         removed = repo.clear() if replace else 0
         if replace and bundle.name:
             # 整份换掉时名字也跟着换。**只剩名字要换**——题材与尺度是条目
-            # （D175），它们随 `entries` 一起进来。
+            # （S64），它们随 `entries` 一起进来。
             repo.save(repo.load().model_copy(update={"name": bundle.name}))
         for entry in bundle.entries:
             repo.save_entry(entry.model_copy(update={"id": new_id("wi")}))
@@ -499,7 +499,7 @@ async def _handle(
         session = repo.load_session()
         session.active_leaf_id = message.node_id
         repo.save_session(session)
-        # 切换分支必须同时切换状态（D48），否则"文本对、状态悄悄错"。
+        # 切换分支必须同时切换状态（S42），否则"文本对、状态悄悄错"。
         await broadcast(
             StateSnapshot(values=repo.state_at(message.node_id).values, leaf_id=message.node_id)
         )
@@ -525,30 +525,30 @@ async def _handle(
         await broadcast(StateSnapshot(values=repo.state_at(leaf).values, leaf_id=leaf))
 
     elif isinstance(message, SetGoal):
-        # **同一时间只有一个 goal**（D148）。已有的必须先放弃——goal_manager 的
+        # **同一时间只有一个 goal**（S92）。已有的必须先放弃——goal_manager 的
         # 对话是围着那个目标建起来的，换一个就得整份重来，而那正是 `abandon`。
         session = repo.load_session()
         if session.meta.goal is not None:
             await broadcast(ServerError(message="已经有一个目标在跑。先放弃它再设新的。"))
         else:
-            # **留空就是不设上限**（D164）：两条预算原样透传，`None` 一路带到
+            # **留空就是不设上限**（S97）：两条预算原样透传，`None` 一路带到
             # `Goal`，不在这里替用户填一个默认值。
             session.meta.goal = Goal(
                 description=message.description,
                 max_runs=message.max_runs,
                 max_total_tokens=message.max_total_tokens,
             )
-            # **记下从哪儿开始**（D150）：它之前的剧情给细纲、进静态前缀，
+            # **记下从哪儿开始**（S93）：它之前的剧情给细纲、进静态前缀，
             # 之后的每一轮给正文、逐条追加。
             session.goal_run = GoalRun(started_at_leaf_id=session.active_leaf_id)
             repo.save_session(session)
-            # **设目标就是"去做"**（D165）。不叫醒的话，一个还没写过任何一轮的
+            # **设目标就是"去做"**（S99）。不叫醒的话，一个还没写过任何一轮的
             # 会话会举着「目标推进中」一动不动，直到用户随便打句话把它推起来。
             runner.nudge()
 
     elif isinstance(message, SetGoalBudget):
         # **这是"加预算接着跑"的入口。** 目标本身禁改，预算恰恰要能在跑到一半
-        # 时调大——预算耗尽是暂停不是失败（D148）。调大之后顺手解除那次暂停。
+        # 时调大——预算耗尽是暂停不是失败（S92）。调大之后顺手解除那次暂停。
         session = repo.load_session()
         if session.meta.goal is None:
             await broadcast(ServerError(message="当前没有目标。"))
@@ -590,8 +590,8 @@ async def _handle(
                 runner.nudge()
 
     elif isinstance(message, Regenerate):
-        # 重生成 = 在当前叶的父节点下新建兄弟（D46）。**只能重 roll 当前节点**
-        # （D147）：分支只在当前节点上开，想在更早处分叉先 `SwitchBranch` 切过去。
+        # 重生成 = 在当前叶的父节点下新建兄弟（S44）。**只能重 roll 当前节点**
+        # （S44）：分支只在当前节点上开，想在更早处分叉先 `SwitchBranch` 切过去。
         # 这里当场校验而不是静默改写，是因为"你以为的当前节点已经不是当前节点了"
         # 悄悄重 roll 掉另一轮，比报错难查得多。
         if message.node_id != repo.load_session().active_leaf_id:
@@ -609,15 +609,15 @@ def _apply_node_patch(
     developer: bool = False,
     persist_trace: bool = False,
 ) -> Node:
-    """用户编辑直接改写节点数据（D65），**不做依赖检查**。
+    """用户编辑直接改写节点数据（R22），**不做依赖检查**。
 
     此前曾主张"插入一个只含 delta 的新节点"以保护已提交节点的不可变性，
     该方案已否决——它为一个乐观假设下不存在的问题增加复杂度，
     也不符合常见 AI chat 的编辑语义。
 
-    **改了什么要入 trace**（D50）。`USER_EDIT` 这个事件类型一直定义着却从没被
+    **改了什么要入 trace**（S47）。`USER_EDIT` 这个事件类型一直定义着却从没被
     发出过——于是一段手改过的正文在 trace 里和 writer 写的一模一样，回看时会被
-    当成模型的产出去归因，而 trace 存在的头一个理由就是 eval（D8）。
+    当成模型的产出去归因，而 trace 存在的头一个理由就是 eval（S112）。
     记的是**改了哪几样**，不是新旧内容：正文动辄几千字，而"这个节点被人动过"
     才是回看时要的那一位信息。
     """
@@ -632,12 +632,12 @@ def _apply_node_patch(
         touched.append("prose")
     if patch.state_delta is not None:
         # **整份替换，不是只换 `set`。** 以前这里是 `node.state_delta.set = ...`，
-        # 于是 `append` / `remove` 从界面够不着——而 D96 加 `remove` 正是因为
+        # 于是 `append` / `remove` 从界面够不着——而 S32 加 `remove` 正是因为
         # 清单要能减。
         node.state_delta = patch.state_delta
         touched.append("state")
     if patch.state_result is not None:
-        # **「改结果」在这里换算成增量**（D65）：和这一轮**之前**的状态求差。
+        # **「改结果」在这里换算成增量**（R22）：和这一轮**之前**的状态求差。
         # 起点是父节点处的状态，不是当前叶——用户改的是这一轮的产出。
         node.state_delta = diff(repo.state_at(node.parent_id).values, patch.state_result)
         touched.append("state")

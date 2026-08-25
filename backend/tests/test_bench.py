@@ -14,7 +14,7 @@ from agenttavern.models.state import paths_of, walk
 
 
 def one_run(outline: str = "她推开门。", prose: str = "门轴响了。"):
-    """一轮的两次模型调用。状态那一次由 `ScriptedLLM(state=...)` 应答（D143）。"""
+    """一轮的两次模型调用。状态那一次由 `ScriptedLLM(state=...)` 应答（S7）。"""
     return [tool("submit_outline", outline=outline), text(prose)]
 
 
@@ -24,13 +24,13 @@ def one_run(outline: str = "她推开门。", prose: str = "门轴响了。"):
 def test_scenarios_are_deliberately_opposite() -> None:
     """回归集必须包含一个**约束性质相反**的世界。
 
-    只在一边成立的规则是那个场景的经验，不是规则——`remove` 的缺口（D96）与
-    "存续时长不是判据"（D95）都是被数据化世界揭穿的，两条在悬疑场景上都看着正常。
+    只在一边成立的规则是那个场景的经验，不是规则——`remove` 的缺口（S32）与
+    "存续时长不是判据"（S34）都是被数据化世界揭穿的，两条在悬疑场景上都看着正常。
     """
     noir, data = SCENARIOS["noir"], SCENARIOS["data"]
 
     # noir 的初始状态里没有可增减的量；data 有清单、数字和冷却。
-    # **看的是叶子**——初始状态是嵌套的，顶层往往只是个角色名（D157）。
+    # **看的是叶子**——初始状态是嵌套的，顶层往往只是个角色名（S31）。
     def leaves(scenario) -> list[object]:
         out = []
         for entry in scenario.worldbook:
@@ -48,7 +48,7 @@ def test_every_scenario_has_a_recorded_input_sequence() -> None:
     把某一次生成当标准答案是错的（§6）。
 
     **goal 驱动的场景是例外**：除了种子那一条，输入由 goal_manager 每轮现写
-    （D148）。它固定的是**目标**——那才是那种场景要复现的东西。
+    （S92）。它固定的是**目标**——那才是那种场景要复现的东西。
     """
     for name, scenario in SCENARIOS.items():
         assert scenario.worldbook
@@ -65,9 +65,9 @@ def test_scenarios_span_two_ends_of_prose_style() -> None:
     因此回归集里必须有一个文风反差最大的场景。它同时是"表达自然、
     达到主流网文水平"这条目标的量尺：拿克制文学向的样本去量网文水平是量错了尺子。
     """
-    # `prose_style` 是**档位名**，档位全文在 writer.yaml 里（D136）；而**当前选
-    # 哪一档也在那儿**（D173）。场景要换文风就带一份 `PromptSetup`——它改的是
-    # 提示词副本，不是 session（那上面已经没有配置了，D174）。
+    # `prose_style` 是**档位名**，档位全文在 writer.yaml 里（S76）；而**当前选
+    # 哪一档也在那儿**（R31）。场景要换文风就带一份 `PromptSetup`——它改的是
+    # 提示词副本，不是 session（那上面已经没有配置了，S80）。
     styles = {name: s.prompts.choices["writer"]["prose_style"] for name, s in SCENARIOS.items()}
     bodies = {name: option("writer", "prose_style", value) for name, value in styles.items()}
 
@@ -141,7 +141,7 @@ def test_a_scenario_is_long_enough_to_trigger_progressive_disclosure() -> None:
 
     # **被测的能力必须真的打开。** `history_search` 默认关闭，关闭时两个工具
     # 都不注册——第一次跑这个场景时忘了开，于是"12 轮一次都没调用"
-    # 这个观察什么也说明不了：工具当时根本不存在。开关现在在提示词里（D174），
+    # 这个观察什么也说明不了：工具当时根本不存在。开关现在在提示词里（S80），
     # 所以场景把它写进自己那份 `PromptSetup`。
     assert long.prompts.tools["director"]["history_search"] is True
 
@@ -199,7 +199,7 @@ async def test_turns_are_chained_so_state_accumulates(tmp_path: Path) -> None:
 def test_a_variant_layers_on_top_of_the_scenario() -> None:
     """变体只改配置，不改题材与输入——否则比的不是同一件事（P19）。
 
-    **它改的是提示词，不是 session**（D174）：`capabilities` / `control` 整体
+    **它改的是提示词，不是 session**（S80）：`capabilities` / `control` 整体
     上调到了提示词层之后，往 session 上写配置这条路失去了全部着力点。补法是
     换一份 YAML 副本（`prompts_as`），不是开一个 `overrides` 后门——一个
     "只有程序能用"的第二取值入口迟早会有第二个调用者。
@@ -326,10 +326,10 @@ async def test_write_miss_sees_prior_state_so_it_can_tell_missing_from_already_k
 
 
 async def test_write_noise_judges_the_delta_against_the_criterion_alone() -> None:
-    """**D59 的五类里没有"记了不该记的"**——写入遗漏只查缺不查多。
+    """**S12 的五类里没有"记了不该记的"**——写入遗漏只查缺不查多。
 
     首批实测里 `照片.状态: "柜台，正面朝上"` 被四类一致判为没问题，
-    而它正是 D95 点名不该记的东西。
+    而它正是 S34 点名不该记的东西。
 
     这一类只看增量，**不给正文**：给了会诱它去论证"这条确实发生了"，
     而"确实发生了"和"值得记"是两回事。
@@ -352,7 +352,7 @@ async def test_write_noise_judges_the_delta_against_the_criterion_alone() -> Non
 
 
 async def test_repeat_keeps_only_findings_that_reproduce() -> None:
-    """**随机 grader 的信号是复现率，不是单次判定**（D101）。
+    """**随机 grader 的信号是复现率，不是单次判定**（P19）。
 
     实测：同一批素材连判三次（温度已是 0），跨次稳定复现的三条全是真问题，
     只出现一次的四条全是误报。温度设 0 消不掉这种波动。
@@ -415,7 +415,7 @@ def test_calibrations_from_the_first_two_batches_are_pinned() -> None:
     assert "故意装作不知道" in _PROMPTS[Attribution.RETRIEVAL]
     # 首批：用户说"钟表铺"、细纲写"旧货店"，同一家店
     assert "另一种叫法不算换含义" in _PROMPTS[Attribution.REASONING]
-    # 重判：把 set null（删除键）读成了"记录未明状态"，而删除正是 D99 鼓励的
+    # 重判：把 set null（删除键）读成了"记录未明状态"，而删除正是 S36 鼓励的
     assert "是删除这个键" in _PROMPTS[Attribution.WRITE_NOISE]
 
 
@@ -441,7 +441,7 @@ async def test_grader_failure_becomes_unknown_not_a_crash() -> None:
 
 
 def test_attribution_table_excludes_the_class_with_no_referent() -> None:
-    """「writer 文风失败」没有参照物，AI 判不了（D83）。
+    """「writer 文风失败」没有参照物，AI 判不了（P19）。
     它不该出现在归因表里，但报告必须显式提醒它仍待人工判断。"""
     table = attribution_table([])
 
@@ -511,7 +511,7 @@ async def test_report_renders_without_grading(tmp_path: Path) -> None:
 
 
 async def test_a_goal_scenario_is_driven_by_the_goal_manager(tmp_path: Path) -> None:
-    """**种子之后每一轮的输入都由 goal_manager 写**（D148）。
+    """**种子之后每一轮的输入都由 goal_manager 写**（S92）。
 
     bench 以前直接调 `execute_run`，`_check_goal` 在 `SessionRunner` 里，
     于是整套 goal 机制从来没进过回归集——"没跑过"和"跑过没问题"看起来一样。
@@ -548,7 +548,7 @@ async def test_a_goal_scenario_is_driven_by_the_goal_manager(tmp_path: Path) -> 
 
 
 async def test_a_goal_scenario_stops_when_the_budget_runs_out(tmp_path: Path) -> None:
-    """预算到顶 → **暂停，不是失败**（D148）。bench 记下来就收，不再往下跑。"""
+    """预算到顶 → **暂停，不是失败**（S92）。bench 记下来就收，不再往下跑。"""
     llm = ScriptedLLM(
         *one_run(outline="第一轮。", prose="正文一。"),
         tools(

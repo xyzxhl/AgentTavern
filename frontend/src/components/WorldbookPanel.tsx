@@ -22,7 +22,7 @@ const KIND_HINT: Record<EntryKind, string> = {
 };
 
 /**
- * 设定管理（worldbook，D158 / D159 / D170）。**它是一级资产，不属于任何 session**——
+ * 设定管理（worldbook，S67 / S65 / S63）。**它是一级资产，不属于任何 session**——
  * 一份设定能开出好几个故事。
  *
  * 所以这个组件**吃 `worldbookId` 而不是当前会话**：同一个界面既从故事里打开
@@ -45,7 +45,7 @@ export function WorldbookPanel({
 }): JSX.Element {
   const refreshState = useSession((s) => s.refreshState);
   const openSession = useSession((s) => s.sessionId);
-  // 故事一开始，初始状态就冻结了（D158）——之后改条目只影响还没开始的那些故事。
+  // 故事一开始，初始状态就冻结了（S67）——之后改条目只影响还没开始的那些故事。
   // 这里只报**当前打开的这局**：别的故事各自冻结在各自的第一轮，管不着。
   const frozen = useSession(
     (s) => s.session?.worldbook_id === worldbookId && s.session?.initial_state != null,
@@ -191,8 +191,8 @@ export function WorldbookPanel({
           `导入了 ${done.imported} 条` +
             (done.removed ? `，替换掉 ${done.removed} 条` : "") +
             "。",
-          // 冻结之后导入初始状态不会改写既有的每一轮，用户必须知道（D158）。**一份
-          // 设定可以开出好几局故事**（D170），所以报的是有几局已经开始了。
+          // 冻结之后导入初始状态不会改写既有的每一轮，用户必须知道（S67）。**一份
+          // 设定可以开出好几局故事**（S63），所以报的是有几局已经开始了。
           done.frozen.length
             ? `${done.frozen.length} 局故事已开始、起点已冻结：初始状态只对还没开始的那些生效。`
             : "",
@@ -213,7 +213,7 @@ export function WorldbookPanel({
       <header className="flex items-center gap-2 border-b border-line px-5 py-2.5">
         <span className="text-sm text-fg">{book?.name || "世界设定"}</span>
         <span className="text-[11px] text-dim">{entries.length} 条</span>
-        {/* **一份设定开出好几局故事**（D170）：改它对它们全都生效，这件事得看得见。 */}
+        {/* **一份设定开出好几局故事**（S63）：改它对它们全都生效，这件事得看得见。 */}
         {users.length > 1 && (
           <span className="text-[11px] text-accent">· {users.length} 局故事在用</span>
         )}

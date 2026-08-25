@@ -46,38 +46,42 @@ state_manager（tool loop，run 末）
 
 **先填 `backend/.env`**（`copy backend\.env.example backend\.env`，填 `LLM_API_KEY` 与 `LLM_MODEL`）。任何 OpenAI 兼容端点都行。不填也起得来——但要到第一次真调模型才 401，那时报错离原因已经很远，所以 `dev.ps1` 在启动前就拦掉。
 
-端口写死在 `frontend/vite.config.ts`（监听 5173、代理目标 8000），要换在那一处换。**别只换一边**：漏掉代理那条不会报错，Vite 会把请求当成前端路由回一份 `index.html` 且状态码 200（D172）。
+端口写死在 `frontend/vite.config.ts`（监听 5173、代理目标 8000），要换在那一处换。**别只换一边**：漏掉代理那条不会报错，Vite 会把请求当成前端路由回一份 `index.html` 且状态码 200（R17）。
 
 ## 文档
 
+三层：**[req](req/) 用户要什么 → [spec](spec/) 系统做什么 → `backend/tests/` 怎么证明它做到了。**
+
 | | |
 |---|---|
-| [Workflow.md](Workflow.md) | **改动怎么落地**：规格 / 代码 / 测试三者如何保持一致。**动手前先读这份** |
+| [Workflow.md](Workflow.md) | **改动怎么落地**：三层怎么保持一致、什么时候停下来问。**动手前先读这份** |
+| [req/](req/) | **39 条需求**（R1–R39），按用户场景分六篇 |
+| [spec/](spec/) | **135 条规格**（S1–S135），按机制对象分十四篇。每条带服务的 R、不做什么、为什么、验收 |
+| [Principles.md](Principles.md) | **35 条判据**（P1–P35）：从 req 推 spec 时用的工具箱 |
 | [Glossary.md](Glossary.md) | **术语**。每一条都对应一次实际的澄清 |
-| [Principles.md](Principles.md) | **方法与判据**。用于做决定的东西，与具体设计分开 |
-| [Decisions.md](Decisions.md) | **决策台账**。按主题分组，编号稳定；含已被推翻的结论 |
-| [Optimization.md](Optimization.md) | **怎么改提示词/工具/装配规则**，以及怎么知道改对了 |
+| [Ideas.md](Ideas.md) | **还没成形的想法**。层次在 req 之上，想清楚了就下沉成 req |
+| [TODO.md](TODO.md) | **三层对不齐的地方**。允许存在，但不许藏在正文里 |
+| [Optimization.md](Optimization.md) | 怎么改提示词与装配规则，以及怎么知道改对了 |
 | [TechStack.md](TechStack.md) | 库选型与理由、目录结构、前后端契约 |
 
-### spec/ 与 design/
-
-> 文档正在从 `design/` 迁往 `req/` + `spec/`（进度见 [_migration.md](_migration.md)）。
-> **以 `spec/` 为准**；`design/` 里的是还没迁的。
+### spec/ 十四篇
 
 | | |
 |---|---|
-| [spec/Architecture.md](spec/Architecture.md) | 拓扑、一个 run 的时序、归因六类 |
-| [spec/Generation.md](spec/Generation.md) | director / writer 拆分的**论证**：为什么两侧都读正文时不可分，换一刀就可分 |
-| [Configuration.md](spec/Prompting.md) | 元指令 / 控制维度 / 模式 / 能力开关 |
-| [InputHandling.md](spec/InputHandling.md) | 为何不对输入做显式分类；要避免的失败模式 |
-| [State.md](spec/State.md) | 为何取消固定核心 schema；代码能做什么、不能做什么 |
-| [Retrieval.md](spec/Retrieval.md) | 规则检索的准入标准；渐进式披露；写入侧靠用户兜底 |
-| [Prose.md](spec/Prose.md) | 文风怎么量：参考文本、诊断指标、**只产数不判分**的铁律，以及量出来之后改了哪几行提示词 |
-| [spec/Tools.md](spec/Tools.md) | 四份工具面（谁拿到哪几个），以及**明确不提供**的部分 |
-| [Branching.md](spec/Branching.md) | 分支树；"状态是路径的函数" |
-| [NonTurnBased.md](Ideas.md) | 创新点 (b)：非轮次形态的生成器与统一机制 |
-| [Optional.md](Ideas.md) | 真实性与戏剧性的取舍、强度旋钮 |
-| [UI.md](spec/UI.md) | 界面形态与信息架构；**第一版缺了「回头」整个方向**的审计与补法 |
+| [Architecture.md](spec/Architecture.md) | 四个 agent 的拓扑、一个 run 的时序、归因六类 |
+| [Generation.md](spec/Generation.md) | director / writer 拆分的**论证**：两侧都读正文时不可分，换一刀就可分 |
+| [Tools.md](spec/Tools.md) | 四份工具面，以及**明确不提供**的部分 |
+| [State.md](spec/State.md) | 为何不预设任何维度；记什么、不记什么 |
+| [Branching.md](spec/Branching.md) | 分支树、"状态是路径的函数"、打断与续跑 |
+| [Retrieval.md](spec/Retrieval.md) | 规则检索的准入标准、全量索引 + 按需展开、跨轮上下文 |
+| [Worldbook.md](spec/Worldbook.md) | 设定库：条目分类、两路投影、交换格式 |
+| [Prompting.md](spec/Prompting.md) | 提示词层：三类条目、所见即所得、档位取值住哪 |
+| [Prose.md](spec/Prose.md) | 文风落成系统行为的那四条 |
+| [Goal.md](spec/Goal.md) | 长任务：一份跨 run 的长对话、中间状态、预算 |
+| [InputHandling.md](spec/InputHandling.md) | 不做显式分类；要避免的四种失败 |
+| [UI.md](spec/UI.md) | 界面形态与信息架构 |
+| [Trace.md](spec/Trace.md) | trace 与开发者模式 |
+| [Session.md](spec/Session.md) | 一局故事本身存了什么 |
 
 ## 状态
 

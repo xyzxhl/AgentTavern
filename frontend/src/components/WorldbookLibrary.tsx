@@ -6,7 +6,7 @@ import { useSession } from "../store";
 import { WorldbookPanel } from "./WorldbookPanel";
 
 /**
- * 设定库：**worldbook 是一级资产，不属于任何 session**（D170）。
+ * 设定库：**worldbook 是一级资产，不属于任何 session**（S63）。
  *
  * 所以它有自己的入口，而不是只能从某局故事里点进去。一份设定能开出好几局故事，
  * 那件事在这里必须看得见——列表上写着「几局在用」，删之前也拦得住。
@@ -22,7 +22,7 @@ export function WorldbookLibrary(): JSX.Element {
   const file = useRef<HTMLInputElement>(null);
   const newSession = useSession((s) => s.newSession);
   // **要打开哪一份写在路由上**，不写在这个组件的局部状态里——头部那个
-  // `〔旧城区 ↗〕` 标签就是这么直接跳进某一份的（D172）。
+  // `〔旧城区 ↗〕` 标签就是这么直接跳进某一份的（R17）。
   const editing = useSession((s) => (s.page.kind === "worldbooks" ? (s.page.open ?? null) : null));
   const go = useSession((s) => s.go);
   const setEditing = (id: string | null) => go({ kind: "worldbooks", open: id ?? undefined });
@@ -30,7 +30,7 @@ export function WorldbookLibrary(): JSX.Element {
   /**
    * **每个动作都包在这里面。** 出错就显示出来，不是让它静默消失。
    *
-   * 这是批 0 那条教训的第二遍（D179）：那次 `json()` 加了 content-type 校验，
+   * 这是批 0 那条教训的第二遍（S73）：那次 `json()` 加了 content-type 校验，
    * 让失败**抛得更早更响**——但**没有人接**，于是同一个症状又来了一次。
    * 「新建无效」的真相是：新建成功了，紧接着的列表刷新 500 了，异常在
    * `try/finally` 里悄悄没了，界面看起来像什么都没发生。
@@ -68,7 +68,7 @@ export function WorldbookLibrary(): JSX.Element {
     );
   }
 
-  /** 导入一份文件 → **一份新设定**（D172）。拿到别人分享的文件时要的就是这个。 */
+  /** 导入一份文件 → **一份新设定**（R17）。拿到别人分享的文件时要的就是这个。 */
   async function importAsNew(picked: File): Promise<void> {
     await guard(async () => {
       const bundle = JSON.parse(await picked.text()) as WorldbookBundle;
@@ -137,7 +137,7 @@ export function WorldbookLibrary(): JSX.Element {
         </button>
       </header>
 
-      {/* **失败要出声**（D179）：静默消失的异常正是「新建无效」那次的真相。 */}
+      {/* **失败要出声**（S73）：静默消失的异常正是「新建无效」那次的真相。 */}
       {problem && (
         <p className="border-b border-line bg-ink-800 px-5 py-2 text-[11px] leading-snug text-accent">
           {problem}
@@ -164,7 +164,7 @@ export function WorldbookLibrary(): JSX.Element {
                 <span className="shrink-0 font-mono text-[11px] text-dim">{card.entries} 条</span>
               </div>
 
-              {/* **读不出来的条目要点出来**（D179）：悄悄少一条比报错更糟——
+              {/* **读不出来的条目要点出来**（S73）：悄悄少一条比报错更糟——
                   模型据此写出矛盾的剧情，而用户根本不知道自己丢了什么。 */}
               {card.broken?.length > 0 && (
                 <p className="mt-1 text-[11px] text-accent">
@@ -173,7 +173,7 @@ export function WorldbookLibrary(): JSX.Element {
                 </p>
               )}
 
-              {/* **谁在用**：改设定对它们全都生效，删之前更得看得见（D170）。 */}
+              {/* **谁在用**：改设定对它们全都生效，删之前更得看得见（S63）。 */}
               <p className="mt-1 text-[11px] text-dim">
                 {card.sessions.length === 0 ? (
                   "还没有故事开在上面"

@@ -15,14 +15,14 @@ const ACTOR_LABEL: Record<string, string> = {
 /** 这些是编排层的脚手架，不是"它在想什么"。默认压暗，收起时也不计入步数。 */
 const PLUMBING = new Set(["context_assembled", "run_started", "run_finished", "model_request"]);
 
-/** **writer 之后才跑的 agent**：状态维护后置（D143），目标判定在 run 末（D28/D148）。 */
+/** **writer 之后才跑的 agent**：状态维护后置（S7），目标判定在 run 末（R24/S92）。 */
 const AFTER_WRITER = new Set(["state_manager", "goal_manager"]);
 
 /**
  * 按**运行顺序**把一轮切成两半：正文之前发生的，和正文之后发生的。
  *
  * 切点**按位置定，不按 actor 定**——`writer` 最后那条记录之后就是下半。这一点
- * 在 goal 开场时才见分晓（D168）：那时 goal_manager 跑在 director **之前**，
+ * 在 goal 开场时才见分晓（S100）：那时 goal_manager 跑在 director **之前**，
  * 而它照 actor 认的话会被扔到正文下面去，时间线正好反了。位置不会说谎。
  *
  * 没有 writer 记录时退回按 actor 认——两种情形都走这条：从 state 阶段续跑的
@@ -53,8 +53,8 @@ export function splitAtProse<T extends { actor: string }>(items: T[]): [T[], T[]
  * 把它放到右边等于要求读者一边读正文一边扭头，而这两样东西本来就是一件事的
  * 两个阶段。
  *
- * **同理，正文之后跑的东西要摆在正文下面**（D167）：状态维护后置到 writer 之后
- * （D143），goal 判定更在 run 末（D28）——把它们塞进正文上方那一块，等于让
+ * **同理，正文之后跑的东西要摆在正文下面**（S125）：状态维护后置到 writer 之后
+ * （S7），goal 判定更在 run 末（R24）——把它们塞进正文上方那一块，等于让
  * 时间线在正文这里倒着走一段。所以 `Turn` 渲染两块，中间夹着正文。
  *
  * **正文一落地就自动收起**：过程是"这一轮为什么写成这样"的答案，只在你问的
@@ -69,7 +69,7 @@ export function Process({
 }: {
   events: TraceEvent[];
   running: boolean;
-  /** 流式攒出来的思考段，**按 agent 分段**（D160/D166）。
+  /** 流式攒出来的思考段，**按 agent 分段**（S118/S126）。
    *
    * 它是过程，不是产出，所以摆在这里；分段是因为一轮里最多四个 agent 说过话，
    * 拼成一坨就分不出哪句是谁的了。 */
@@ -135,7 +135,7 @@ export function Process({
 const FOLD_AT = 300;
 
 /**
- * 某个 agent 的一段思考。**长了就自己折起来**（同 D163 的理由）。
+ * 某个 agent 的一段思考。**长了就自己折起来**（同 S128 的理由）。
  *
  * 跑着的时候默认摊开——那时它就是进度条，你盯着它看到哪儿了；跑完之后默认
  * 折起，因为那时它只在"为什么写成这样"被问起时才需要，而 director 一轮的

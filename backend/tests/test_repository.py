@@ -54,7 +54,7 @@ def test_path_and_replay(repo) -> None:
 
 
 def test_branches_have_independent_state(repo) -> None:
-    """D48 的核心：切换分支必须同时切换状态。
+    """S42 的核心：切换分支必须同时切换状态。
 
     若状态是全局单例，切到分支 B 后仍会看到分支 A 的位置——文本对、状态悄悄错。
     """
@@ -70,7 +70,7 @@ def test_branches_have_independent_state(repo) -> None:
 
 
 def test_siblings_are_ordered_deterministically(repo) -> None:
-    """重生成产生兄弟节点，UI 按顺序做 < 2/3 > 切换（D46）。
+    """重生成产生兄弟节点，UI 按顺序做 < 2/3 > 切换（S44）。
 
     顺序必须**确定**——``all_nodes`` 来自 glob，文件系统顺序不能渗进来，
     否则切换器的顺序会在两次刷新之间跳动。这里三个节点在同一微秒内创建，
@@ -98,7 +98,7 @@ def test_empty_state_before_any_node(repo) -> None:
 
 
 def test_cycle_is_detected(repo) -> None:
-    """节点文件可被用户直接编辑（D65），不能假设数据永远自洽。"""
+    """节点文件可被用户直接编辑（R22），不能假设数据永远自洽。"""
     a = Node(id="run_a", parent_id="run_b")
     b = Node(id="run_b", parent_id="run_a")
     repo.save_node(a)
@@ -109,7 +109,7 @@ def test_cycle_is_detected(repo) -> None:
 
 
 def test_trace_is_append_only(repo) -> None:
-    """trace 全局 append-only，包含被放弃的尝试（D50）。"""
+    """trace 全局 append-only，包含被放弃的尝试（S47）。"""
     for seq in range(3):
         repo.append_trace(
             TraceEvent(
@@ -173,7 +173,7 @@ def test_config_yaml_covers_every_knob() -> None:
             LIMITS.sampling.state_value_max_chars,
             checks.STATE_VALUE_MAX_CHARS,
         ),
-        # 这两个的**真值在 YAML 的 context 条目上**（D174）；`config.yaml`
+        # 这两个的**真值在 YAML 的 context 条目上**（S80）；`config.yaml`
         # 那份只是那一条被删掉时的兜底。仓库里两处应当一致。
         "windows.upstream_runs": (LIMITS.windows.upstream_runs, upstream_runs()),
         "windows.state_recent_runs": (
@@ -184,13 +184,13 @@ def test_config_yaml_covers_every_knob() -> None:
     }
     assert {k for k, (a, b) in wired.items() if a != b} == set()
 
-    # goal 的两条预算**不在这份表里**，因为它们不再有默认值（D164）：留空就是
+    # goal 的两条预算**不在这份表里**，因为它们不再有默认值（S97）：留空就是
     # 不设上限，由设目标的人当场决定。配置里放一个数会替没填的人做决定。
     assert Goal(description="x").max_runs is None
     assert Goal(description="x").max_total_tokens is None
     assert not hasattr(LIMITS.goal_manager, "max_runs")
 
-    # `Capabilities` 整个没了（D174）：那些开关上调到了提示词层，窗口宽度成了
+    # `Capabilities` 整个没了（S80）：那些开关上调到了提示词层，窗口宽度成了
     # 对应那条 `context` 上的 `runs`。**这里的数只是那一条被删掉时的兜底。**
 
     # **文件里的值就是真值**，不是被模型里那份兜底默认悄悄顶掉的。
@@ -206,11 +206,11 @@ def test_a_missing_config_file_falls_back_instead_of_crashing(tmp_path: Path) ->
     assert load_limits(tmp_path / "没有这个文件.yaml") == Limits()
 
 
-# -- 旧数据搬家（D170） --------------------------------------------------------
+# -- 旧数据搬家（S63） --------------------------------------------------------
 
 
 def test_migration_lifts_the_worldbook_out_of_the_session(tmp_path: Path) -> None:
-    """worldbook 以前躺在 `sessions/<id>/worldinfo/` 里（D92 的一对一）。
+    """worldbook 以前躺在 `sessions/<id>/worldinfo/` 里（S68 的一对一）。
 
     **世界那几个属性也要抢救出来**：题材、尺度、用户扮演谁当时挂在
     `session.json` 的 `meta` 里，而 `SessionMeta` 上已经没有那些字段了——
@@ -254,8 +254,8 @@ def test_migration_lifts_the_worldbook_out_of_the_session(tmp_path: Path) -> Non
     book = store.worldbook(session.worldbook_id)
     assert book.load().name == "雨夜"
 
-    # **四个旧字段全被抬成条目**：语言习惯与「用户扮演谁」变成角色条目（D171），
-    # 题材与尺度变成 `WORLD` 条目（D175）。它们都已经从模型上删了，代码里没有
+    # **四个旧字段全被抬成条目**：语言习惯与「用户扮演谁」变成角色条目（S65），
+    # 题材与尺度变成 `WORLD` 条目（S64）。它们都已经从模型上删了，代码里没有
     # 第二条读法，所以数据必须在迁移时换形状——否则「陈屿怎么说话」静默消失，
     # 而症状是他忽然不那样说话，没人会想到去查迁移。
     lifted = {e.name: e for e in book.entries()}

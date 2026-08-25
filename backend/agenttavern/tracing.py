@@ -1,6 +1,6 @@
 """trace 记录。
 
-两条约束（D25 / D50）：trace 完整、机器可读、**不筛选**；UI 是它的投影。
+两条约束（S111 / S47）：trace 完整、机器可读、**不筛选**；UI 是它的投影。
 每条事件必须带**人类可读的语义标签**——UI 要能渲染成"确认了她现在在哪"，
 而不是 ``state_query(location)``。这部分事后补代价很高。
 """
@@ -37,11 +37,11 @@ class Tracer:
         """trace 落盘。
 
         trace 服务于 eval，不是产品功能。关闭时事件仍推给 UI——"呈现 agent
-        工作过程"依赖它——只是不写文件。这正是 D25 要求 trace 与 UI 呈现分两层
+        工作过程"依赖它——只是不写文件。这正是 S111 要求 trace 与 UI 呈现分两层
         的好处：两者可以独立开关。
         """
         self._developer = developer
-        """**开发者模式：额外记录每次模型往返的完整输入输出**（D156）。
+        """**开发者模式：额外记录每次模型往返的完整输入输出**（S113）。
 
         它是**服务级**的（启动时选，`Settings.developer`），不是 session 级——
         「这台服务是拿来查问题的还是拿来玩的」不该每个故事各答一遍。
@@ -111,7 +111,7 @@ class Tracer:
         if self._persist:
             self._repo.append_trace(event)
 
-        # UI 是 trace 的**投影**（D25）：这里只是把完整事件递出去，
+        # UI 是 trace 的**投影**（S111）：这里只是把完整事件递出去，
         # 筛选与渲染规则属 UI 层，不得反过来污染 trace schema。
         if self._on_event is not None:
             self._on_event(event)

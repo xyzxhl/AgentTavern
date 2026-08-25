@@ -1,4 +1,4 @@
-"""director 的对话跨轮持续（D114）、越界时的批量压缩、以及跨轮扁平化（D121）。"""
+"""director 的对话跨轮持续（S60）、越界时的批量压缩、以及跨轮扁平化（S61）。"""
 
 from agenttavern.agents.replay import (
     CONTEXT_BUDGET_CHARS,
@@ -51,7 +51,7 @@ def _run(
     return node
 
 
-# -- 跨轮扁平化（D121） ---------------------------------------------------------
+# -- 跨轮扁平化（S61） ---------------------------------------------------------
 
 
 def test_a_past_turn_carries_no_tool_calls_at_all() -> None:
@@ -172,7 +172,7 @@ def test_nothing_is_dropped_when_no_segment_has_been_summarised_yet() -> None:
     """越界了但还没有任何段落归好——只能先原样带着。
 
     **绝不能因为超预算就随意截断**：那会让上下文里出现无主的工具结果，
-    也会让模型不知道自己丢了什么（D62）。
+    也会让模型不知道自己丢了什么（P13）。
     """
     filler = CONTEXT_BUDGET_CHARS
     path = [_run("第1轮", filler=filler), _run("第2轮", filler=filler)]
@@ -187,7 +187,7 @@ def test_empty_path_replays_to_nothing() -> None:
     assert replay_messages([]) == []
 
 
-# -- 推理段的生命周期（D120） ---------------------------------------------------
+# -- 推理段的生命周期（S62） ---------------------------------------------------
 
 
 def test_reasoning_is_stripped_before_a_node_is_stored() -> None:
@@ -195,7 +195,7 @@ def test_reasoning_is_stripped_before_a_node_is_stored() -> None:
 
     实测一轮 director 的 `reasoning_content` 有一万五千字，而它产出的细纲只有
     两百字。原样存进 `director_messages`，持续对话跑两轮就撞预算——**压缩变成
-    每轮都发生，前缀反复失效，D114 的全部意义就没了**。
+    每轮都发生，前缀反复失效，S60 的全部意义就没了**。
     """
     kept = Message(role=Role.TOOL, content="结果", tool_call_id="c1")
     messages = [

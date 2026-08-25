@@ -1,6 +1,6 @@
 """trace：完整可回放的执行记录。
 
-两条约束（D8 / D25 / D50）：
+两条约束（S112 / S111 / S47）：
 
 1. **trace 与 UI 呈现分两层。** trace 完整、机器可读、不筛选；UI 是它的**投影**
    （选事件 + 渲染成人话）。筛选规则与渲染模板属 UI 层，**不得污染 trace schema**，
@@ -42,7 +42,7 @@ class TraceEventType(StrEnum):
     PROSE_PRODUCED = "prose_produced"
 
     # `CONTRACT_CHECK` **已删除**：它记的是 E0（`submit_outline` 之前必须写过一次
-    # `state_write`），而 director 卸下 `state_write` 之后那条契约自然作废（D143）。
+    # `state_write`），而 director 卸下 `state_write` 之后那条契约自然作废（S7）。
     # 留一个谁都发不出来的事件类型，等于让 schema 承诺一件代码不做的事。
     CROSS_CHECK = "cross_check"
 
@@ -51,10 +51,10 @@ class TraceEventType(StrEnum):
     GOAL_EVALUATED = "goal_evaluated"
 
     USER_EDIT = "user_edit"
-    """用户直接编辑 state / 细纲 / 正文（D65）。来源是用户，仍须入 trace。"""
+    """用户直接编辑 state / 细纲 / 正文（R22）。来源是用户，仍须入 trace。"""
 
     USER_INTERJECTED = "user_interjected"
-    """用户在 run 跑到一半时插了一句（F3b / D119）。
+    """用户在 run 跑到一半时插了一句（F3b / S50）。
 
     必须单独一类：它改变了这一轮的走向，而且发生在**某两次操作之间**——
     事后看细纲完全看不出来这一轮被拨过一次，只能靠 trace 定位。
@@ -66,12 +66,12 @@ class Actor(StrEnum):
     DIRECTOR = "director"
     WRITER = "writer"
     GOAL_MANAGER = "goal_manager"
-    """目标管理者（D141）。它拆阶段、核对进度、替用户写下一条输入、判目标去向。
+    """目标管理者（S92）。它拆阶段、核对进度、替用户写下一条输入、判目标去向。
     以前叫 `goal_judge`，那时它只做最后一件事——**判定只是它四件事里的一件**，
     名字得跟上。
     """
     STATE_MANAGER = "state_manager"
-    """状态维护者（D143）。**跑在 writer 之后**，读这一轮的细纲和成文更新 state。
+    """状态维护者（S7）。**跑在 writer 之后**，读这一轮的细纲和成文更新 state。
     以前这活在 director 手上（trace 里记的是 `DIRECTOR`），边推演边记。
     """
     USER = "user"
@@ -87,7 +87,7 @@ class TraceEvent(BaseModel):
     actor: Actor
 
     label: str
-    """**人类可读的语义标签**，供 UI 投影渲染（D25）。
+    """**人类可读的语义标签**，供 UI 投影渲染（S111）。
 
     例："确认了她现在在哪"，而不是 ``state_query(location)``。
     这是"呈现 agent 工作过程"这一体验的架构侧前提——把延迟从"卡顿"变成"沉浸"。
@@ -98,12 +98,12 @@ class TraceEvent(BaseModel):
 
     tokens_in: int | None = None
     tokens_out: int | None = None
-    """成本可见性：实时显示消耗，由用户手动打断，不做自动预算拦截（D19 决议）。"""
+    """成本可见性：实时显示消耗，由用户手动打断，不做自动预算拦截（S43 决议）。"""
 
     cache_hit: int | None = None
     """输入里命中前缀缓存的那部分（DeepSeek 的 `prompt_cache_hit_tokens`）。
 
-    **D114 的全部理由就是缓存命中，而它此前从没被记下来过。** 命中条件很硬：
+    **S60 的全部理由就是缓存命中，而它此前从没被记下来过。** 命中条件很硬：
     从第 0 个 token 起完全相同的前缀才算，中间对上不算，最小粒度 64 token。
     所以任何动到 system prompt 或早期消息的改动都会让整条前缀作废——
     "每收一段就换一段等于每隔几轮动一次前缀"现在可以被量出来，不必再靠推理。
@@ -111,7 +111,7 @@ class TraceEvent(BaseModel):
 
 
 class AttributionClass(StrEnum):
-    """归因五类（D59）。归因的可行性是 director/writer 拆分的副产品——
+    """归因五类（S12）。归因的可行性是 director/writer 拆分的副产品——
     中间量物化了才分得清"规划错了"和"执行错了"。
 
     这五类都能从 trace 直接判定，因为每一步的输入输出都物化了，

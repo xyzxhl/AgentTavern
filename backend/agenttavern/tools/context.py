@@ -13,7 +13,7 @@ from .inbox import Inbox
 AskUser = Callable[[str, list[str]], Awaitable[str]]
 """向用户提问并等待选择。
 
-**只考虑逻辑时间，不设超时**（D66）——等待期间逻辑上什么都没发生，
+**只考虑逻辑时间，不设超时**（S24）——等待期间逻辑上什么都没发生，
 director 的上下文不会过期，从中断点续跑即可（suspend/resume，非 timeout/retry）。
 在实现上它就是 ``await`` 一个由 WS 层解决的 future，因此 loop 不需要任何
 特殊的挂起状态机。
@@ -22,7 +22,7 @@ director 的上下文不会过期，从中断点续跑即可（suspend/resume，
 
 RunDelta = Callable[[str, str, str], None]
 """``(actor, kind, text)``。比 `OnDelta` 多一个来源——**分片本身不带来源**，
-而前端要靠它决定这段字往正文区还是过程区放（D160）。"""
+而前端要靠它决定这段字往正文区还是过程区放（S118）。"""
 
 
 @dataclass
@@ -32,23 +32,23 @@ class RunContext:
     session: Session
     gateway: LLMGateway
 
-    # `world` **已删除**（D175）：worldbook 上没有字段了，题材与尺度都是 `WORLD`
+    # `world` **已删除**（S64）：worldbook 上没有字段了，题材与尺度都是 `WORLD`
     # 条目，跟着 `repo.worldbook()` 一起来，不需要单独一份。
 
     parent_id: str | None = None
-    """本 run 挂在哪个节点下。历史与状态沿这条路径读取（D48）。"""
+    """本 run 挂在哪个节点下。历史与状态沿这条路径读取（S42）。"""
 
     ask_user: AskUser | None = None
 
     on_delta: RunDelta | None = None
-    """流式分片的出口（D160）。``None`` = 这一轮不流式。
+    """流式分片的出口（S118）。``None`` = 这一轮不流式。
 
     **它按 agent 换一层包装**（见 `stream_to`）：分片本身不带来源，而前端要靠
     来源决定这段字往正文区还是过程区放。
     """
 
     inbox: Inbox | None = None
-    """跑到一半插进来的用户输入（F3b / D119）。``None`` 表示这一 run 不接受插话。
+    """跑到一半插进来的用户输入（F3b / S50）。``None`` 表示这一 run 不接受插话。
 
     **每个 run 一个**，由编排层建立——它的生命周期就是这一 run 的生命周期。
     """
@@ -59,7 +59,7 @@ class RunContext:
         **返回 `None` 时调用方走非流式那条路**——上层不必写两份逻辑，把它原样
         传给 `complete(on_delta=...)` 即可。
 
-        「要不要流式」这个开关**上调到了服务级**（`Settings.stream`，D174）：
+        「要不要流式」这个开关**上调到了服务级**（`Settings.stream`，S80）：
         它是这组开关里唯一一条**关于交付而不是关于能力**的——开关它不改变模型
         收到什么、也不改变产出，只改变用户什么时候看到。所以编排层在建 context
         时就据它决定给不给 `on_delta`，这里不再判一次。
@@ -70,18 +70,18 @@ class RunContext:
         return lambda kind, text: sink(actor.value, kind, text)
 
     staged_delta: StateDelta = field(default_factory=StateDelta)
-    """``state_write`` 写入这里，run 完整结束时才落盘（D56）。
+    """``state_write`` 写入这里，run 完整结束时才落盘（S20）。
 
-    **填它的人是 state_manager，不再是 director**（D143）——状态维护后置到
+    **填它的人是 state_manager，不再是 director**（S7）——状态维护后置到
     writer 之后，读着细纲和正文去记，而不是边推演边记。它仍然只暂存不落盘：
-    节点是原子的，细纲、正文、增量必须同时抵达（D48/D56）。
+    节点是原子的，细纲、正文、增量必须同时抵达（S42/S20）。
     """
 
     state_write_count: int = 0
     """``state_write`` 调用了几次。**只用于 trace 与统计，不再是契约。**
 
     它原先撑着 E0：`submit_outline` 前必须至少写一次，为的是区分"确实没变化"
-    与"模型忘了记"。那条契约随 D143 作废——director 不写状态了，而 state_manager
+    与"模型忘了记"。那条契约随 S7 作废——director 不写状态了，而 state_manager
     唯一的任务就是记状态，它空手回来就是"没变化"，为消这个歧义再花一轮往返不值。
     """
 

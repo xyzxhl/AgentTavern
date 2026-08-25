@@ -1,11 +1,11 @@
-"""给 bench 换一份提示词跑（D174）。
+"""给 bench 换一份提示词跑（S80）。
 
 取值上调到 YAML 之后，`Variant` 原先那套「往 session 上写 `capabilities` /
 `control`」失去了全部着力点——那两个类都没了。而 P19 要求同一批素材跑多档
 （五个场景各有各的文风），回归集不能就这么散掉。
 
 **补法是换一份 YAML，不是开一个 `overrides` 后门。** 一个"只有程序能用"的第二
-取值入口迟早会有第二个调用者，而那正是 D173 要消掉的东西。这里做的是：把
+取值入口迟早会有第二个调用者，而那正是 R31 要消掉的东西。这里做的是：把
 `prompting/` 整个复制到一个临时目录、在**副本**上改那几档、让装配器读副本。
 取值仍然只住在 YAML 里。
 """
@@ -47,8 +47,8 @@ class PromptSetup:
     tool_choices: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
     """``{agent: {工具名: 描述选哪一档}}``。
 
-    **工具描述本身也可以是一个 `choice`**（D173）：`ask_question` 就是，控制权
-    三档讲的正是「这个工具该多积极地调用」（D140②）。所以消融要够得着它。
+    **工具描述本身也可以是一个 `choice`**（R31）：`ask_question` 就是，控制权
+    三档讲的正是「这个工具该多积极地调用」（S10②）。所以消融要够得着它。
     """
 
     def empty(self) -> bool:

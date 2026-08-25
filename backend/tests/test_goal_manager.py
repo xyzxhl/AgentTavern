@@ -1,4 +1,4 @@
-"""goal_manager：一份跨 run 的长对话 + 三个工具（D148）。
+"""goal_manager：一份跨 run 的长对话 + 三个工具（S92）。
 
 这里守的是三件事：
 
@@ -30,7 +30,7 @@ from agenttavern.tracing import Tracer
 
 GOAL = Goal(description="写到他们摊牌为止")
 PLAYER = "林昭"
-"""用户扮演谁。**收的是解析好的名字**（D170）：那条「标了 is_player 的条目
+"""用户扮演谁。**收的是解析好的名字**（S63）：那条「标了 is_player 的条目
 优先」的规则只有 `player_character` 一处实现，goal_manager 不再自己判一遍。"""
 
 
@@ -52,7 +52,7 @@ def _joined(run: GoalRun) -> str:
 
 
 def test_the_prefix_is_built_once_and_each_turn_only_appends() -> None:
-    """**每轮只追加一条**——这才是维持对话真正买到的东西（D148）。
+    """**每轮只追加一条**——这才是维持对话真正买到的东西（S92）。
 
     以前每次调用都重发全量剧情梗概：梗概越来越长、前缀每轮失效，缓存完全用不上。
     """
@@ -71,7 +71,7 @@ def test_the_prefix_is_built_once_and_each_turn_only_appends() -> None:
 
 
 def test_each_turn_says_who_gave_the_input() -> None:
-    """**来源标注是这条消息里最要紧的东西**（D148）。
+    """**来源标注是这条消息里最要紧的东西**（S92）。
 
     剧情偏了，是 goal_manager 自己推错了，还是用户主动把剧情带走了？后者强得多——
     用户的意图优先于目标。不标注的话两种偏离在梗概里长得一模一样，
@@ -88,7 +88,7 @@ def test_each_turn_says_who_gave_the_input() -> None:
 
 
 def test_a_turn_without_prose_says_so_instead_of_falling_back() -> None:
-    """**正文没写成时不要回退到细纲**（D151）。
+    """**正文没写成时不要回退到细纲**（S94）。
 
     回退看起来只是"降级用一份更粗的记录"，实际上把一个失败悄悄补齐了：那一轮
     什么都没写出来，而 goal_manager 读到一段像模像样的剧情，会照着它判某个中间
@@ -102,7 +102,7 @@ def test_a_turn_without_prose_says_so_instead_of_falling_back() -> None:
 
 
 def test_switching_branches_rebuilds_instead_of_extending() -> None:
-    """暂停期间用户切了分支 → **以最终选择的分支为准**（D148）。
+    """暂停期间用户切了分支 → **以最终选择的分支为准**（S92）。
 
     增量追加撤不回来：被放弃那一支的轮次会留在对话里。所以上次看到的那个节点
     不在当前路径上时，整份重建。
@@ -123,7 +123,7 @@ def test_switching_branches_rebuilds_instead_of_extending() -> None:
 
 
 def test_before_the_goal_gets_outlines_and_during_gets_prose() -> None:
-    """**路径切成两段**（D150）。
+    """**路径切成两段**（S93）。
 
     goal 设立**之前**那段进静态前缀、给细纲——它只回答"故事到这儿了"，细纲够用
     而且便宜，还全量给一次就够。goal **期间**每轮逐条追加、给正文——要判的是
@@ -160,7 +160,7 @@ async def _call(ctx: GoalContext, name: str, **args):
 
 
 async def test_replanning_resets_progress() -> None:
-    """**中间状态是脚手架，不是执行契约**（D148）。
+    """**中间状态是脚手架，不是执行契约**（S92）。
 
     剧情变了就地重给一版，不限次数、不算失败。但重给会清空进度——新的一版一律
     从未成立算起，否则「已成立」会跨着两版混在一起。
@@ -179,10 +179,10 @@ async def test_replanning_resets_progress() -> None:
 
 
 async def test_finish_does_not_check_the_subgoals() -> None:
-    """`finish` **不检查中间状态是否全部成立**（D151）。
+    """`finish` **不检查中间状态是否全部成立**（S94）。
 
-    D148 曾在这里加过一条硬前提，想靠它挡住自我确认倾向。但中间状态无序、可跳过、
-    可能已经不必要（D150）——于是在「目标确实达成、只是某条中间状态已经作废」
+    S92 曾在这里加过一条硬前提，想靠它挡住自我确认倾向。但中间状态无序、可跳过、
+    可能已经不必要（S93）——于是在「目标确实达成、只是某条中间状态已经作废」
     这个常见情形下，那条前提只是多逼出两次工具调用（先 `plan` 重给一版、再
     `check` 标全），然后原样通过。**挡不住真问题，只收了个过路费。**
 
@@ -207,7 +207,7 @@ async def test_finish_failed_needs_no_such_precondition() -> None:
 
 
 async def test_progress_is_reported_as_what_is_left_not_as_a_next_one() -> None:
-    """**中间状态之间没有先后依赖**（D150）：可以跳过、乱序、同时成立。
+    """**中间状态之间没有先后依赖**（S93）：可以跳过、乱序、同时成立。
 
     所以回执列的是「还剩哪些」，不是「下一个是哪个」——挑出一个说"当前这个"
     等于凭空造了个顺序，而模型会照着那个顺序推。
@@ -308,7 +308,7 @@ async def test_finishing_comes_back_as_an_outcome(tmp_path: Path) -> None:
 
 
 def test_a_spent_budget_is_a_pause_not_a_failure() -> None:
-    """**预算耗尽不是终态**（D148）：用户可以把上限调大接着跑。
+    """**预算耗尽不是终态**（S92）：用户可以把上限调大接着跑。
 
     所以它不是 `GoalOutcome` 的一种——那里只有 `done` 和 `failed`，
     两个都意味着这个目标结束了。
@@ -358,7 +358,7 @@ def test_the_conversation_survives_a_round_trip_through_disk(tmp_path: Path) -> 
 
 
 def test_it_is_told_who_the_user_plays() -> None:
-    """**它替用户写输入，得知道用户扮演谁**（D152）。
+    """**它替用户写输入，得知道用户扮演谁**（S27）。
 
     实跑 `noir_goal` 时它写出了「我从外套内袋里摸出那张照片」——第一人称写对了，
     但那是**从种子输入的措辞里猜的**。种子恰好是第一人称就蒙对，换成第三人称、

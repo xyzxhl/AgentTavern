@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useSession } from "../store";
 
 /**
- * 长任务（goal，D28 / D148 / D161）。**它跑起来之后会自己开下一轮**，所以
+ * 长任务（goal，R24 / S92 / S129）。**它跑起来之后会自己开下一轮**，所以
  * 界面上必须一直看得见「推到哪儿了」和「怎么叫停」。
  *
  * 摆在侧栏而不是弹窗：goal 跑的时候用户是在**看**，不是在操作——弹窗要么挡着
@@ -23,7 +23,7 @@ export function GoalPanel(): JSX.Element {
   const subgoals = progress?.subgoals ?? run?.plan?.subgoals ?? [];
   const spentRuns = progress?.spent_runs ?? run?.spent_runs ?? 0;
   const spentTokens = progress?.spent_tokens ?? run?.spent_tokens ?? 0;
-  // **`null` 是"不设上限"，不是 0**（D164）。`??` 在这里会把它悄悄换成
+  // **`null` 是"不设上限"，不是 0**（S97）。`??` 在这里会把它悄悄换成
   // 另一条的值，所以按"有没有推过进度"来选，不按值是否为空。
   const maxRuns = (progress ? progress.max_runs : goal.max_runs) ?? null;
   const maxTokens = (progress ? progress.max_total_tokens : goal.max_total_tokens) ?? null;
@@ -65,7 +65,7 @@ export function GoalPanel(): JSX.Element {
             ))}
           </ol>
         )}
-        {/* **它们没有先后**（D150）：可以被跳过、以不同顺序实现、同时实现，
+        {/* **它们没有先后**（S93）：可以被跳过、以不同顺序实现、同时实现，
             也可能因剧情变化而不再必要。序号只用来指代。 */}
         <p className="mt-2 text-[10px] leading-snug text-dim/70">
           中间状态是脚手架，不是清单——它们没有先后，也可能因剧情变化而不再必要。
@@ -96,7 +96,7 @@ export function GoalPanel(): JSX.Element {
   );
 }
 
-/** 一条预算。**`cap` 为 `null` 就是没设上限**（D164）：只报已经花了多少，
+/** 一条预算。**`cap` 为 `null` 就是没设上限**（S97）：只报已经花了多少，
  * 不画进度条——没有分母的进度条只会误导。 */
 function Meter({
   label,
@@ -129,7 +129,7 @@ function Meter({
   );
 }
 
-/** **预算耗尽是暂停，不是失败**（D148）——调大上限就能接着跑。
+/** **预算耗尽是暂停，不是失败**（S92）——调大上限就能接着跑。
  *
  * 没设上限时它整个不出现：没有可加的东西，多一个按不动的按钮只是噪音。 */
 function AddBudget({
@@ -172,7 +172,7 @@ function NewGoal(): JSX.Element {
   const [text, setText] = useState("");
   const [runs, setRuns] = useState("");
 
-  // **留空 = 不设上限**（D164）。`Number("") === 0` 会被服务端当场拒掉，
+  // **留空 = 不设上限**（S97）。`Number("") === 0` 会被服务端当场拒掉，
   // 所以空串必须显式变成 `null`，不能靠 `Number(runs) || null` 蒙混过去——
   // 那个写法把 "0" 和 "" 混成同一件事，而它们的意思正好相反。
   const cap = runs.trim() ? Number(runs) : null;
@@ -216,7 +216,7 @@ function NewGoal(): JSX.Element {
         </button>
       </div>
       <p className="mt-2 text-[10px] leading-snug text-dim/70">
-        {/* **留空是在表态，不是没填**（D164）：不设上限就一直推到达成、失败，
+        {/* **留空是在表态，不是没填**（S97）：不设上限就一直推到达成、失败，
             或者你自己按停。想止损就填个数。 */}
         <b className="font-medium text-fg">留空就是不设上限</b>
         ，一直推到达成、失败或你按暂停。填了数就是止损——模型可能永远判不达标，

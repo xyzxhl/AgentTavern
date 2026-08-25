@@ -37,7 +37,7 @@ def export_schema() -> dict[str, Any]:
 
     `Session`、`Worldbook` 与 `WorldbookEntry` 走的是 REST 不是 WS，但它们同样是
     前后端契约的一部分——会话列表、元指令编辑、能力开关、设定管理都读它们。
-    **`Worldbook` 是一级资产**（D170），有自己的管理界面，所以它的类型也要生成。
+    **`Worldbook` 是一级资产**（S63），有自己的管理界面，所以它的类型也要生成。
     """
     client = TypeAdapter(ClientMessage).json_schema(ref_template="#/$defs/{model}")
     server = TypeAdapter(ServerMessage).json_schema(ref_template="#/$defs/{model}")

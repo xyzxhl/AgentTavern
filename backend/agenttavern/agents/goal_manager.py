@@ -1,14 +1,14 @@
-"""goal_manager：目标管理者（D28 / D141 / D148）。
+"""goal_manager：目标管理者（R24 / S92 / S92）。
 
 **它是第三个 agent，不是 director 顺手做的一步。** 叫「管理者」而不是「判定者」，
 因为判定只是它几件事里的一件——它还拆阶段、核对进度、替用户写下一条输入。
 
-上下文只有目标、推进节奏、以及逐轮的剧情梗概。**它不读正文**（同 D54 的理由），
+上下文只有目标、推进节奏、以及逐轮的剧情梗概。**它不读正文**（同 S5 的理由），
 也不读世界设定和状态——它管的是"推到哪儿了"，不是"这一轮怎么写"。
 
 ## 一份跨 run 的长对话，不是三次干净调用
 
-D141 那一版把三件事拆成三个 `task` 档、三次独立调用，每次重发全量剧情梗概。
+早先那一版把三件事拆成三个 `task` 档、三次独立调用，每次重发全量剧情梗概。
 两个毛病：
 
 - **梗概越来越长，前缀每轮失效**，缓存完全用不上。现在静态前缀跨整个 goal
@@ -73,10 +73,10 @@ class GoalStep:
 
 
 def render_before(nodes: list[Node]) -> str:
-    """goal 设立**之前**那段剧情，给**细纲**（D150）。
+    """goal 设立**之前**那段剧情，给**细纲**（S93）。
 
     摘要策略和 director 一样（`summary_or_head`）：归过段的用那段摘要，
-    没归段的用头部截断并写明还剩多少字（D144）。理由也一样——这段只回答
+    没归段的用头部截断并写明还剩多少字（S26）。理由也一样——这段只回答
     "故事到这儿了"，细纲够用而且便宜；它还在静态前缀里，全量给一次就够。
     """
     if not nodes:
@@ -89,12 +89,12 @@ def _prefix(user_character: str, goal: Goal, before: list[Node]) -> list[Message
 
     **整个 goal 生命周期不变**——"之前"那段不会再长，goal 期间的轮次逐条追加在后面。
 
-    **`user_character` 必须给**（D152）：它替用户写输入，不知道用户扮演谁就只能
+    **`user_character` 必须给**（S27）：它替用户写输入，不知道用户扮演谁就只能
     从种子输入的措辞里猜人称。猜对是运气——种子恰好是第一人称时它跟着写"我"，
     而那一句本可以是第三人称、也可能根本没有种子（goal 从会话一开始就在）。
     没设这个字段时整节不出现，它退回去猜，和以前一样。
 
-    收的是**已经解析好的名字**而不是整份 `WorldMeta`（D170）：标了 `is_player`
+    收的是**已经解析好的名字**而不是整份 `WorldMeta`（S63）：标了 `is_player`
     的条目优先于那个遗留字段，而那条规则只有一处实现（`player_character`），
     在这里再判一次迟早会和它分叉。
     """
@@ -112,18 +112,18 @@ _SOURCE_KEY = {
     InputSource.USER: "turn_user",
     InputSource.SIMULATED: "turn_simulated",
 }
-"""这一句的措辞在 `goal_manager.yaml` 的 `rendering` 里（D173）——它是模型每轮
+"""这一句的措辞在 `goal_manager.yaml` 的 `rendering` 里（R31）——它是模型每轮
 都会读到的字。这里只把来源映射到那一条的名字。"""
 
 
 def turn_record(node: Node, index: int, interjections: list[str]) -> Message:
     """goal 期间某一轮的记录：**输入是谁给的** + **那一轮的正文**。
 
-    给正文而不是细纲（D150）：goal 期间要判的是"这一步到底有没有发生"，而**细纲
+    给正文而不是细纲（S93）：goal 期间要判的是"这一步到底有没有发生"，而**细纲
     只说定了什么，正文才是最终写出来的东西**——留白处落成了什么、话说到什么份上，
     只有正文看得见。goal 设立之前那段仍然给细纲，它在静态前缀里（`render_before`）。
 
-    来源标注是这条消息里最要紧的东西（D148）：剧情偏了，是 goal_manager 自己
+    来源标注是这条消息里最要紧的东西（S92）：剧情偏了，是 goal_manager 自己
     推错了，还是用户主动把剧情带走了？后者强得多——用户的意图优先于目标。
     不标注的话两种偏离长得一模一样，而应对完全不同。
     """
@@ -135,7 +135,7 @@ def turn_record(node: Node, index: int, interjections: list[str]) -> Message:
         parts.append(rendering("goal_manager", "turn_silent"))
     for word in interjections:
         parts.append(rendering("goal_manager", "turn_interjection", text=word))
-    # **正文没写成时不要回退到细纲**（D151）。回退看起来只是"降级用一份更粗的
+    # **正文没写成时不要回退到细纲**（S94）。回退看起来只是"降级用一份更粗的
     # 记录"，实际上把一个失败悄悄补齐了：那一轮什么都没写出来，而 goal_manager
     # 读到一段像模像样的剧情，会照着它判某个中间状态已经成立。
     # 说出来，让它当成一次没有产出的轮次处理。
@@ -166,19 +166,19 @@ def sync_conversation(
 
     续得上的条件是：已有对话，且上次看到的那个节点**还在当前路径上**——或者
     恰好是**切点**那个（见下）。不满足就重建——那正是暂停期间用户切了分支的
-    情形，而「以最终选择的分支为准」只有重建做得到：增量追加撤不回来（D148）。
+    情形，而「以最终选择的分支为准」只有重建做得到：增量追加撤不回来（S92）。
 
     重建丢掉的是 goal_manager 自己那些工具调用的历史，但计划与进度以投影的形式
     完整留着（`plan_snapshot`），**代价只在恢复那一刻付一次**——之后又是增量，
     静态前缀重新稳定下来。
     """
-    # **路径切成两段**（D150）：goal 之前给细纲（进静态前缀），之后给正文（逐条追加）。
+    # **路径切成两段**（S93）：goal 之前给细纲（进静态前缀），之后给正文（逐条追加）。
     ids = [n.id for n in path]
     cut = ids.index(run.started_at_leaf_id) + 1 if run.started_at_leaf_id in ids else 0
     before, during = path[:cut], path[cut:]
 
     during_ids = [n.id for n in during]
-    # **停在切点上也算续得上**（D168）。开场那一次跑在任何 goal 期间的轮次之前，
+    # **停在切点上也算续得上**（S100）。开场那一次跑在任何 goal 期间的轮次之前，
     # 那时 `during` 是空的，`seen_leaf_id` 落在 goal 之前的最后一个节点上——照
     # 「还在 during 里」判的话，goal 期间的第一轮就会触发一次整份重建，而那时
     # 对话完全是连续的。重建只是白白丢掉它开场时自己写计划的那段过程。
@@ -220,7 +220,7 @@ async def advance_goal(
     这里只负责：把对话发出去、执行工具、把新增的消息追加回 `run.conversation`。
     进度与终态由工具写进 `GoalContext`。
 
-    ``on_delta`` 是流式出口（D160/D166）。**它和 director、writer 一样是个
+    ``on_delta`` 是流式出口（S118/S126）。**它和 director、writer 一样是个
     agent**，凭什么它的思考就该藏起来——而它恰恰是最需要看的那个：目标迟迟不
     达标时，唯一能回答"它到底在等什么"的就是这段。``None`` 走非流式。
     """

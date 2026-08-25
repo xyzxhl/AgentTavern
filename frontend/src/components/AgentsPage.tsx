@@ -5,7 +5,7 @@ import { useSession } from "../store";
 import { Pick, YesNo } from "./Pick";
 
 /**
- * agent 管理：**所有被输入模型的内容，用户都能审查和修改**（D173）。
+ * agent 管理：**所有被输入模型的内容，用户都能审查和修改**（R31）。
  *
  * 这条判据比"提示词可编辑"强得多，它同时管**工具描述**、**运行时另外追加的
  * 整条消息**、以及嵌在渲染里的那些短句。所以这一页分三块，每块对应 YAML 里
@@ -161,7 +161,7 @@ const KIND: Record<Section["type"], string> = {
   choice: "choice",
 };
 
-/** 上下文：三类条目，**统一可上下拖动排序**（D173）。 */
+/** 上下文：三类条目，**统一可上下拖动排序**（R31）。 */
 function Sections({
   items,
   onChange,
@@ -251,7 +251,7 @@ function Sections({
         </article>
       ))}
 
-      {/* **加一节只写 YAML**（D135 那句话的兑现）——现在连 YAML 都不用开。 */}
+      {/* **加一节只写 YAML**（S75 那句话的兑现）——现在连 YAML 都不用开。 */}
       <button className="btn mt-2" onClick={add}>
         + 加一条 text
       </button>
@@ -265,7 +265,7 @@ function preview(item: Section): string {
   return (item.body ?? "").replace(/\s+/g, " ").slice(0, 60);
 }
 
-/** `choice`：**每一档的正文 + 当前选哪一档**（D173）。 */
+/** `choice`：**每一档的正文 + 当前选哪一档**（R31）。 */
 function Choice({
   item,
   onChange,
@@ -297,7 +297,7 @@ function Choice({
   );
 }
 
-/** 工具：描述可编，**参数由 Python 生成、只读**（D173 落地 D140 那条担忧）。 */
+/** 工具：描述可编，**参数由 Python 生成、只读**（R31 落地 S10 那条担忧）。 */
 function Tools({
   doc,
   onChange,

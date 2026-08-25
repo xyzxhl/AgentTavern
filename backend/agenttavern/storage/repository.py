@@ -7,9 +7,9 @@
       nodes/<node_id>.json      一个 run 一个节点
       trace/<run_id>.jsonl      append-only，每 run 一个文件
 
-**设定不在这里**——它是一级资产，见 `worldbooks.py`（D170）。
+**设定不在这里**——它是一级资产，见 `worldbooks.py`（S63）。
 
-写入是**单线程**的（D6），因此不需要锁。规模上限是几百个 run × 每个几 KB，
+写入是**单线程**的（P5），因此不需要锁。规模上限是几百个 run × 每个几 KB，
 全量读取毫秒级；真到瓶颈再加索引缓存，模型不变。
 """
 
@@ -65,7 +65,7 @@ class SessionRepository:
     def save_session(self, session: Session) -> None:
         write_model(self.session_path, session)
 
-    # -- 被打断的推演（D118） -------------------------------------------------
+    # -- 被打断的推演（S48） -------------------------------------------------
 
     @property
     def draft_path(self) -> Path:
@@ -73,7 +73,7 @@ class SessionRepository:
 
     def load_draft(self) -> RunDraft | None:
         """**没有草稿 = 文件不存在。** 不能用某个字段的空值表示，因为
-        `parent_id=None` 本身是合法的（根节点）——同 D103 那个坑。
+        `parent_id=None` 本身是合法的（根节点），所以它表达不了「没有指定」。
         """
         return read_model_or_none(self.draft_path, RunDraft)
 
@@ -98,7 +98,7 @@ class SessionRepository:
         return {n.id: n for n in nodes}
 
     def children_of(self, node_id: str | None) -> list[Node]:
-        """某节点的子节点，按创建时间排序。用于 UI 的 ``< 2/3 >`` 兄弟切换（D46）。
+        """某节点的子节点，按创建时间排序。用于 UI 的 ``< 2/3 >`` 兄弟切换（S44）。
 
         以 id 作为次级排序键：``all_nodes`` 来自 ``glob``，顺序由文件系统决定，
         时间戳相同（同一微秒内创建）时会渗进来，导致切换器的顺序在两次刷新之间
@@ -112,7 +112,7 @@ class SessionRepository:
     def path_to(self, leaf_id: str) -> list[Node]:
         """根 → leaf 的一条链。
 
-        沿 parent 指针上溯再反转。带环检测——文件可被用户直接编辑（D65），
+        沿 parent 指针上溯再反转。带环检测——文件可被用户直接编辑（R22），
         不能假设数据永远自洽。
         """
         nodes = self.all_nodes()
@@ -140,7 +140,7 @@ class SessionRepository:
     def initial_state(self) -> WorldState:
         """一切分支共同的起点。
 
-        **故事一开始就冻结**（D158）。开始之前它是现算的——那时改设定当然该
+        **故事一开始就冻结**（S67）。开始之前它是现算的——那时改设定当然该
         立刻生效，故事还没有过去。第一轮落地时快照进 `Session.initial_state`，
         之后再改条目就只影响"以后新建的会话"，不再回头改写既有的每一轮。
 
@@ -164,7 +164,7 @@ class SessionRepository:
     def state_at(self, leaf_id: str | None) -> WorldState:
         """沿路径重放增量，得到该点的状态。
 
-        **状态是路径的函数，不是全局单例**（D48）。切换分支必须同时切换状态，
+        **状态是路径的函数，不是全局单例**（S42）。切换分支必须同时切换状态，
         否则会出现"文本对、状态悄悄错"——那类 bug 要很多 run 后才以角色行为
         不合理的形式暴露，届时根本查不出源头。
 
@@ -183,18 +183,18 @@ class SessionRepository:
     # -- worldinfo ----------------------------------------------------------
 
     def book(self) -> WorldbookRepository:
-        """这个 session 挂在哪份设定上（D170）。
+        """这个 session 挂在哪份设定上（S63）。
 
         **每次重新读 session**：`worldbook_id` 本身不会变，但元操作与生成是并行的
-        （D24），缓存一份反而多一个可能对不上的东西，而这一步只是拼个路径。
+        （P10），缓存一份反而多一个可能对不上的东西，而这一步只是拼个路径。
         """
         return WorldbookRepository(self.root, self.load_session().worldbook_id)
 
     def worldbook(self) -> list[WorldbookEntry]:
-        """这个 session 看得见的全部设定条目。**不做预筛选**（D62/D63）。"""
+        """这个 session 看得见的全部设定条目。**不做预筛选**（P13/S53）。"""
         return self.book().entries()
 
-    # `world_meta()` **已删除**（D175）：worldbook 上没有字段了，题材与尺度都是
+    # `world_meta()` **已删除**（S64）：worldbook 上没有字段了，题材与尺度都是
     # `WORLD` 条目，跟着 `worldbook()` 一起来。
 
     # -- trace --------------------------------------------------------------
@@ -207,7 +207,7 @@ class SessionRepository:
 
 
 class Store:
-    """数据根目录。**两类一级资产：worldbook 与 session**（D170）。"""
+    """数据根目录。**两类一级资产：worldbook 与 session**（S63）。"""
 
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -218,7 +218,7 @@ class Store:
         return SessionRepository(self.root, session_id)
 
     def create_session(self, session: Session) -> SessionRepository:
-        """**没指定设定就现建一份空的**（D170）。
+        """**没指定设定就现建一份空的**（S63）。
 
         允许「先开故事、边写边补设定」——要求先建 worldbook 才能开会话，等于
         在最没有想法的那一刻逼人做决定。
@@ -268,7 +268,7 @@ class Store:
         """删掉一份设定。**返回挡住它的那几局故事**——空列表表示删掉了。
 
         判断和执行放在一起，不让调用方先查一遍再删：那就是两处判断，而两处判断
-        迟早对不上（同 D171）。调用方拿返回值渲染理由，不必自己再扫一遍。
+        迟早对不上（同 S65）。调用方拿返回值渲染理由，不必自己再扫一遍。
         """
         repo = self.worldbook(worldbook_id)
         users = self.sessions_of(worldbook_id)
@@ -289,7 +289,7 @@ class Store:
         return self._migrate_worldbooks()
 
     def migrate_kinds(self) -> int:
-        """条目的 `kind` 换过两次名，把旧值改成现在的（D159/D171/D175）。返回改了几条。
+        """条目的 `kind` 换过两次名，把旧值改成现在的（S65/S65/S64）。返回改了几条。
 
         | 旧值 | 现在 |
         |---|---|
@@ -297,10 +297,10 @@ class Store:
         | `player` | `character` + `is_player: true` |
 
         `player` 那条尤其要紧：**用户扮演的角色不是第四种 kind**，它是一条角色
-        条目加一个标记（D159）——那次改形状时**漏了迁移**，于是盘上留着一批
+        条目加一个标记（S65）——那次改形状时**漏了迁移**，于是盘上留着一批
         读不出来的条目。
 
-        **读原始 JSON，不经模型**（同 D170 的理由，只是这次更硬）：这些值现在
+        **读原始 JSON，不经模型**（同 S63 的理由，只是这次更硬）：这些值现在
         根本不在 `EntryKind` 里，照模型读会直接抛 `ValidationError`——而那正是
         这个函数要修的东西，用它自己去读要修的数据是个死结。
         """
@@ -322,7 +322,7 @@ class Store:
         return renamed
 
     def _migrate_worldbooks(self) -> int:
-        """把 worldbook 从 session 目录里搬出来（D170）。返回搬了几个 session。
+        """把 worldbook 从 session 目录里搬出来（S63）。返回搬了几个 session。
 
         **启动时跑一次，之后是空操作。** 旧布局是 `sessions/<id>/worldinfo/`，
         而世界那几个属性（题材、尺度、用户扮演谁）当时挂在 `session.json` 的
@@ -363,7 +363,7 @@ class Store:
 
 
 def _lift_voices(book: WorldbookRepository, meta: dict[str, Any]) -> None:
-    """把旧的 `character_voices` / `user_character` 转成角色条目（D170/D171）。
+    """把旧的 `character_voices` / `user_character` 转成角色条目（S63/S65）。
 
     **这是迁移，不是兼容。** 那两个字段已经从 `WorldMeta` 上删掉了，代码里
     没有第二条读法——所以数据必须在这里被抬到新形状上，否则「柜台执事怎么说话」
@@ -396,7 +396,7 @@ _WORLD_TEXT = {"genre_tone": "题材与基调", "content_scale": "剧情尺度"}
 
 
 def _lift_world_text(book: WorldbookRepository, meta: dict[str, Any]) -> None:
-    """把旧的 `genre_tone` / `content_scale` 转成 `WORLD` 条目（D175）。
+    """把旧的 `genre_tone` / `content_scale` 转成 `WORLD` 条目（S64）。
 
     **这是迁移，不是兼容。** 那两个字段已经从 `Worldbook` 上删掉了——它们本来
     就和「旧货店在老城区一条窄巷尽头」是同一种东西：一段关于这个世界的字。

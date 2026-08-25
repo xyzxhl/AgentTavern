@@ -36,7 +36,7 @@ interface WireResponse {
 }
 
 /**
- * 开发者面板：**按 agent 展开每一次模型往返的完整输入输出**（D156 / D162）。
+ * 开发者面板：**按 agent 展开每一次模型往返的完整输入输出**（S113 / S115）。
  *
  * 别处的 trace 都是投影——`context_assembled` 只有条数和字数，`model_response`
  * 只有工具名。投影够回答「它做了什么」，回答不了「它为什么这么做」，而调 prompt
@@ -54,7 +54,7 @@ export function DeveloperPanel({ onClose }: { onClose: () => void }): JSX.Elemen
   const [picked, setPicked] = useState(0);
 
   // **推过来的优先，落盘的兜底**：当前连接期间的轮次内存里就有，更早的要去读
-  // 文件——事件是推过来的，刷新一次页面之前那些就没了（D162）。
+  // 文件——事件是推过来的，刷新一次页面之前那些就没了（S115）。
   const runs = path.map((n) => n.id ?? "").filter(Boolean);
   const events = runId ? (traces[runId]?.length ? traces[runId] : (fetched[runId] ?? [])) : [];
 
@@ -182,7 +182,7 @@ function ExchangeView({ exchange }: { exchange: Exchange }): JSX.Element {
 }
 
 /**
- * 一条消息。**内容与思考段各有各的展开开关**（D163）。
+ * 一条消息。**内容与思考段各有各的展开开关**（S128）。
  *
  * 合用一个不行：思考段动辄上万字（实测 director 一轮的思考段有两万多个分片），
  * 而它和正文是**两件不同的东西**——查"它写了什么"和查"它为什么这么写"是两次

@@ -3,9 +3,9 @@
 一个独立组件，四个 agent 共用。分两层：
 
 - `assembler.py` —— 装配机器本身，**不认识 director 和 writer**。
-- `prompts.py`   —— 谁收到什么，也就是 D33 的那把刀。
+- `prompts.py`   —— 谁收到什么，也就是 S3 的那把刀。
 
-**一份 YAML = 一个 agent 收到的全部文字**（D33/D136/D173）：`sections`（消息串）、
+**一份 YAML = 一个 agent 收到的全部文字**（S3/S76/R31）：`sections`（消息串）、
 `tools`（工具描述）、`specials`（运行时另外追加的整条消息）、`rendering`（嵌在
 渲染里的短句）、`enabled`（这个 agent 跑不跑）。写法见 `assembler.py` 开头。
 """

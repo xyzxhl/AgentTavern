@@ -1,6 +1,6 @@
 """JSON 文件读写。
 
-存本地 JSON 而非数据库，首要理由是**用户可直接编辑**——这是 D65（state 必须
+存本地 JSON 而非数据库，首要理由是**用户可直接编辑**——这是 R22（state 必须
 用户可查看/编辑）的最彻底形式。数据库会把这层能力藏起来。
 
 写入用临时文件 + ``os.replace`` 保证原子性（Windows 上同样原子）——用户可能
@@ -44,7 +44,7 @@ def read_model_or_none(path: Path, model_type: type[M]) -> M | None:
 def append_jsonl(path: Path, model: BaseModel) -> None:
     """向 JSONL 追加一行。
 
-    trace 是 append-only（D50），逐行追加天然匹配，且不需要读改写整个文件。
+    trace 是 append-only（S47），逐行追加天然匹配，且不需要读改写整个文件。
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     line = model.model_dump_json()

@@ -1,10 +1,10 @@
 """一个 run 的编排。
 
 时序见 docs/design/Architecture.md §4。**director → writer 是静态 workflow，交接
-固定且单向**（D53）——编排层按固定顺序调用二者，中间没有回流、没有协商、
+固定且单向**（S4）——编排层按固定顺序调用二者，中间没有回流、没有协商、
 没有重试循环。
 
-**run = node = 一份细纲 = 一份正文**，四者严格一一对应（D51）。
+**run = node = 一份细纲 = 一份正文**，四者严格一一对应（S1）。
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ class RunOutcome:
     node: Node
     usage: Usage
     notes: list[str] = field(default_factory=list)
-    """eval 采样标记。**从不影响运行时行为**（D43/D44）——只是把可疑样本挑出来送审。"""
+    """eval 采样标记。**从不影响运行时行为**（P12/P12）——只是把可疑样本挑出来送审。"""
 
 
 async def execute_run(
@@ -66,17 +66,17 @@ async def execute_run(
 ) -> RunOutcome:
     """``run_id`` 由调用方指定时，**这一轮开始之前发生的事也能挂在它名下**。
 
-    唯一的用处是 goal 的开场（D168）：goal_manager 要先规划、写出这一轮的输入，
+    唯一的用处是 goal 的开场（S100）：goal_manager 要先规划、写出这一轮的输入，
     而那几次调用理应属于**它开出来的那一轮**，不是上一轮。id 在这里生成的话，
     调用方在规划那一刻还拿不到它，只能另起一个没有节点的 id——那些记录就再也
     没地方显示了。
     """
-    # **故事一开始就把初始状态定下来**（D158）：之后再改 worldbook 的初始状态
+    # **故事一开始就把初始状态定下来**（S67）：之后再改 worldbook 的初始状态
     # 条目，只影响新会话，不再回头改写既有的每一轮。第二轮起这里是空操作。
     repo.freeze_initial_state()
 
     run_id = run_id or new_id("run")
-    # **开发者模式强制落盘**（D156）：记了不落盘，下次就查不了了，而查问题
+    # **开发者模式强制落盘**（S113）：记了不落盘，下次就查不了了，而查问题
     # 恰恰总是事后。它与服务级的 `Settings.trace`（`persist_trace`）是或的关系，
     # 不是覆盖。
     tracer = Tracer(
@@ -87,13 +87,13 @@ async def execute_run(
         developer=developer,
     )
 
-    # 工具面按各 agent YAML 里的开关组装（D174）：关掉的工具**不注册**，
+    # 工具面按各 agent YAML 里的开关组装（S80）：关掉的工具**不注册**，
     # 模型看不到。worldinfo 全部常驻时也不注册其工具——没有东西可展开。
     if registry is None:
         registry = ToolRegistry.for_session(repo.worldbook())
 
-    # **打断是挂起**（D118）：上一次被截断的那一段在这里被接回来。
-    # 认领的条件是父节点一致——不一致说明用户已经切到别的分支去了，接不上（D48）。
+    # **打断是挂起**（S48）：上一次被截断的那一段在这里被接回来。
+    # 认领的条件是父节点一致——不一致说明用户已经切到别的分支去了，接不上（S42）。
     draft = repo.load_draft()
     if draft is not None and draft.parent_id != parent_id:
         repo.clear_draft()
@@ -110,7 +110,7 @@ async def execute_run(
         ask_user=ask_user,
         inbox=inbox,
         on_delta=on_delta,
-        # state 阶段被打断时，已经写下的那几笔是**已经完成的动作**，不必重来（D118）。
+        # state 阶段被打断时，已经写下的那几笔是**已经完成的动作**，不必重来（S48）。
         staged_delta=draft.staged_delta if draft and stage is RunStage.STATE else StateDelta(),
     )
 
@@ -132,7 +132,7 @@ async def execute_run(
     loop_messages: list[Message] = draft.messages if draft is not None else []
     rounds = draft.rounds if draft is not None else 0
     # 被打断那一轮的输入是**唯一不可再生的东西**，续跑时它仍然是这一轮的输入；
-    # 新说的话是「追加」，由 director 接在推演之后（D145），不顶替它。
+    # 新说的话是「追加」，由 director 接在推演之后（S119），不顶替它。
     turn_input = (draft.user_input if draft is not None else None) or user_input
     # 从 writer / state 阶段续跑时**这一轮根本没有 director**，所以它是可空的。
     director: DirectorResult | None = None
@@ -180,7 +180,7 @@ async def execute_run(
             written = await run_writer(ctx, tracer, outline)
             prose, deviation = written.prose, written.deviation
         except asyncio.CancelledError:
-            # **半截正文不留**（D142）。留着看似省事，实则是
+            # **半截正文不留**（S49）。留着看似省事，实则是
             # 把一个失败的阶段当成了产出：下一轮会接着那半句往下写，而用户按停止
             # 恰恰是因为不想要那半句。细纲留着，它是上游、已经完成了。
             _suspend(
@@ -194,9 +194,9 @@ async def execute_run(
             )
             raise
 
-    # **状态维护后置**（D143）：读着刚写完的细纲和正文去记，而不是 director
+    # **状态维护后置**（S7）：读着刚写完的细纲和正文去记，而不是 director
     # 边推演边记。位置卡在 `save_node` **之前**——节点是原子的，细纲、正文、
-    # 增量必须同时抵达（D48/D56）；放到落盘之后会出现一个"有正文没增量"的
+    # 增量必须同时抵达（S42/S20）；放到落盘之后会出现一个"有正文没增量"的
     # 瞬时节点，那一刻沿路径重放状态的人（分支、`state_at`）会算错。
     # 代价是这一轮的结束晚一次模型调用，而用户此时已经看完正文了。
     if agent_enabled("state_manager"):
@@ -238,13 +238,13 @@ async def execute_run(
         prose=prose,
         deviation_report=deviation,
         state_delta=ctx.staged_delta,
-        # 推理段只活到本 run 结束（D120）——一轮推理有上万字，存下来会让持续
+        # 推理段只活到本 run 结束（S62）——一轮推理有上万字，存下来会让持续
         # 对话每两轮就撞预算，压缩变成每轮都发生，前缀反复失效。
         director_messages=without_reasoning(turn_messages),
     )
     repo.clear_draft()
 
-    # 暂存的增量在此刻随节点一并落盘——细纲与增量同时抵达，节点是原子的（D48/D56）。
+    # 暂存的增量在此刻随节点一并落盘——细纲与增量同时抵达，节点是原子的（S42/S20）。
     repo.save_node(node)
     tracer.emit(
         TraceEventType.STATE_COMMITTED,
@@ -254,22 +254,22 @@ async def execute_run(
     )
 
     # **重新载入再写，不要把手里这份整个盖回去。** `session` 是这一轮开始那一刻
-    # 的快照，而元操作与生成是并行的（D24）：这期间用户可能设了目标、改了配置，
+    # 的快照，而元操作与生成是并行的（P10）：这期间用户可能设了目标、改了配置，
     # 而且**这一轮自己**在开头就调过 `freeze_initial_state()`——那也是一次
     # 读-改-写。整份写回等于把它们一起抹掉，而且一个字的报错都不会有。
-    # （实测：初始状态的冻结在每一轮结束时都被这样撤销，D158 一直没真正生效。）
+    # （实测：初始状态的冻结在每一轮结束时都被这样撤销，S67 一直没真正生效。）
     latest = repo.load_session()
     latest.active_leaf_id = node.id
     repo.save_session(latest)
     session.active_leaf_id = node.id
 
-    # **生成后追问**：本轮产出已定，这一步只影响以后怎么回看（D112）。
-    # 问的是"这一轮是不是一段的结尾"——**判定在生成时，压缩在需要时**（D113）：
+    # **生成后追问**：本轮产出已定，这一步只影响以后怎么回看（S22）。
+    # 问的是"这一轮是不是一段的结尾"——**判定在生成时，压缩在需要时**（S58）：
     # 分界往往要等下一轮才认得出来，而等它滑出窗口再问就已经看不见下一轮了。
     #
     # **必须问刚写完的 director 本人**：它手里有 state、有前情、知道故事要往哪走。
     # 所以从 writer / state 阶段续跑的那一轮不问——这一轮根本没有 director 在跑，
-    # 另起一个只看得见几段细纲的冷调用，判据全靠猜（D112）。那一轮因此不带
+    # 另起一个只看得见几段细纲的冷调用，判据全靠猜（S22）。那一轮因此不带
     # 分段标记，代价只是这一处分界要等下一轮才被认出来。
     if special_on("director", "segment") and director is not None:
         with contextlib.suppress(Exception):
@@ -283,7 +283,7 @@ async def execute_run(
             )
             if cut > 0:
                 # **可以回溯**：分界常常要等下一轮才看得出来，所以标记打在
-                # 模型指的那一条上，不一定是刚写完的这一轮（D116）。
+                # 模型指的那一条上，不一定是刚写完的这一轮（S58）。
                 open_nodes[cut - 1].closes_segment = True
                 repo.save_node(open_nodes[cut - 1])
         await close_segment(repo, gateway, node.id, tracer)
@@ -300,13 +300,13 @@ async def execute_run(
 
 
 def _resume_point(draft: RunDraft | None, user_input: UserInput | None) -> RunStage:
-    """这一轮从哪一段开始跑（D142）。
+    """这一轮从哪一段开始跑（S49）。
 
     **判据是生成内容的依赖关系**：state 依赖正文，正文依赖细纲，细纲依赖输入。
     用户又说了话，细纲就可能要改，那下游全都不作数——回 director 重来；用户
     什么也没说，就是「刚才那步没跑完，接着跑」，从被打断的那一段接。
 
-    director 阶段不受这条影响：它本来就是**续跑**（D118），新输入追加进那段
+    director 阶段不受这条影响：它本来就是**续跑**（S48），新输入追加进那段
     没跑完的推演里，已经查过的资料一并留着。
     """
     if draft is None:
@@ -343,7 +343,7 @@ def _suspend(
     """把这一段挂起：上游产物存进草稿，节点不落。
 
     **不落节点是关键**。留半截产出看似省事，实则会让下一轮接着那半句往下写，
-    而用户按停止恰恰是因为不想要它（D142）。
+    而用户按停止恰恰是因为不想要它（S49）。
     """
     ctx.repo.save_draft(
         RunDraft(
@@ -353,7 +353,7 @@ def _suspend(
             # **这一轮的推演一并存着**：回 director 重来时它接得下去，
             # 那次 `submit_outline` 连同它交出的细纲就在里面。用户新说的话会被
             # 接在它之后——**位置就是它的含义**：模型读到的是"你交的这份细纲，
-            # 用户看了之后又说了话"，而不是"这一轮的输入换了一条"（D145）。
+            # 用户看了之后又说了话"，而不是"这一轮的输入换了一条"（S119）。
             messages=messages,
             rounds=rounds,
             outline=outline,
@@ -376,7 +376,7 @@ async def _maintain_state(ctx: RunContext, tracer: Tracer, outline: str, prose: 
     """跑 state_manager，把增量写进 ``ctx.staged_delta``。
 
     **失败不阻塞已产出的内容**（同归段）：这一轮就当没有状态变化，节点照落。
-    打断是另一回事——那是用户喊停，交给上层挂起（D142），所以 `CancelledError`
+    打断是另一回事——那是用户喊停，交给上层挂起（S49），所以 `CancelledError`
     原样往上抛。
     """
     try:
@@ -426,7 +426,7 @@ async def close_segment(
     """把已经滑出全文窗口、又还没归段的轮次压成一段；没归成返回 ``None``。
 
     **只负责压缩，不负责判定。** 哪一轮是结尾由 `Node.closes_segment` 记着，
-    那是生成时当场判的（D113）——分界往往要等下一轮才认得出来，
+    那是生成时当场判的（S58）——分界往往要等下一轮才认得出来，
     而等它滑出窗口再问，问的人已经看不见下一轮了。
 
     三条支路：
@@ -440,7 +440,7 @@ async def close_segment(
     **失败不影响已落盘的内容**：没有摘要只是回退到头部截断。
     """
     # **段一收就压**，不再等它滑出什么窗口——摘要生成与上下文替换是两件事：
-    # 摘要在段收束时生成并缓存，替换在整份对话越界时一次性发生（D114）。
+    # 摘要在段收束时生成并缓存，替换在整份对话越界时一次性发生（S60）。
     # 早先按 `RECENT_OUTLINES` 卡住不压，会让刚收的段落在越界时**还没有摘要可用**，
     # 于是压不掉。
     path = repo.path_to(leaf_id)
@@ -476,7 +476,7 @@ async def close_segment(
     try:
         joined = "\n\n".join(n.outline for n in segment)
         end = segment[-1]
-        # **一律压**（D154）。这里以前有条"已经比摘要还短就原样留下"的近路，
+        # **一律压**（S25）。这里以前有条"已经比摘要还短就原样留下"的近路，
         # 阈值就是那个已经删掉的 `summary_max_chars`——它是同一个说了不算的数，
         # 换个名字留下来只是把问题藏起来。近路本来也几乎不触发：一段细纲动辄上千字。
         end.outline_summary = await summarize_text(
@@ -494,7 +494,7 @@ async def close_segment(
         return None
 
     repo.save_node(end)
-    # **压缩比要落进事件里**（D154）：没有上限之后，"压到多少"是唯一还能看的东西，
+    # **压缩比要落进事件里**（S25）：没有上限之后，"压到多少"是唯一还能看的东西，
     # 而它只有和"从多少压下来的"放在一起才有意义——单看 249 字看不出是 10× 还是 1.6×。
     tracer.emit(
         TraceEventType.CROSS_CHECK,

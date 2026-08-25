@@ -20,17 +20,17 @@ from agenttavern.llm import LLMGateway
 from agenttavern.prompting import PromptSetup, load, prompts_as
 
 FOLLOWUP_MARK = "本轮已经提交"
-"""生成后追问的标志串（D112）。"""
+"""生成后追问的标志串（S22）。"""
 
 STATE_MARK = "你负责维护一份"
-"""state_manager 开场白的头几个字（D143）。用来认出是它在问。"""
+"""state_manager 开场白的头几个字（S7）。用来认出是它在问。"""
 
 GOAL_MARK = "用户设置的目标"
-"""goal_manager 越狱词里的一句（D148）。用来在请求流水里认出是它在问。"""
+"""goal_manager 越狱词里的一句（S92）。用来在请求流水里认出是它在问。"""
 
 WRITER_MARK = "你收到的细纲描述的是"
 """writer 输入契约的头一句。**认头一句而不是标签**——装配器不再自动包
-`<本轮细纲>` 那样的标记了（D173：所见即所得），而「本轮细纲」这四个字在
+`<本轮细纲>` 那样的标记了（R31：所见即所得），而「本轮细纲」这四个字在
 director 那侧也出现（`submit_outline` 的描述、催促词），只认字面会把 director
 一起认进去。这一句只属于 writer。
 """
@@ -47,11 +47,11 @@ class ScriptedLLM:
     ) -> None:
         """``auto_close`` 让**生成后追问**自动应答，不消耗脚本。
 
-        追问每轮都发生（D113：判定在生成时），但绝大多数测试与归段无关——
+        追问每轮都发生（S58：判定在生成时），但绝大多数测试与归段无关——
         让它们各自在脚本里插一条应答，只会把测试写得更吵、更容易错位。
         测归段的测试传 ``auto_close=None``，自己把每一轮的答案排进脚本。
 
-        **state_manager 同理**（D143）：它每轮跑一次，跑在 writer 之后。
+        **state_manager 同理**（S7）：它每轮跑一次，跑在 writer 之后。
         把这一轮该记的东西传 ``state=``（形状就是 `state_write` 的参数，
         如 ``state={"set": {"地点": "客厅"}}``），它会写一次然后收口；不传就空手
         回来，等于"这一轮没什么要改的"。跨多个 run 的测试传一个**列表**，
@@ -92,7 +92,7 @@ class ScriptedLLM:
         payload = json.loads(request.content)
         self.requests.append(payload)
         messages = payload["messages"]
-        # **流式默认是开的**（D160），所以脚本必须两种都会应答——否则整套测试
+        # **流式默认是开的**（S118），所以脚本必须两种都会应答——否则整套测试
         # 走的都是非流式那条路，而产品跑的是另一条。
         streaming = bool(payload.get("stream"))
 
@@ -233,11 +233,11 @@ def scripted():
     return ScriptedLLM
 
 
-# -- 提示词配置：**取值住在 YAML 里**（D173/D174）-------------------------------
+# -- 提示词配置：**取值住在 YAML 里**（R31/S80）-------------------------------
 #
 # `Capabilities` / `ControlDimensions` 都没了，所以测试要换一档、开关一个工具，
 # 走的是和 bench 消融同一条路：**在一份副本上改，跑完删**（`prompts_as`）。
-# 那也是唯一一条路——不为测试开第二个取值入口（D174）。
+# 那也是唯一一条路——不为测试开第二个取值入口（S80）。
 
 
 def option(agent: str, group: str, name: str) -> str:
@@ -268,6 +268,6 @@ def using(**kwargs: Any) -> Iterator[None]:
 
 
 HISTORY_ON = {"tools": {"director": {"history_search": True}}}
-"""检索**默认关**（D78：能力开关默认关）。要测它就得显式打开——第一次跑长会话
+"""检索**默认关**（P14：能力开关默认关）。要测它就得显式打开——第一次跑长会话
 场景时忘了开，于是"12 轮里检索工具一次都没被调用"这个观察什么也说明不了：
 **工具当时不存在**。"""

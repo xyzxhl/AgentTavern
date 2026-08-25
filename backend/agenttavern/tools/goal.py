@@ -1,4 +1,4 @@
-"""goal_manager 的三个工具（D148）。
+"""goal_manager 的三个工具（S92）。
 
 **它们是 session 级的，不是 run 级的**——改的是 `GoalRun`，而 `GoalRun` 跨 run
 活着。所以它们吃 `GoalContext` 而不是 `RunContext`；`Tool.handler` 本来就写成
@@ -9,7 +9,7 @@
 
 怎么拆中间状态、判定从严到什么程度、引导该多克制——**那些判据全在
 `goal_manager.yaml` 里**（`subgoal` / `goal_judge` / `steering_input` 三节）。
-这里一个字都不重复：两份必然对不上，而对不上的时候没人知道该信哪份（D152）。
+这里一个字都不重复：两份必然对不上，而对不上的时候没人知道该信哪份（S27）。
 
 **收口条件是「这一次不再调用任何工具」**（同 state_manager）。
 """
@@ -78,7 +78,7 @@ async def _check(ctx: GoalContext, params: CheckParams) -> ToolResult:
     for index in hit:
         plan.subgoals[index - 1].done = True
 
-    # **回执列的是「还剩哪些」，不是「下一个是哪个」**（D150）：中间状态之间
+    # **回执列的是「还剩哪些」，不是「下一个是哪个」**（S93）：中间状态之间
     # 没有先后依赖，挑出一个说"当前这个"等于凭空造了个顺序。
     left = [f"{i + 1}. {s.description}" for i, s in enumerate(plan.subgoals) if not s.done]
     ctx.labels.append(f"成立 {len(hit)} 条" if hit else "本轮无新成立")
@@ -111,8 +111,8 @@ class FinishParams(BaseModel):
 
 
 async def _finish(ctx: GoalContext, params: FinishParams) -> ToolResult:
-    # **不检查中间状态是否全部成立**（D151）。D148 曾在这里加过一条硬前提，
-    # 想靠它挡住自我确认倾向；但中间状态无序、可跳过、可能已经不必要（D150），
+    # **不检查中间状态是否全部成立**（S94）。S92 曾在这里加过一条硬前提，
+    # 想靠它挡住自我确认倾向；但中间状态无序、可跳过、可能已经不必要（S93），
     # 于是那条前提在「目标确实达成、只是某条中间状态已经作废」这个常见情形下
     # 只是多逼出两次工具调用——先 `plan` 重给一版，再 `check` 标全，然后原样通过。
     # 挡不住真问题，只收了个过路费。
@@ -128,7 +128,7 @@ async def _finish(ctx: GoalContext, params: FinishParams) -> ToolResult:
 
 
 def _tool(name: str, params: type[BaseModel], handler: Any) -> Tool[Any]:
-    """**描述从 `goal_manager.yaml` 的 `tools` 里取**（D173）——它是模型读到的字。"""
+    """**描述从 `goal_manager.yaml` 的 `tools` 里取**（R31）——它是模型读到的字。"""
     return Tool(
         name=name,
         description=tool_description("goal_manager", name),
@@ -138,7 +138,7 @@ def _tool(name: str, params: type[BaseModel], handler: Any) -> Tool[Any]:
 
 
 def goal_tools() -> list[Tool[Any]]:
-    """四个工具。**核对与引导是分开的两个**（D151）。
+    """四个工具。**核对与引导是分开的两个**（S94）。
 
     它们合成一个（`advance`）过一版，代价是每轮必须两件一起做：没有新成立也得
     报一次进度，不想干预也得写一条输入。而这两件事本来就独立——**核对是观察，

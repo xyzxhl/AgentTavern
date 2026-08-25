@@ -3,8 +3,8 @@
 worldbook 是**用户写的唯一输入**，所以它是这个项目里唯一值得单独定格式的
 东西——别的（节点树、trace、state）都是跑出来的产物。
 
-**一份 worldbook 可以开出好几个 session**（D170 推翻了 D92 的一对一）。
-**而它只有条目，没有字段**（D175）：题材与基调、剧情尺度都是 `WORLD` 条目，
+**一份 worldbook 可以开出好几个 session**（S63）。
+**而它只有条目，没有字段**（S64）：题材与基调、剧情尺度都是 `WORLD` 条目，
 所以包里除了名字只有 `entries`。
 """
 
@@ -25,7 +25,7 @@ class WorldbookBundle(BaseModel):
     version: int = VERSION
 
     name: str = ""
-    """这份设定叫什么。**包里只剩它一个属性**（D175）——题材与基调、剧情尺度
+    """这份设定叫什么。**包里只剩它一个属性**（S64）——题材与基调、剧情尺度
     都是条目了，跟着 `entries` 走。"""
 
     note: str = ""
@@ -45,7 +45,7 @@ class WorldbookBundle(BaseModel):
 
         - `id` 是这份存储里的地址，不是条目的身份。带着它导入要么撞上已有条目
           静默覆盖，要么两份文件里的同名 id 指向完全不同的东西。
-        - `summary` 是 `summarize` 懒惰生成的缓存（D69），跟着 `content` 走；
+        - `summary` 是 `summarize` 懒惰生成的缓存（S25），跟着 `content` 走；
           `content` 一旦被人改过旧摘要就是错的，而导入方无从判断改没改。
           **缓存不该跨机器传播。**
         """

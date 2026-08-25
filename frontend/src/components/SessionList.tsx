@@ -2,12 +2,12 @@ import { api } from "../api";
 import { type Page, useSession } from "../store";
 
 /**
- * 左栏：**上面是独立页面的入口，下面是会话记录**（D172）。
+ * 左栏：**上面是独立页面的入口，下面是会话记录**（R17）。
  *
  * 不做成 tab 切换——tab 会让会话列表在看设定时消失，而那没道理：设定不是故事的
  * 互斥模式，它是故事的**材料**。入口在上、列表在下，两者同时在场。
  *
- * **会话的标题在这里改**（D174）：session 上只剩标题、目标、节点树，为一个字段
+ * **会话的标题在这里改**（S80）：session 上只剩标题、目标、节点树，为一个字段
  * 单开一个「会话设置」面板不划算——它就在你能看见这个标题的地方改。
  */
 export function SessionList(): JSX.Element {
@@ -36,7 +36,7 @@ export function SessionList(): JSX.Element {
   return (
     <aside className="flex w-56 shrink-0 flex-col border-r border-line bg-ink-800">
       <nav className="border-b border-line p-2">
-        {/* **提示词管理一直在**（D180）。它曾经跟开发者模式同一个开关，理由是
+        {/* **提示词管理一直在**（S134）。它曾经跟开发者模式同一个开关，理由是
             「提示词是部署方写的东西、改坏了整台服务不工作」——但**这台服务的
             部署方就是用户自己**，而调提示词是这个项目里最日常的动作。
             开发者模式管的是另一件事：**能不能看到每次模型往返的完整输入输出**。 */}

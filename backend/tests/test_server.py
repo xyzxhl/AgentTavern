@@ -19,7 +19,7 @@ def one_run(
     """一个完整 run 需要的两次模型调用：submit_outline → 正文。
 
     状态那一次不在这里——它跑在 writer 之后，由 `ScriptedLLM(state=...)` 应答
-    （D143）。``place`` 因此返回的是那份增量，交给调用方传进去。
+    （S7）。``place`` 因此返回的是那份增量，交给调用方传进去。
     """
     return [
         tool("submit_outline", outline=outline),
@@ -38,7 +38,7 @@ def happy_llm(prose: str = "门轴发出一声长长的呻吟。") -> ScriptedLL
 @pytest.fixture
 def client_for(tmp_path: Path):
     def build(llm: ScriptedLLM, *, developer: bool = False, stream: bool = True):
-        # `stream` / `trace` 是**服务级**的（D174）：一条关于交付，一条关于
+        # `stream` / `trace` 是**服务级**的（S80）：一条关于交付，一条关于
         # 运维，两条都跟模型收到什么无关，所以它们没跟着配置一起上调到提示词层。
         app = create_app(
             Settings(data_dir=tmp_path, llm_model="m", developer=developer, stream=stream),
@@ -50,7 +50,7 @@ def client_for(tmp_path: Path):
 
 
 def book_of(client, session_id: str) -> str:
-    """这个 session 开在哪份设定上（D170）。**建会话时会自动配一份空的。**"""
+    """这个 session 开在哪份设定上（S63）。**建会话时会自动配一份空的。**"""
     return client.get(f"/sessions/{session_id}").json()["session"]["worldbook_id"]
 
 
@@ -84,7 +84,7 @@ def test_session_crud(client_for) -> None:
     ).json()
     assert patched["meta"]["title"] == "雨夜"
 
-    # **列表带标题，不只是 id**（D172）：一串 `sess_a1b2c3…` 认不出哪局是哪局。
+    # **列表带标题，不只是 id**（R17）：一串 `sess_a1b2c3…` 认不出哪局是哪局。
     # 顺带给出它开在哪份设定上——那是列表里唯一需要的第二行信息。
     listed = client.get("/sessions").json()
     assert listed == [
@@ -119,11 +119,11 @@ def test_worldinfo_roundtrip(client_for) -> None:
 
 
 def test_a_worldbook_can_open_several_sessions(client_for) -> None:
-    """**一份设定开出好几个故事**（D170 推翻了 D92 的一对一）。
+    """**一份设定开出好几个故事**（S63）。
 
     它们共用同一批条目——改一次，所有故事都跟着，而那正是把 worldbook 独立
     出来要买的东西。已经发生过的剧情所依赖的事实是另一回事：那部分在各自的
-    第一轮就冻结了（D158），互不影响。
+    第一轮就冻结了（S67），互不影响。
     """
     client = client_for(happy_llm())
     book = client.post("/worldbooks", json={"name": "旧城区"}).json()["id"]
@@ -143,7 +143,7 @@ def test_a_worldbook_can_open_several_sessions(client_for) -> None:
 
 
 def test_a_new_session_gets_its_own_worldbook_when_none_is_named(client_for) -> None:
-    """**先开故事、边写边补设定**也要走得通（D170）。
+    """**先开故事、边写边补设定**也要走得通（S63）。
 
     要求先建 worldbook 才能开会话，等于在最没有想法的那一刻逼人做决定。
     """
@@ -155,7 +155,7 @@ def test_a_new_session_gets_its_own_worldbook_when_none_is_named(client_for) -> 
 
 
 def test_deleting_a_state_entry_before_the_story_starts_takes_effect(client_for) -> None:
-    """初始状态是所有分支的共同起点（D90/D158）。
+    """初始状态是所有分支的共同起点（S68/S67）。
 
     **故事开始之前**改它立刻生效——那时还没有任何一轮依赖它。开始之后就冻结了，
     见 `test_the_initial_state_freezes_once_the_story_starts`。
@@ -195,7 +195,7 @@ def test_export_drops_the_id_and_the_cached_summary(client_for) -> None:
 
     - `id` 是这份存储里的地址，不是条目的身份。带着它导入要么撞上已有条目静默
       覆盖，要么两份文件里的同名 id 指向完全不同的东西。
-    - `summary` 是懒惰生成的缓存（D69），跟着 `content` 走。`content` 一旦被人
+    - `summary` 是懒惰生成的缓存（S25），跟着 `content` 走。`content` 一旦被人
       改过旧摘要就是错的，而导入方无从判断改没改——**缓存不该跨机器传播**。
     """
     client = client_for(happy_llm())
@@ -246,7 +246,7 @@ def test_import_can_replace_instead_of_append(client_for) -> None:
         },
     ).json()
 
-    # `frozen` 报的是**哪几局故事已经开始了**：一份设定可以开出好几个（D170），
+    # `frozen` 报的是**哪几局故事已经开始了**：一份设定可以开出好几个（S63），
     # 而它们各自冻结在各自的第一轮，导入只影响还没开始的那些。
     assert body == {"imported": 1, "removed": 1, "frozen": []}
     assert [e["name"] for e in client.get(f"/worldbooks/{book}/entries").json()] == ["新的"]
@@ -271,11 +271,11 @@ def test_an_unknown_format_is_refused_instead_of_read_best_effort(client_for) ->
 
 
 def test_a_round_trip_keeps_the_kinds_and_the_expansion_settings(client_for) -> None:
-    """三类条目、可展开开关、展开层级都要原样过一遍（D158）。"""
+    """三类条目、可展开开关、展开层级都要原样过一遍（S67）。"""
     client = client_for(happy_llm())
     a = client.post("/worldbooks", json={"name": "旧城区"}).json()["id"]
     for entry in (
-        # **题材也是一条条目**（D175）：worldbook 上没有字段了。
+        # **题材也是一条条目**（S64）：worldbook 上没有字段了。
         {"name": "题材与基调", "kind": "world", "content": "悬疑"},
         {
             "name": "旧货店",
@@ -305,7 +305,7 @@ def test_a_round_trip_keeps_the_kinds_and_the_expansion_settings(client_for) -> 
 
     landed = {e["name"]: e for e in client.get(f"/worldbooks/{b}/entries").json()}
     assert landed["旧货店"]["kind"] == "world" and landed["旧货店"]["mode"] == "on_demand"
-    # **用户扮演的角色是一般角色的子类**（D159）：它是 `character` + 一个标记，
+    # **用户扮演的角色是一般角色的子类**（S65）：它是 `character` + 一个标记，
     # 不是第四种条目。语言习惯也要跟着过来。
     assert landed["林昭"]["kind"] == "character" and landed["林昭"]["is_player"] is True
     assert landed["林昭"]["voice"] == "话少，先观察再开口"
@@ -313,7 +313,7 @@ def test_a_round_trip_keeps_the_kinds_and_the_expansion_settings(client_for) -> 
     # 初始状态跟着过来；开在这份设定上的会话还没开始，所以立刻生效。
     landed_session = client.post("/sessions", json={"worldbook_id": b}).json()["id"]
     assert client.get(f"/sessions/{landed_session}").json()["state"] == {"陈屿": {"在场": True}}
-    # **题材跟着条目走**（D175）：worldbook 上除了名字没有别的字段，所以它必然
+    # **题材跟着条目走**（S64）：worldbook 上除了名字没有别的字段，所以它必然
     # 和别的设定同路——这正是"不特殊处理"买到的东西。
     assert landed["题材与基调"]["content"] == "悬疑"
     assert client.get(f"/worldbooks/{b}").json()["worldbook"]["name"] == "旧城区"
@@ -349,7 +349,7 @@ def test_submit_drives_a_run(client_for) -> None:
 
 
 def test_trace_events_carry_readable_labels(client_for) -> None:
-    """UI 是 trace 的投影（D25）：服务端递出完整事件，客户端决定显示什么。"""
+    """UI 是 trace 的投影（S111）：服务端递出完整事件，客户端决定显示什么。"""
     client = client_for(happy_llm())
     session_id = client.post("/sessions").json()["id"]
 
@@ -368,7 +368,7 @@ def test_trace_events_carry_readable_labels(client_for) -> None:
 
 
 def test_ask_question_suspends_until_answered(client_for) -> None:
-    """不设超时（D66）——等待期间逻辑上什么都没发生，恢复即从中断点续。"""
+    """不设超时（S24）——等待期间逻辑上什么都没发生，恢复即从中断点续。"""
     llm = ScriptedLLM(
         tool("ask_question", question="她怎么反应？", options=["否认", "沉默", "反问"]),
         tool("submit_outline", outline="她沉默了。"),
@@ -398,7 +398,7 @@ def test_ask_question_suspends_until_answered(client_for) -> None:
 
 
 def test_an_answer_outside_the_options_is_passed_through(client_for) -> None:
-    """**用户可以都不选、自己写一条**（D155）。
+    """**用户可以都不选、自己写一条**（S23）。
 
     服务端不校验 `selected` 在不在选项里——校验等于把"模型没想到的第四条路"
     判为非法，而那恰恰是最该传下去的一种回答。
@@ -453,7 +453,7 @@ def test_answering_an_unknown_question_errors(client_for) -> None:
 
 
 def test_queued_inputs_run_one_at_a_time(client_for) -> None:
-    """FIFO，每条独立成一个 run，**不打包**（D26）——打包会跳过中间的世界响应。"""
+    """FIFO，每条独立成一个 run，**不打包**（S107）——打包会跳过中间的世界响应。"""
     llm = ScriptedLLM(
         *one_run(),
         *one_run(outline="两人出去。"),
@@ -491,7 +491,7 @@ def test_queue_status_is_visible(client_for) -> None:
 
 
 def test_switch_branch_replays_state(client_for) -> None:
-    """切换分支必须同时切换状态（D48），否则"文本对、状态悄悄错"。"""
+    """切换分支必须同时切换状态（S42），否则"文本对、状态悄悄错"。"""
     llm = happy_llm()
     client = client_for(llm)
     session_id = client.post("/sessions").json()["id"]
@@ -508,7 +508,7 @@ def test_switch_branch_replays_state(client_for) -> None:
 
 
 def test_a_branch_can_only_be_opened_on_the_current_node(client_for) -> None:
-    """**分支只能在当前节点上开**（D147）：重生成非当前节点直接报错。
+    """**分支只能在当前节点上开**（S44）：重生成非当前节点直接报错。
 
     以前提交时可以显式指定任意 `parent_id`，于是能在历史上任何一点分叉。收掉它
     是因为「当前节点」从此有唯一含义——想在更早的地方分叉，**先切过去再动手**。
@@ -565,7 +565,7 @@ def test_switching_to_an_earlier_node_is_not_restricted(client_for) -> None:
 
 
 def test_user_edit_rewrites_node_directly(client_for) -> None:
-    """用户编辑**直接改写节点数据**，不做依赖检查（D65）。"""
+    """用户编辑**直接改写节点数据**，不做依赖检查（R22）。"""
     client = client_for(happy_llm())
     session_id = client.post("/sessions").json()["id"]
 
@@ -584,9 +584,9 @@ def test_user_edit_rewrites_node_directly(client_for) -> None:
 
 
 def test_switching_back_to_a_regenerated_sibling_restores_its_state(client_for) -> None:
-    """重生成之后**切回原来那一支**，状态跟着回去（D48）。
+    """重生成之后**切回原来那一支**，状态跟着回去（S42）。
 
-    `⟨2/3⟩` 是回到历史分叉点的唯一路径（D147）——切换器要能用，靠的就是这条：
+    `⟨2/3⟩` 是回到历史分叉点的唯一路径（S44）——切换器要能用，靠的就是这条：
     切过去之后状态得是那一支的，否则就是"文本对、状态悄悄错"。
     """
     llm = ScriptedLLM(
@@ -625,7 +625,7 @@ def test_switching_back_to_a_regenerated_sibling_restores_its_state(client_for) 
 def test_editing_state_reaches_append_and_remove(client_for) -> None:
     """**改指令是整份替换增量，不只是 `set`。**
 
-    以前这里是 `node.state_delta.set = ...`，于是 D96 补的 `remove`（以及
+    以前这里是 `node.state_delta.set = ...`，于是 S32 补的 `remove`（以及
     `append`）从界面根本够不着——"清单要能减"只有模型做得到。而清单要能减这件事
     正是数据化世界里最先暴露的：消耗品会用完，随从会离队。
     """
@@ -657,9 +657,9 @@ def test_editing_state_reaches_append_and_remove(client_for) -> None:
 
 
 def test_editing_the_result_is_diffed_back_into_a_delta(client_for) -> None:
-    """「改结果」的落地方式（D65）：收下你想要的状态树，和这一轮**之前**求差。
+    """「改结果」的落地方式（R22）：收下你想要的状态树，和这一轮**之前**求差。
 
-    换算发生在进门那一刻，落盘的仍然只有增量——「**权威是增量**」（D48）
+    换算发生在进门那一刻，落盘的仍然只有增量——「**权威是增量**」（S42）
     这句话不会因为多了个视图就被破坏。
     """
     llm = ScriptedLLM(
@@ -731,7 +731,7 @@ def test_editing_an_older_node_keeps_the_state_at_the_leaf(client_for) -> None:
     """改的是历史某一轮时，侧栏仍然显示**路径末端**的状态。
 
     发被改节点处的快照会让侧栏往回跳——而用户看的从来是"现在是什么样"。
-    下游照常重放，那是 event-sourced 的正常行为（D48/D49），不是连锁事故。
+    下游照常重放，那是 event-sourced 的正常行为（S42/S43），不是连锁事故。
     """
     llm = ScriptedLLM(
         *one_run(outline="第一轮。"),
@@ -795,7 +795,7 @@ def test_siblings_endpoint(client_for) -> None:
 
 
 def test_session_detail_carries_the_sibling_map(client_for) -> None:
-    """**哪几轮有兄弟随路径一起给**（D46/D147）。
+    """**哪几轮有兄弟随路径一起给**（S44/S44）。
 
     切换器要显示 `⟨2/3⟩` 就得先知道有没有第 2 支，而一个节点一次 `siblings`
     请求会让一条 20 轮的路径打 20 个请求——那份数据只在重生成之后才变。
@@ -833,11 +833,11 @@ def test_session_detail_carries_the_sibling_map(client_for) -> None:
 
 
 def test_goal_drives_another_run_with_a_simulated_input(client_for) -> None:
-    """goal_manager 在 run 末跑，未达标就开下一 run（D28）——**而且它替用户写输入**。
+    """goal_manager 在 run 末跑，未达标就开下一 run（R24）——**而且它替用户写输入**。
 
     第一轮之后还没有中间状态，所以那一次是 `plan` + `steer`：下一条输入就在这一轮
     写好，下一轮直接能用。所以第二个 run 是有输入的，只不过那条不是人打的——
-    它的 `source` 因此是 `simulated`（D148）。
+    它的 `source` 因此是 `simulated`（S92）。
     """
     llm = ScriptedLLM(
         *one_run(outline="第一轮。", prose="正文一。"),
@@ -866,15 +866,15 @@ def test_goal_drives_another_run_with_a_simulated_input(client_for) -> None:
     assert second["user_input"]["text"] == "我把照片推过去。"
     assert second["user_input"]["source"] == "simulated"
 
-    # 中间状态挂在 session 上（D148），不再挂节点——goal 跑着的时候不允许切分支，
-    # D141 让它跟着节点走的那个理由（分支隔离）不成立了。
+    # 中间状态挂在 session 上（S92），不再挂节点——goal 跑着的时候不允许切分支，
+    # S92 让它跟着节点走的那个理由（分支隔离）不成立了。
     run = client.get(f"/sessions/{session.id}").json()["session"]["goal_run"]
     assert [s["description"] for s in run["plan"]["subgoals"]] == ["他先松口", "两人摊开说"]
     assert run["spent_runs"] >= 1, "预算计数必须落盘——它以前在内存里，重启就归零"
 
 
 def opening(next_input: str, *subgoals: str):
-    """goal 开场那一次 goal_manager 调用（D168）：拆阶段 + 写出第一条输入，然后收口。"""
+    """goal 开场那一次 goal_manager 调用（S100）：拆阶段 + 写出第一条输入，然后收口。"""
     return [
         tools(
             ("plan", {"subgoals": list(subgoals) or ["他先松口"]}),
@@ -885,7 +885,7 @@ def opening(next_input: str, *subgoals: str):
 
 
 def test_setting_a_goal_plans_first_then_runs(client_for) -> None:
-    """**设目标就是"去做"**（D165），而且**先规划再动手**（D168）。
+    """**设目标就是"去做"**（S99），而且**先规划再动手**（S100）。
 
     两件事以前都不是这样：
 
@@ -894,7 +894,7 @@ def test_setting_a_goal_plans_first_then_runs(client_for) -> None:
       规则挡的是「带 goal 的 session 一连上就自己开始生成」——**连接不是指令，
       而设目标是**。
     - 打开之后第一轮是**空手推的**：`director` 从来不读 goal（模拟输入和真输入
-      在它眼里必须一模一样，D148），所以最该定方向的那一轮完全不知道有目标这回
+      在它眼里必须一模一样，S92），所以最该定方向的那一轮完全不知道有目标这回
       事，goal_manager 要等它写完才第一次开口，然后照着一段随机开的剧情拆阶段。
 
     现在顺序是：goal_manager 规划 → 它写的输入 → director → writer。
@@ -929,11 +929,11 @@ def test_setting_a_goal_plans_first_then_runs(client_for) -> None:
 
 
 def test_a_goal_set_mid_story_also_plans_before_it_runs(client_for) -> None:
-    """**第几轮设的不影响这条**（D168）：先规划、写出输入，再交给 director。
+    """**第几轮设的不影响这条**（S100）：先规划、写出输入，再交给 director。
 
     空会话和跑了几轮的会话唯一的差别在**它读到什么**：已经写出来的剧情进静态
     前缀、**给细纲**（"故事到这儿了"，够用而且便宜），goal 期间的每一轮才逐条
-    追加、给正文（D150）。所以设目标那一刻路径末端就是切点，它之前一条都不算
+    追加、给正文（S93）。所以设目标那一刻路径末端就是切点，它之前一条都不算
     goal 期间的轮次。
     """
     llm = ScriptedLLM(
@@ -958,12 +958,12 @@ def test_a_goal_set_mid_story_also_plans_before_it_runs(client_for) -> None:
     planning = [r for r in llm.requests if GOAL_MARK in r["messages"][0]["content"]][0]
     body = "\n".join(m.get("content") or "" for m in planning["messages"])
     assert "用户自己写的那一轮。" in body, "goal 之前的剧情要给它，否则它凭空拆阶段"
-    assert "正文一。" not in body, "但给的是细纲——那一段只回答「故事到这儿了」（D150）"
+    assert "正文一。" not in body, "但给的是细纲——那一段只回答「故事到这儿了」（S93）"
     assert "第 1 轮" not in body, "也不算 goal 期间的轮次：它进前缀，不是逐条追加的记录"
 
 
 def test_the_opening_conversation_carries_into_the_first_judgement(client_for) -> None:
-    """开场那次和紧接着的判定**是同一份对话**，中间不重建（D148/D168）。
+    """开场那次和紧接着的判定**是同一份对话**，中间不重建（S92/S100）。
 
     `sync_conversation` 只在"上次看到的节点还在 goal 期间那一段里"时才增量追加，
     否则整份重建。开场恰好卡在这个判据的缝上：那时 goal 期间一轮都还没有，
@@ -993,7 +993,7 @@ def test_the_opening_conversation_carries_into_the_first_judgement(client_for) -
 
 
 def test_the_opening_plan_belongs_to_the_run_it_opens(client_for) -> None:
-    """开场那几次调用**挂在它开出来的那一轮名下**（D168）。
+    """开场那几次调用**挂在它开出来的那一轮名下**（S100）。
 
     换句话说：宣告「开始新的一轮」必须排在规划**之前**。规划要跑几十秒，晚宣告
     的话界面上那段时间什么都没有，而这一轮的记录已经在往外推了——前端拿到一批
@@ -1026,7 +1026,7 @@ def test_the_opening_plan_belongs_to_the_run_it_opens(client_for) -> None:
 
 
 def test_an_empty_budget_means_no_budget(client_for) -> None:
-    """**留空就是不设上限**（D164）。
+    """**留空就是不设上限**（S97）。
 
     以前留空会被填成配置里的 50 轮——那是替用户做决定：他没填不是"随便给个数"，
     是"别拦我"。而被一个自己没见过的数字在第 50 轮拦下来，只会以为出了故障。
@@ -1060,7 +1060,7 @@ def test_an_empty_budget_means_no_budget(client_for) -> None:
         finished = collect(ws, "goal_finished")[-1]
 
     assert finished["outcome"] == "done"
-    assert progress, "每轮都推一次进度（D161）"
+    assert progress, "每轮都推一次进度（S129）"
     for p in progress:
         assert p["max_runs"] is None and p["max_total_tokens"] is None, "没设就是 None，不是 0"
     assert not [m for m in progress if m.get("type") == "goal_paused"]
@@ -1086,11 +1086,11 @@ def test_a_zero_budget_is_rejected_rather_than_silently_pausing(client_for) -> N
 def test_a_goal_set_while_a_run_is_in_flight_survives_that_run(client_for) -> None:
     """**运行中设的目标不能被那一轮结束时的写回抹掉。**
 
-    元操作与生成是并行的（D24），而 run 手里那份 `session` 是它开始那一刻的
+    元操作与生成是并行的（P10），而 run 手里那份 `session` 是它开始那一刻的
     快照。以前它在末尾把整份写回去，于是这期间设的目标、以及**这一轮自己刚
-    冻结的初始状态**（D158）一起没了——一个字的报错都没有。
+    冻结的初始状态**（S67）一起没了——一个字的报错都没有。
 
-    这里用 `ask_question` 把 run 挂在半路（D66：挂起不设超时），趁它挂着设目标。
+    这里用 `ask_question` 把 run 挂在半路（S24：挂起不设超时），趁它挂着设目标。
     """
     llm = ScriptedLLM(
         tool("ask_question", question="往哪边走？", options=["左", "右", "回头"]),
@@ -1125,12 +1125,12 @@ def test_a_goal_set_while_a_run_is_in_flight_survives_that_run(client_for) -> No
         # 目标活下来了，所以它会自己开下一轮。
         second = collect(ws, "run_finished")[-1]["node"]
 
-    # **正在跑的那一轮是唯一的例外**（D168）：它已经交给 director 了，抢不回来。
+    # **正在跑的那一轮是唯一的例外**（S100）：它已经交给 director 了，抢不回来。
     # 目标从**下一轮**接管，而那一轮照常是「先规划、再动手」。
     assert second["user_input"]["text"] == "接着走。"
     assert second["user_input"]["source"] == "simulated"
 
-    # **那一轮不算目标的**（D169）：它早就在跑了，判它、把它的开销记到目标账上，
+    # **那一轮不算目标的**（S101）：它早就在跑了，判它、把它的开销记到目标账上，
     # 都是在为一件目标没参与的事结账。所以它进静态前缀、给细纲，和它之前的
     # 剧情一样——不是逐条追加的「第 N 轮」记录，也不进 `spent_runs`。
     asked = [r for r in llm.requests if GOAL_MARK in r["messages"][0]["content"]]
@@ -1191,7 +1191,7 @@ def test_abandoning_during_judgement_leaves_nothing_behind(client_for, tmp_path:
 
 
 def test_progress_is_pushed_every_turn_not_only_at_the_end(client_for) -> None:
-    """**中间状态被一条条划掉，是用户最想看的东西**（D161）。
+    """**中间状态被一条条划掉，是用户最想看的东西**（S129）。
 
     它此前只写在盘上的 `goal_run` 里，而 WS 那侧只有「结束」和「暂停」——
     也就是说 goal 跑着的那几轮，界面上什么都不会变，直到它突然结束。
@@ -1224,7 +1224,7 @@ def test_progress_is_pushed_every_turn_not_only_at_the_end(client_for) -> None:
 
 
 def test_a_finished_goal_says_which_way_it_ended(client_for) -> None:
-    """两种终态都交回控制权，**但用户必须知道是哪一种**（D141/D148）。"""
+    """两种终态都交回控制权，**但用户必须知道是哪一种**（S92/S92）。"""
     llm = ScriptedLLM(
         *one_run(outline="第一轮。", prose="正文一。"),
         tools(
@@ -1246,14 +1246,14 @@ def test_a_finished_goal_says_which_way_it_ended(client_for) -> None:
 
     assert finished["outcome"] == "done"
     assert "已兑现" in finished["reason"]
-    # goal 与它的运行时状态一并清掉——**不留历史 goal**（D148）。
+    # goal 与它的运行时状态一并清掉——**不留历史 goal**（S92）。
     body = client.get(f"/sessions/{session.id}").json()["session"]
     assert body["meta"]["goal"] is None
     assert body["goal_run"] is None
 
 
 def test_a_spent_budget_pauses_instead_of_finishing(client_for) -> None:
-    """**预算耗尽是暂停，不是失败**（D148）：用户可以把上限调大接着跑。
+    """**预算耗尽是暂停，不是失败**（S92）：用户可以把上限调大接着跑。
 
     所以推出去的是 `goal_paused` 而不是 `goal_finished`，而且 goal 还在
     session 上——对话原样留着，恢复时不用重新判一遍。
@@ -1284,7 +1284,7 @@ def test_a_spent_budget_pauses_instead_of_finishing(client_for) -> None:
 
 
 def test_raising_the_budget_resumes_a_paused_goal(client_for) -> None:
-    """**这就是"加预算接着跑"**（D148）。
+    """**这就是"加预算接着跑"**（S92）。
 
     目标本身禁改（对话是围着它建的），预算恰恰要能在跑到一半时调大——
     两者可改的时机相反，所以是两条不同的消息。
@@ -1319,7 +1319,7 @@ def test_raising_the_budget_resumes_a_paused_goal(client_for) -> None:
 
 
 def test_abandoning_is_the_only_way_to_swap_a_goal(client_for) -> None:
-    """**同一时间只有一个 goal**（D148）。`SetGoal` 直接换会被拒——goal_manager 的
+    """**同一时间只有一个 goal**（S92）。`SetGoal` 直接换会被拒——goal_manager 的
     对话是围着那个目标建起来的，换一个就得整份重来，而那正是 `abandon` 做的事。
 
     所以放弃之后，目标与它的运行时状态一并清掉，新的目标才设得进去。
@@ -1342,13 +1342,13 @@ def test_abandoning_is_the_only_way_to_swap_a_goal(client_for) -> None:
     body = client.get(f"/sessions/{session.id}").json()["session"]
     assert body["meta"]["goal"]["description"] == "换一个"
     assert body["goal_run"] is not None, "新目标带着自己那份运行时状态"
-    # **旧对话没跟过来。** 不能断言它是空的：新目标一设上就自己开跑了（D165），
+    # **旧对话没跟过来。** 不能断言它是空的：新目标一设上就自己开跑了（S99），
     # 那份对话到这一刻多半已经有内容——要钉的是内容属于**新**目标。
     assert "写到摊牌" not in json.dumps(body["goal_run"]["conversation"], ensure_ascii=False)
 
 
 def test_a_paused_goal_neither_judges_nor_continues(client_for) -> None:
-    """**暂停 = goal_manager 完全不出场**（D148）。
+    """**暂停 = goal_manager 完全不出场**（S92）。
 
     不只是"不开下一轮"：连判定也不做。它每轮都是一次真实的模型调用，暂停期间
     还在那儿判，等于用户按了暂停却照样在烧钱，而且判的是用户自己在写的剧情。
@@ -1381,7 +1381,7 @@ def test_a_paused_goal_neither_judges_nor_continues(client_for) -> None:
 
 
 def test_resuming_hands_over_the_turns_the_user_wrote_meanwhile(client_for) -> None:
-    """**暂停期间用户自己跑的那几轮，恢复时要交给 goal_manager**（D148）。
+    """**暂停期间用户自己跑的那几轮，恢复时要交给 goal_manager**（S92）。
 
     这是「维持对话」最容易漏掉的一段：那几轮它当时没看见，但剧情实实在在动了。
     不补上去的话，它是照着一个几轮之前的局面在判。
@@ -1409,7 +1409,7 @@ def test_resuming_hands_over_the_turns_the_user_wrote_meanwhile(client_for) -> N
             ws.send_text(json.dumps({"type": "submit", "text": said}))
             collect(ws, "run_finished")
 
-        # **恢复本身就是"接着跑"**（D165）——第三轮不用用户再打一句话推它。
+        # **恢复本身就是"接着跑"**（S99）——第三轮不用用户再打一句话推它。
         ws.send_text(json.dumps({"type": "goal_control", "action": "resume"}))
         third = collect(ws, "run_finished")[-1]["node"]
         finished = collect(ws, "goal_finished")[-1]
@@ -1419,12 +1419,12 @@ def test_resuming_hands_over_the_turns_the_user_wrote_meanwhile(client_for) -> N
     # 判定那次调了 `finish` 就地收摊（一次）。
     assert len(asked) == 3
 
-    # **交接发生在恢复的那一刻**（D168）：它先补上暂停期间那两轮，再据此写下一条
+    # **交接发生在恢复的那一刻**（S100）：它先补上暂停期间那两轮，再据此写下一条
     # 输入——而不是先空手推一轮、写完了才第一次看见那两轮。
     handover = "\n".join(m.get("content") or "" for m in asked[0]["messages"])
     assert handover.count("用户自己的输入") == 2, "暂停期间那两轮也算，而且都是用户打的"
     for prose in ("正文一。", "正文二。"):
-        assert prose in handover, "补的是正文，不是细纲（D150）"
+        assert prose in handover, "补的是正文，不是细纲（S93）"
     assert third["user_input"]["text"] == "接着说。"
     assert third["user_input"]["source"] == "simulated"
 
@@ -1483,11 +1483,11 @@ def test_a_run_announces_that_it_started(client_for) -> None:
     )
 
 
-# -- 流式（D160） --------------------------------------------------------------
+# -- 流式（S118） --------------------------------------------------------------
 
 
 def test_prose_arrives_in_pieces_while_it_is_written(client_for) -> None:
-    """**正文边写边推**（D160）。
+    """**正文边写边推**（S118）。
 
     这是流式最值得的地方：一次调用、纯文本、而且是用户真正在等的东西。
     """
@@ -1535,7 +1535,7 @@ def test_the_final_node_is_still_the_authority(client_for) -> None:
 
 
 def test_tool_calls_do_not_stream(client_for) -> None:
-    """**工具调用不推分片**（D160）。
+    """**工具调用不推分片**（S118）。
 
     它们的 `arguments` 是逐字拼出来的 JSON，半截 JSON 对界面毫无用处，只会逼
     前端去猜。等完整了随 trace 一次性给——而细纲正是走 `submit_outline` 的参数。
@@ -1559,7 +1559,7 @@ def test_tool_calls_do_not_stream(client_for) -> None:
 
 
 def test_deltas_say_who_wrote_them(client_for) -> None:
-    """**`actor` 不是装饰，是必需的**（D160）。
+    """**`actor` 不是装饰，是必需的**（S118）。
 
     `content` 分片**两个 agent 都在发**：director 推演途中会写几句自言自语
     （"我先把这一轮推演清楚"），writer 写的才是正文。不按来源分开攒，界面上
@@ -1594,7 +1594,7 @@ def test_deltas_say_who_wrote_them(client_for) -> None:
 
 
 def test_the_agents_after_the_writer_stream_too(client_for) -> None:
-    """**它们也是 agent**（D166/D167）。
+    """**它们也是 agent**（S126/S125）。
 
     director 和 writer 的思考一直在推，跑在正文之后那两个（state_manager 与
     goal_manager）却藏着——凭什么。goal_manager 尤其：目标迟迟不达标时，唯一能
@@ -1631,7 +1631,7 @@ def test_the_agents_after_the_writer_stream_too(client_for) -> None:
     goal_deltas = said_by("goal_manager")
     assert "".join(m["text"] for m in goal_deltas) == "这一步还差着摊牌。"
     assert {m["run_id"] for m in goal_deltas} == {node_id}, "归到它判定的那一轮名下"
-    # 状态维护也跑在正文之后（D143），同样该看得见。
+    # 状态维护也跑在正文之后（S7），同样该看得见。
     assert "".join(m["text"] for m in said_by("state_manager")) == "无变化。无变化。"
     # 它们写的东西**都不是正文**——按 actor 分流就是为了挡住这个（同 `deltas_say_who`）。
     assert first[-1]["node"]["prose"] == "正文一。"
@@ -1659,11 +1659,11 @@ def test_streaming_can_be_switched_off(client_for) -> None:
     assert all(not r.get("stream") for r in llm.requests)
 
 
-# -- 开发者模式（D156） --------------------------------------------------------
+# -- 开发者模式（S113） --------------------------------------------------------
 
 
 def test_developer_mode_records_every_agents_real_exchange(client_for) -> None:
-    """**开发者模式下每个 agent 的完整输入输出都要留下**（D156）。
+    """**开发者模式下每个 agent 的完整输入输出都要留下**（S113）。
 
     别处的 trace 事件都是投影：`context_assembled` 只有条数和字数，
     `model_response` 只有工具名。投影够回答"它做了什么"，回答不了"它为什么
@@ -1735,7 +1735,7 @@ def test_without_developer_mode_the_originals_are_not_recorded(client_for) -> No
 
 
 def test_a_past_run_can_be_read_back_from_disk(client_for) -> None:
-    """**开发者面板离了这条只能看当前连接期间的轮次**（D162）。
+    """**开发者面板离了这条只能看当前连接期间的轮次**（S115）。
 
     事件是推过来的，刷新一次页面之前那些就没了。而开发者模式本来就强制落盘——
     查问题总是事后，记了不给读回来的路等于没记。
@@ -1774,7 +1774,7 @@ def test_the_frontend_can_tell_which_mode_the_service_started_in(client_for) -> 
 
 
 def test_meta_no_longer_carries_the_control_options(client_for) -> None:
-    """**`options` 已经删掉**（D173）。
+    """**`options` 已经删掉**（R31）。
 
     档位和当前取值都住在 agent 的 YAML 里，前端要看就去 `/agents/{name}`——
     `/meta` 再给一份就是同一件事的第二个入口，而两个入口迟早对不上。
@@ -1839,11 +1839,11 @@ def test_unknown_session_websocket_is_rejected(client_for) -> None:
 
 
 def test_a_hand_edit_lands_in_the_trace(client_for) -> None:
-    """**用户改过的节点必须在 trace 里留痕**（D50/D65）。
+    """**用户改过的节点必须在 trace 里留痕**（S47/R22）。
 
     `USER_EDIT` 这个事件类型一直定义着却从没被发出过——于是一段手改过的正文在
     trace 里和 writer 写的一模一样，回看时会被当成模型的产出去归因，而 trace
-    存在的头一个理由就是 eval（D8）。
+    存在的头一个理由就是 eval（S112）。
 
     记的是**改了哪几样**，不是新旧内容：正文动辄几千字，而"这个节点被人动过"
     才是回看时要的那一位信息。
@@ -1869,7 +1869,7 @@ def test_a_hand_edit_lands_in_the_trace(client_for) -> None:
     assert len(edits) == 1
     assert edits[0]["actor"] == "user"
     assert edits[0]["payload"]["fields"] == ["prose", "state"], "改了哪几样"
-    assert "正文" in edits[0]["label"] and "状态" in edits[0]["label"], "标签得人能读（D25）"
+    assert "正文" in edits[0]["label"] and "状态" in edits[0]["label"], "标签得人能读（S111）"
     # 没改动就不留痕——空的 patch 不是一次编辑。
     client.patch(f"/sessions/{session_id}/nodes/{node_id}", json={})
     assert (
@@ -1885,7 +1885,7 @@ def test_a_hand_edit_lands_in_the_trace(client_for) -> None:
 
 
 def test_importing_a_file_can_create_a_new_worldbook(client_for) -> None:
-    """**拿到别人分享的设定文件时，要的是"变成我的一份新设定"**（D172）。
+    """**拿到别人分享的设定文件时，要的是"变成我的一份新设定"**（R17）。
 
     第一版只有 `/worldbooks/{id}/import`——往一份已有的里追加或替换，于是必须
     先建个空的再往里导。那不是这个动作本来的形状。
@@ -1917,7 +1917,7 @@ def test_importing_a_file_can_create_a_new_worldbook(client_for) -> None:
     assert len(client.get("/worldbooks").json()) == 1
 
 
-# -- 一条坏条目不该让整个设定库瘫痪（D179）------------------------------------
+# -- 一条坏条目不该让整个设定库瘫痪（S73）------------------------------------
 
 
 def _plant(root, worldbook_id: str, name: str, body: dict) -> None:
@@ -1936,7 +1936,7 @@ def test_a_stale_entry_does_not_take_the_whole_list_down(client_for, tmp_path) -
     「新建没反应」。**一条八百年前的脏数据让整个功能瘫痪，报错离原因十万八千里。**
 
     列表这一层只为了显示"几条"，不喂模型，所以它要宽容：好的照数，
-    坏的**点出来**（不是跳过——悄悄少一条用户根本不知道自己丢了什么，D62）。
+    坏的**点出来**（不是跳过——悄悄少一条用户根本不知道自己丢了什么，P13）。
     """
     client = client_for(happy_llm())
     wid = client.post("/worldbooks", json={"name": "旧城区"}).json()["id"]
@@ -1973,7 +1973,7 @@ def test_the_model_facing_path_still_refuses_to_guess(client_for, tmp_path) -> N
 
 
 def test_old_entry_kinds_are_migrated_on_startup(tmp_path) -> None:
-    """`kind` 换过两次名，旧值要搬过来（D159/D171/D175）。
+    """`kind` 换过两次名，旧值要搬过来（S65/S65/S64）。
 
     - `lore` → `world`
     - `player` → `character` + `is_player`：**用户扮演的角色不是第四种 kind**，
@@ -2013,11 +2013,11 @@ def test_old_entry_kinds_are_migrated_on_startup(tmp_path) -> None:
 
 
 def test_only_one_character_can_be_the_player(client_for) -> None:
-    """**「用户扮演谁」在写入时收敛**（D180）。
+    """**「用户扮演谁」在写入时收敛**（S134）。
 
     `player_character()` 取的是**第一条**标了 `is_player` 的角色条目，而
     `entries()` 按名字排序——标了两个的话，「谁是用户」取决于名字的字典序，
-    另一个静默失效。这正是 D171 要消掉的形态：对不上的时候不报错，
+    另一个静默失效。这正是 S65 要消掉的形态：对不上的时候不报错，
     只是其中一个悄悄没生效。
 
     **写时收敛而不是读时挑一个**：读时挑等于让每个读的人各自去猜，而且盘上

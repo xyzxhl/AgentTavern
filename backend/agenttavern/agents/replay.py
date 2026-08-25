@@ -1,6 +1,6 @@
-"""把一条路径重放成 director 的对话（D114）。
+"""把一条路径重放成 director 的对话（S60）。
 
-## 轮内保结构，跨轮扁平化（D121）
+## 轮内保结构，跨轮扁平化（S61）
 
 同一条信息在两种场合要的形态不同：
 - **本轮内**：原样保留 `tool_calls`、`role=tool` 结果、`reasoning_content`。
@@ -8,14 +8,14 @@
 - **跨轮重放**：压成 `assistant` 文本——调了什么、返回了什么、细纲是什么。
   上一轮的往返对这一轮只是**事实来源**，不再是一条待续的链。
 
-扁平化顺带把 D120 里那条已知风险**消掉了**，不只是压低：DeepSeek 要求
+扁平化顺带把 S62 里那条已知风险**消掉了**，不只是压低：DeepSeek 要求
 `reasoning_content` 回传的前提是**那条 assistant 消息带着 `tool_calls`**，
 文档同时写明"模型未执行工具调用时，中间 assistant 的 `reasoning_content`
 不需要参与上下文拼接"。扁平化之后历史轮次里**一个 `tool_calls` 都没有**，
 这条要求根本不适用——换到严格执行的模型也不会 400。
 
 **扁平化发生在重放时，不在落盘时。** 节点里存的仍是结构化的原样记录：
-存储要忠实，呈现是可以改的决定（同 D48 存增量而不存快照的理由）。
+存储要忠实，呈现是可以改的决定（同 S42 存增量而不存快照的理由）。
 
 ## 压缩的触发方式：越界一次，全部替换
 
@@ -28,7 +28,7 @@
 
 因此这里有两条线，**不要混**：
 
-- **分段**：`Node.closes_segment`，生成时当场判（D113）。它只是打标记。
+- **分段**：`Node.closes_segment`，生成时当场判（S58）。它只是打标记。
 - **压缩**：本模块，按体量触发。它决定标记什么时候真正兑现成摘要。
 """
 
@@ -54,7 +54,7 @@ def append_message(said: str) -> Message:
     `（用户在这里插了一句）`。裸着塞进去，模型读到的是一条突然冒出来的用户
     发言，看不出它和这一轮已经进行到一半的推演是什么关系。措辞在
     `director.yaml` 的 `specials.append` 里——它是提示词，跟别的提示词放在
-    一起（D173：**一份文件 = 一个 agent 收到的全部文字**）。
+    一起（R31：**一份文件 = 一个 agent 收到的全部文字**）。
     """
     messages = special_messages("director", "append", values={"said": said})
     if len(messages) != 1:
@@ -69,9 +69,9 @@ def _interjection_mark() -> str:
     分开：前者是不可再生的用户输入，跨轮必须留；后者是脚手架，跨轮带着只会
     像一条仍然生效的指令。
 
-    **装配器不再自动包标签**（D173），所以记号由用户自己写在 `body` 里，而
+    **装配器不再自动包标签**（R31），所以记号由用户自己写在 `body` 里，而
     `specials.append.mark` 声明它是哪一串。**两处必须对上**——对不上的后果是
-    插话在重放时被当成催促悄悄丢掉（同 D125），所以这里当场校验。
+    插话在重放时被当成催促悄悄丢掉（同 P29），所以这里当场校验。
     """
     spec = special("director", "append")
     mark = str(spec.get("mark") or "")
@@ -89,7 +89,7 @@ INTERJECTION_MARK = _interjection_mark()
 
 
 def interjections_of(node: Node) -> list[str]:
-    """这一轮用户插了哪几句（D119）。
+    """这一轮用户插了哪几句（S50）。
 
     **从 `director_messages` 里认，不另存一份**——插话本来就在那儿，
     再存一份必然漂移。认的是 `INTERJECTION_MARK` 那个结构标记。
@@ -106,7 +106,7 @@ SUBMIT_TOOL = "submit_outline"
 
 
 def _chars(messages: list[Message]) -> int:
-    """**推理段要算进去**（D120）。它是随消息一起发出去的，长度常常和正文相当——
+    """**推理段要算进去**（S62）。它是随消息一起发出去的，长度常常和正文相当——
     不算的话预算会系统性低估，压缩迟迟不触发，而低估的幅度随对话变长而变大。
     """
     return sum(len(m.content or "") + len(m.reasoning_content or "") for m in messages)
@@ -125,7 +125,7 @@ def _summary_message(node: Node, *, readable: bool) -> Message:
         )
     else:
         # 检索关掉时**不要广告一个不存在的工具**。原文到此永久隐去——
-        # 但摘要仍然留着：模型必须知道那几轮存在过，只是精度低了（D62）。
+        # 但摘要仍然留着：模型必须知道那几轮存在过，只是精度低了（P13）。
         tail = "\n那几轮的原文已经取不回来了，以这段摘要为准。"
     return Message(
         role=Role.USER,
@@ -134,7 +134,7 @@ def _summary_message(node: Node, *, readable: bool) -> Message:
 
 
 def flatten_turn(node: Node) -> list[Message]:
-    """把一轮压成「用户输入 → 一条 assistant 记录」（D121）。
+    """把一轮压成「用户输入 → 一条 assistant 记录」（S61）。
 
     产出的 assistant 消息里没有 `tool_calls`，因此 DeepSeek 那条
     `reasoning_content` 必须回传的要求不适用（见模块开头）。
@@ -170,7 +170,7 @@ def flatten_turn(node: Node) -> list[Message]:
                 text = node.user_input.text if node.user_input else ""
                 if text:
                     flush()
-                    # 记号在 `director.yaml` 的 `rendering.flat_user_input` 里（D173）。
+                    # 记号在 `director.yaml` 的 `rendering.flat_user_input` 里（R31）。
                     # 前情和这一轮的输入并排出现在同一串消息里，形状要一致——
                     # 装配器不再自动包标签，所以两边都由用户自己写。
                     out.append(
@@ -199,7 +199,7 @@ def flatten_turn(node: Node) -> list[Message]:
 def replay_messages(path: list[Node], *, readable: bool = True) -> list[Message]:
     """沿路径重建 director 的对话。
 
-    历史轮次一律**扁平化**（D121）；未越界时全带，越界后**所有已归段的段落
+    历史轮次一律**扁平化**（S61）；未越界时全带，越界后**所有已归段的段落
     一次性换成摘要**，最后一段之后的轮次仍以扁平形态在场。
     """
     if not path:
@@ -239,17 +239,17 @@ def turn_messages(messages: list[Message], start: int) -> list[Message]:
 
 
 def without_reasoning(messages: list[Message]) -> list[Message]:
-    """落盘前抹掉推理段。**推理只活到产出它的那个 run 结束**（D120）。
+    """落盘前抹掉推理段。**推理只活到产出它的那个 run 结束**（S62）。
 
     实测一轮 director（3 个来回）的 `reasoning_content` 有 **15 000 字**，
     而它产出的细纲只有 207 字——推理比产出长了七十倍。原样存进
-    `director_messages`，持续对话（D114）跑两轮就撞上 `CONTEXT_BUDGET_CHARS`，
+    `director_messages`，持续对话（S60）跑两轮就撞上 `CONTEXT_BUDGET_CHARS`，
     压缩变成每轮都发生，前缀反复失效，**持续对话的全部意义就没了**。
 
     分界划在 run 边界上，因为两侧的用途不同：
 
     - **run 内**：推理是那条工具链的一部分，模型接着自己上一步往下想，且这是
-      DeepSeek 的契约要求。草稿（D118）续跑的是同一个 run，所以草稿里**要留**。
+      DeepSeek 的契约要求。草稿（S48）续跑的是同一个 run，所以草稿里**要留**。
     - **run 间**：下一轮值钱的是查到了什么、写下了什么细纲，不是三轮之前
       模型怎么绕到那个结论的。
 

@@ -17,11 +17,11 @@ import { useSession } from "./store";
 /**
  * 三栏：左（入口 + 会话记录）+ 主区 + 侧栏。
  *
- * **主区按页切换**（D172）：默认是正文流；点左栏上方的入口就整个换成那一页。
+ * **主区按页切换**（R17）：默认是正文流；点左栏上方的入口就整个换成那一页。
  * 独立页面不做浮层——浮层的语义是「临时打断，看完就关」，而编辑设定要待很久。
  *
  * 正文流的主区**只放要读的东西**（正文与输入）。状态与目标归侧栏，它们跨轮，
- * 不属于任何一轮；而每一轮自己的过程在正文流里（D167）。
+ * 不属于任何一轮；而每一轮自己的过程在正文流里（S125）。
  */
 export function App(): JSX.Element {
   const bootstrap = useSession((s) => s.bootstrap);
@@ -29,7 +29,7 @@ export function App(): JSX.Element {
   const page = useSession((s) => s.page);
 
   useEffect(() => {
-    // 外观在最早一刻贴上去——晚一帧就是一次可见的闪白（D178）。
+    // 外观在最早一刻贴上去——晚一帧就是一次可见的闪白（S133）。
     apply(load());
     const stop = watchSystem(load);
     void bootstrap();
@@ -75,7 +75,7 @@ function Story(): JSX.Element {
       <header className="flex items-center gap-3 border-b border-line px-5 py-2.5">
         <span className="text-sm text-fg">{title || "未命名"}</span>
         <span className="font-mono text-[11px] text-dim">{model}</span>
-        {/* **不是「本局设定」，是一个指向它的标签**（D172）：编辑永远在设定页
+        {/* **不是「本局设定」，是一个指向它的标签**（R17）：编辑永远在设定页
             发生，一件事一个入口。两个入口各自维护列表状态，迟早显示旧的东西。 */}
         {worldbookId && (
           <button
@@ -96,7 +96,7 @@ function Story(): JSX.Element {
           </button>
         )}
         <div className="flex-1" />
-        {/* **成本要看得见**（D28 那条「实时显示消耗，由用户手动打断」）。
+        {/* **成本要看得见**（R24 那条「实时显示消耗，由用户手动打断」）。
             store 每轮都在累加，而界面此前一个字都没有。只算这次连接之后的——
             它是"刚才这一段花了多少"，不是这局故事的总账。 */}
         {spent > 0 && (

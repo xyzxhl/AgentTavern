@@ -1,6 +1,6 @@
 """state 重放的语义。
 
-两条核心：D48 状态是路径的函数；**存储层不预设任何维度**——时间、地点、角色属性的
+两条核心：S42 状态是路径的函数；**存储层不预设任何维度**——时间、地点、角色属性的
 粒度与形态都取决于故事，定不了固定 schema。
 """
 
@@ -8,7 +8,7 @@ from agenttavern.models import StateDelta, WorldState, diff, replay
 
 
 def test_empty_delta_is_legal_and_noop() -> None:
-    """空增量合法（D19）——每 run 必交，哪怕没有变化。"""
+    """空增量合法（S43）——每 run 必交，哪怕没有变化。"""
     d = StateDelta()
     assert d.is_empty()
     assert replay([d, d, d]) == WorldState()
@@ -88,7 +88,7 @@ def test_append_onto_missing_key_creates_a_list() -> None:
 
 
 def test_remove_takes_items_off_a_list() -> None:
-    """``append`` 的逆运算（D96）。
+    """``append`` 的逆运算（S32）。
 
     缺了它，清单就只增不减，去掉一项只能 ``set`` 整个列表——实测模型干脆把
     列表拍成了字符串，结构一次性塌掉。纯文学场景看不见这个缺口：那里的
@@ -135,7 +135,7 @@ def test_remove_on_a_scalar_deletes_the_key() -> None:
 
 
 def test_remove_merges_across_multiple_writes_in_one_run() -> None:
-    """``state_write`` 可在一个 run 内多次调用，三种语义都要累积（D56）。"""
+    """``state_write`` 可在一个 run 内多次调用，三种语义都要累积（S20）。"""
     delta = StateDelta(remove={"包裹": ["甲"]}).merge(
         StateDelta(remove={"包裹": ["乙"], "另一个": ["丙"]})
     )
@@ -171,7 +171,7 @@ def test_apply_does_not_mutate_source() -> None:
 
 
 def test_merge_accumulates_like_replay() -> None:
-    """多次 state_write 累积成一份增量——一个 run 只有一份（D51/D56）。"""
+    """多次 state_write 累积成一份增量——一个 run 只有一份（S1/S20）。"""
     merged = StateDelta(set={"地点": "门口"}, append={"林.知情": ["a"]}).merge(
         StateDelta(set={"地点": "客厅", "时间": "傍晚"}, append={"林.知情": ["b"]})
     )
@@ -183,7 +183,7 @@ def test_merge_accumulates_like_replay() -> None:
 
 
 def test_structure_is_the_json_structure() -> None:
-    """从属关系**用嵌套表达**，不再用点分键名（D157）。
+    """从属关系**用嵌套表达**，不再用点分键名（S31）。
 
     早先是一层平铺 + `林.性格` 这种键，点号"仅用于渲染时分组"。换掉的理由里
     最硬的一条是：平铺结构里没有"层"，按层级控制展开根本做不了。
@@ -199,9 +199,9 @@ def test_structure_is_the_json_structure() -> None:
 
 
 def test_a_set_merges_deeply_instead_of_replacing_the_whole_branch() -> None:
-    """**深合并**（D157）：改一项不必重发整个角色。
+    """**深合并**（S31）：改一项不必重发整个角色。
 
-    整体重发正是清单被拍平的老路（D96）——模型为了改一个属性重写整个对象，
+    整体重发正是清单被拍平的老路（S32）——模型为了改一个属性重写整个对象，
     顺手把旁边那个清单写成了一句话。
     """
     state = replay([StateDelta(set={"林": {"在场": True, "知情": ["照片"]}})])
@@ -225,7 +225,7 @@ def test_append_and_remove_address_nested_lists() -> None:
     assert state.values["林"]["知情"] == ["西山的坟"]
 
 
-# -- 「改结果」反推增量（D65）---------------------------------------------------
+# -- 「改结果」反推增量（R22）---------------------------------------------------
 
 
 def test_diff_is_the_delta_that_turns_before_into_after() -> None:

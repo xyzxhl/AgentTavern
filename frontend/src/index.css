@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 @layer base {
-  /* **两套配色，切换只换变量**（D178）。深色是默认——这个界面一次要读很久。
+  /* **两套配色，切换只换变量**（S133）。深色是默认——这个界面一次要读很久。
      通道值分开写，为的是 Tailwind 的 `/10`、`/70` 这类透明度修饰符继续有效。 */
   :root,
   [data-theme="dark"] {
@@ -67,7 +67,7 @@
     @apply disabled:hover:border-line disabled:hover:text-dim;
   }
 
-  /* 正文的字号也归设置（D178）：`text-[15px]` 写死在组件里的话，
+  /* 正文的字号也归设置（S133）：`text-[15px]` 写死在组件里的话，
      "字大一点"这件事就得改代码。 */
   .prose-body {
     font-size: var(--prose-size);

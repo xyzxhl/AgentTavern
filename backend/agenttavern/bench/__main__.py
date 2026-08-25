@@ -128,7 +128,7 @@ def main() -> int:
         "--repeat",
         type=int,
         default=1,
-        help="每类判几次，只保留复现率——随机 grader 的单次判定是噪声（D101）",
+        help="每类判几次，只保留复现率——随机 grader 的单次判定是噪声（P19）",
     )
     p.add_argument("--no-grade", action="store_true", help="只采集不归因")
     p.add_argument("--out", default="bench", help="报告目录")

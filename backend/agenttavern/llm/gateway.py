@@ -3,12 +3,12 @@
 **用官方 SDK，但不用任何 agent SDK / 编排框架。** 区别是：SDK 只负责一次调用
 （重试、错误分类、超时、解析），**tool loop 完全由我们自己写**——本项目对它的控制
 粒度要求很高：run 内暂存区、``submit_outline`` 的终止语义、契约校验、按阶段打断
-（D142）、无超时挂起（D66）。框架会挡在中间，SDK 不会。
+（S49）、无超时挂起（S24）。框架会挡在中间，SDK 不会。
 
 只用 chat completions 这一个面意味着任何兼容端点都能接：OpenAI、OpenRouter、
 DeepSeek、本地 llama.cpp / vLLM。配置见 ``.env``。
 
-**默认流式**（D160）。D7「流式让步于 agent 设计」反对的是为流式改结构；
+**默认流式**（S118）。P21「流式让步于 agent 设计」反对的是为流式改结构；
 作为输出通道加回来不动任何结构——上层拿到的 `ModelResponse` 两种路径完全一样。
 """
 
@@ -26,7 +26,7 @@ from .types import LLMError, Message, ModelResponse, ToolCall, ToolSpec, Usage
 OnDelta = Callable[[str, str], None]
 """``(kind, text)``——``kind`` 是 ``"content"`` 或 ``"reasoning"``。
 
-**按调用传，不挂在 gateway 上**（D160）：一个 gateway 被所有 session 共用，
+**按调用传，不挂在 gateway 上**（S118）：一个 gateway 被所有 session 共用，
 挂实例字段等于让并发的两轮互相串台。
 """
 
@@ -86,7 +86,7 @@ class LLMGateway:
 
         不传的后果不是"没缓存"，而是**所有会话挤在同一个空间里**：同一个场景
         连跑两次会互相命中，于是 `cache_rate` 里混进了跨会话的旧缓存，
-        而 D114 要量的是**同一段对话内的前缀复用**。传上会话 id，这个数才是干净的。
+        而 S60 要量的是**同一段对话内的前缀复用**。传上会话 id，这个数才是干净的。
         """
         payload: dict[str, Any] = {
             "model": model or self._settings.llm_model,
@@ -126,7 +126,7 @@ class LLMGateway:
     async def _consume(self, payload: dict[str, Any], on_delta: OnDelta) -> ModelResponse:
         """把流式分片攒回一个完整的 `ModelResponse`，边攒边把文字推出去。
 
-        **上层拿到的东西和非流式完全一样**——这是流式不扭曲结构的关键（D160）：
+        **上层拿到的东西和非流式完全一样**——这是流式不扭曲结构的关键（S118）：
         agent 那侧不知道自己是不是在流，工具循环、契约、重放全都不用改。
         流式只是多了一条**旁路**：正文与思考的分片顺手推给 UI。
 
@@ -225,7 +225,7 @@ def _parse(response: Any) -> ModelResponse:
 
 
 def _reasoning_of(message: Any) -> str | None:
-    """取思考型模型的推理段（D120）。
+    """取思考型模型的推理段（S62）。
 
     **它不在 OpenAI 的 schema 里**，SDK 把它丢进 `model_extra`。所以既要看
     `model_extra`，也要 `getattr` 兜一手——不同端点、不同 SDK 版本落点不一样，

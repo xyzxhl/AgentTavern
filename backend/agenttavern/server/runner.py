@@ -2,10 +2,10 @@
 
 三条硬约束：
 
-- **队列 FIFO，每条输入独立成一个 run，不打包**（D26）——打包会跳过中间的世界响应。
-- **用户输入优先于自主推进**（D27）——队列非空时不做 goal 驱动的自动续跑，
+- **队列 FIFO，每条输入独立成一个 run，不打包**（S107）——打包会跳过中间的世界响应。
+- **用户输入优先于自主推进**（S108）——队列非空时不做 goal 驱动的自动续跑，
   否则排队的输入被消费时已经过时。
-- **`ask_question` 不设超时**（D66）——等待期间逻辑上什么都没发生，
+- **`ask_question` 不设超时**（S24）——等待期间逻辑上什么都没发生，
   实现上就是 ``await`` 一个 future，loop 不需要任何特殊的挂起状态机。
 """
 
@@ -62,9 +62,9 @@ _DELTA_KINDS = ("content", "reasoning")
 class _Queued:
     text: str
     regenerate: bool = False
-    """重生成：挂在**当前叶的父**下，成为它的兄弟（D46）；普通输入挂在当前叶下。
+    """重生成：挂在**当前叶的父**下，成为它的兄弟（S44）；普通输入挂在当前叶下。
 
-    **这里不再带父节点 id**（D147）。以前带，是因为可以重生成任意历史节点，而那
+    **这里不再带父节点 id**（S44）。以前带，是因为可以重生成任意历史节点，而那
     时不能靠改 `session.active_leaf_id` 传参——共享状态，若此刻有 run 在飞，
     它结束时会把活跃叶覆盖成自己。现在分支只能在当前节点上开，"父节点是谁"就是
     出队那一刻的活跃叶推出来的，没有第二个来源可对不上。
@@ -90,14 +90,14 @@ class SessionRunner:
         self._gateway = gateway
         self._broadcast = broadcast
         self._stream = stream
-        """**边生成边推**（`Settings.stream`，D160/D174）。**它在服务级**：
+        """**边生成边推**（`Settings.stream`，S118/S80）。**它在服务级**：
         这组开关里唯一一条**关于交付而不是关于能力**的——开关它不改变模型
         收到什么、也不改变产出，只改变用户什么时候看到。别的开关全都上调
         到了提示词层，只有这一条上调到服务。
         """
         self._persist_trace = persist_trace
         self._developer = developer
-        """**服务级开发者模式**（D156，`Settings.developer`）：额外记录每次模型
+        """**服务级开发者模式**（S113，`Settings.developer`）：额外记录每次模型
         往返的完整输入输出，并强制 trace 落盘。上面那条 `persist_trace` 管的是
         另一件事——它决定要不要留 trace 文件，这条决定 trace 里有没有原文。
         """
@@ -114,7 +114,7 @@ class SessionRunner:
 
         self._run_id: str = ""
         """当前这一轮的 id。**流式分片要带上它**——前端靠它把字归到正确的一轮
-        名下（D160）。id 是在 `execute_run` 内部生成的，外面只能从 trace 里接住。
+        名下（S118）。id 是在 `execute_run` 内部生成的，外面只能从 trace 里接住。
         """
 
         # 所有出站消息走**同一条队列**，由单个 sender 顺序送出。
@@ -123,19 +123,19 @@ class SessionRunner:
         self._out: asyncio.Queue[ServerMessage] = asyncio.Queue()
         self._sender_task: asyncio.Task[None] | None = None
 
-        # goal 的预算计数**已经落盘**了（`GoalRun.spent_*`，D148）。它以前是这里的
-        # 两个实例字段——进程重启就归零，于是 D28 那个用来兜住自主运行成本的上限
+        # goal 的预算计数**已经落盘**了（`GoalRun.spent_*`，S92）。它以前是这里的
+        # 两个实例字段——进程重启就归零，于是 R24 那个用来兜住自主运行成本的上限
         # 实际上从来没生效过。
 
         self._goal_input: str | None = None
-        """goal_manager 替用户写的下一条输入（D141）。
+        """goal_manager 替用户写的下一条输入（S92）。
 
         自动续跑时拿它当 `user_input`——**这就是「模拟用户输入」落地的地方**。
         它不是持久状态：进程内的一次传递，用完即清。
         """
 
         self._goal_opening = False
-        """目标刚被设上 / 恢复，**还没让 goal_manager 规划过**（D168）。
+        """目标刚被设上 / 恢复，**还没让 goal_manager 规划过**（S100）。
 
         置位的是 `nudge()`，消费的是下一次 goal 驱动的 run——它会在 director 之前
         先跑一次 goal_manager，拿到开场那条输入。判定跑过之后就清掉：那时它刚写
@@ -145,7 +145,7 @@ class SessionRunner:
         self._autocontinue_armed = False
         """自动续跑是**一次 run 的后果**，不是冷启动就发生的事。
 
-        D28 的原话是「正常一轮生成结束后检查是否达标，未达标则开启下一轮」——
+        R24 的原话是「正常一轮生成结束后检查是否达标，未达标则开启下一轮」——
         所以它只在一次 run 成功结束后才被打开。否则带 goal 的 session 一连上
         就会自己开始生成，用户还没说话。
         """
@@ -196,7 +196,7 @@ class SessionRunner:
         有 run 在跑时它同样安全：`None` 在队列里等着，那一轮结束后照常被取出，
         而 `_check_goal` 反正也会重新打开自动续跑。
 
-        **`_goal_opening` 一并置位**（D168）：紧接着那一轮要先让 goal_manager
+        **`_goal_opening` 一并置位**（S100）：紧接着那一轮要先让 goal_manager
         规划、写出开场的输入，否则第一轮是空手推的——而 director 从来不读 goal，
         那一轮完全不知道有目标这回事。
         """
@@ -212,14 +212,14 @@ class SessionRunner:
         return True
 
     def interject(self, text: str, *, interrupt: bool) -> bool:
-        """把一句话插进**正在跑的** run（F3b / D119）。没有 run 在跑则返回 False。
+        """把一句话插进**正在跑的** run（F3b / S50）。没有 run 在跑则返回 False。
 
         插入点在**操作边界**上——一次模型调用或一次工具调用之间，不是等这一轮
         写完。两个动作的差别只有一处：``interrupt=True`` 掐掉在飞的那次操作，
         ``False`` 让它做完再插。
 
         **没有 run 在跑时不静默吞掉**：调用方（WS 层）应改走 `submit`，
-        那才是"新的一轮"的语义（D26）。
+        那才是"新的一轮"的语义（S107）。
         """
         if self._current is None or self._current.done() or self._inbox is None:
             return False
@@ -232,11 +232,11 @@ class SessionRunner:
         """打断当前 run，不带话。
 
         **不是"作废"**：掐掉在飞的那次操作后，如果没有话要插，这一轮挂起成草稿，
-        下一条输入接着它跑（D118）。用户按停止只说明"别再往下跑了"。
+        下一条输入接着它跑（S48）。用户按停止只说明"别再往下跑了"。
 
         writer / state 阶段没有操作级的打断（各是一次不可分的生成），那里靠取消
         整个 task。**掐到哪一段，哪一段就判为失败、产出作废**，已完成的上游存进
-        草稿等续跑（D142）——半截正文不留，留着下一轮会接着那半句写下去，
+        草稿等续跑（S49）——半截正文不留，留着下一轮会接着那半句写下去，
         而用户按停止恰恰是因为不想要它。
         """
         if self._current is None or self._current.done():
@@ -254,7 +254,7 @@ class SessionRunner:
             try:
                 item: _Queued | None = self._queue.get_nowait()
             except asyncio.QueueEmpty:
-                # 队列空了才考虑 goal 驱动的自动续跑——用户输入优先（D27）。
+                # 队列空了才考虑 goal 驱动的自动续跑——用户输入优先（S108）。
                 item = None if self._should_autocontinue() else await self._queue.get()
 
             # `None` 有两个来源：队列空了而 goal 该自己开下一轮，或者 `nudge()`
@@ -284,7 +284,7 @@ class SessionRunner:
                 await self.submit(leftover)
 
             if self._current.cancelled():
-                # 打断后推演多半已存成草稿（D118）——下一条输入会接着它跑，
+                # 打断后推演多半已存成草稿（S48）——下一条输入会接着它跑，
                 # 不是从头重来。用户必须知道这件事，否则会以为自己按的是"取消"。
                 self._emit(RunInterrupted(resumable=self._repo.load_draft() is not None))
             else:
@@ -307,11 +307,11 @@ class SessionRunner:
     async def _execute(self, item: _Queued | None) -> None:
         session = self._repo.load_session()
         # **id 提前生成**：目标开场时 goal_manager 要先说话，而那些记录属于
-        # 它开出来的这一轮（D168）。
+        # 它开出来的这一轮（S100）。
         run_id = new_id("run")
 
-        # 自动续跑时用 goal_manager 写的那条输入（D141）。**用完即清**：它只对紧接着
-        # 的这一轮有效，留着会在用户插话之后被错误地重放。真的用户输入优先（D27），
+        # 自动续跑时用 goal_manager 写的那条输入（S92）。**用完即清**：它只对紧接着
+        # 的这一轮有效，留着会在用户插话之后被错误地重放。真的用户输入优先（S108），
         # 所以只在 `item is None` 这条路上取。
         simulated = self._goal_input if item is None else None
         self._goal_input = None
@@ -336,7 +336,7 @@ class SessionRunner:
                 self._gateway,
                 # 不传 registry：工具面依赖各 agent YAML 里的开关与 worldinfo 模式，
                 # 两者都可能被用户改，必须每轮重新组装。
-                # **来源要标注**（D148）：goal_manager 靠它分辨"剧情偏了是我推错了"
+                # **来源要标注**（S92）：goal_manager 靠它分辨"剧情偏了是我推错了"
                 # 和"用户主动把剧情带走了"。director 不读这个字段——两种输入在它
                 # 眼里必须一模一样，否则它会对模拟输入区别对待。
                 user_input=(
@@ -348,7 +348,7 @@ class SessionRunner:
                         else None
                     )
                 ),
-                # **父节点只有一个来源：出队那一刻的活跃叶**（D147）。
+                # **父节点只有一个来源：出队那一刻的活跃叶**（S44）。
                 # 普通输入挂在它下面（延长），重生成挂在它的父下面（开兄弟）。
                 parent_id=_parent_for(self._repo, session.active_leaf_id, item),
                 ask_user=self._ask_user,
@@ -356,8 +356,8 @@ class SessionRunner:
                 inbox=self._inbox,
                 developer=self._developer,
                 persist_trace=self._persist_trace,
-                # 分片带上 run_id：前端要把它归到正确的那一轮名下（D160）。
-                # **不流式时干脆不给出口**（D174）：那是服务级的交付开关，
+                # 分片带上 run_id：前端要把它归到正确的那一轮名下（S118）。
+                # **不流式时干脆不给出口**（S80）：那是服务级的交付开关，
                 # 在这里决定一次，下游不必再各判一遍。
                 on_delta=self._emit_delta if self._stream else None,
                 run_id=run_id,
@@ -391,10 +391,10 @@ class SessionRunner:
         await self._check_goal(outcome.node.id, outcome.usage)
 
     async def _open_goal(self, session: Session, run_id: str) -> str | None:
-        """**目标刚设上（或刚恢复）时，先让它规划一次**（D168）。返回开场那条输入。
+        """**目标刚设上（或刚恢复）时，先让它规划一次**（S100）。返回开场那条输入。
 
         不这么做的话，goal 驱动的第一轮是空手推的：**director 从来不读 goal**
-        （它眼里模拟输入和真输入必须一模一样，D148），所以那一轮完全不知道有目标
+        （它眼里模拟输入和真输入必须一模一样，S92），所以那一轮完全不知道有目标
         这回事，而它恰恰是最该定方向的一轮。goal_manager 要等它写完才第一次开口，
         然后照着一段随机开的剧情去拆阶段。
 
@@ -415,7 +415,7 @@ class SessionRunner:
         return step.next_input
 
     async def _check_goal(self, leaf_id: str, usage: Usage) -> None:
-        """goal_manager 在 **run 末**跑（D28/D40/D141/D148）——与控制权（轮内）
+        """goal_manager 在 **run 末**跑（R24/S92/S92/S92）——与控制权（轮内）
         作用点不同。
 
         它做的事都在那三个工具里（`plan` / `advance` / `finish`），这里只负责
@@ -423,7 +423,7 @@ class SessionRunner:
         **它写的那条输入存在 `_goal_input` 里，下一次自动续跑拿去用**——
         这就是"模拟用户输入"落地的地方。
 
-        ``usage`` 是**刚跑完那一轮**的开销。它得算进 goal 的预算里：D28 那条预算
+        ``usage`` 是**刚跑完那一轮**的开销。它得算进 goal 的预算里：R24 那条预算
         兜的是「自主运行成本」，而钱主要花在它开出来的那些 run 上（细纲 + 正文 +
         状态），不是它自己那一两次判定调用——只算后者的话预算兜住的是零头。
         暂停期间不算：那时候是用户自己在写，goal 没有在跑。
@@ -435,20 +435,20 @@ class SessionRunner:
         run = session.goal_run or GoalRun(
             # 走到这里还没有 `GoalRun`，说明 goal 不是经 `SetGoal` 设的（会话创建时
             # 就带着，或走 REST 改的）。那它是**这一轮之前**就有的，所以起点划在
-            # 这一轮的父节点上（D150）。
+            # 这一轮的父节点上（S93）。
             started_at_leaf_id=self._repo.load_node(leaf_id).parent_id
         )
         if run.paused:
             return
 
         if self._goal_opening:
-            # **目标是在这一轮跑着的时候设上（或恢复）的——那这一轮不算它的**（D169）。
+            # **目标是在这一轮跑着的时候设上（或恢复）的——那这一轮不算它的**（S101）。
             # 它早就交给 director 了，抢不回来：判它、把它的开销记到目标账上，
             # 都是在为一件目标没参与的事结账。
             #
             # 所以起点划到它身上：它和它之前的剧情一样进静态前缀、给细纲，
             # 目标**从下一轮开始**。开场那次留给下一轮去跑——那时才有它自己的
-            # `run_id` 可挂（D168），而在这里跑就只能挂到刚结束的这一轮名下。
+            # `run_id` 可挂（S100），而在这里跑就只能挂到刚结束的这一轮名下。
             run.started_at_leaf_id = leaf_id
             self._save_goal_run(run)
             return
@@ -481,10 +481,10 @@ class SessionRunner:
             developer=self._developer,
         )
 
-        # 推进节奏是 goal_manager 自己 YAML 里的一个 `choice`（D173）——
-        # 它决定阶段拆多细、一条输入推多远（D93 那条投影的第三面）。
+        # 推进节奏是 goal_manager 自己 YAML 里的一个 `choice`（R31）——
+        # 它决定阶段拆多细、一条输入推多远（S14 那条投影的第三面）。
         sync_conversation(
-            # 用户扮演谁**就是那条标了 is_player 的角色条目**（D158/D171），
+            # 用户扮演谁**就是那条标了 is_player 的角色条目**（S67/S65），
             # 而那条规则只有一处实现。
             player_character(self._repo.worldbook()),
             goal,
@@ -497,7 +497,7 @@ class SessionRunner:
             goal,
             run,
             user_id=session.id,
-            # **它的思考也要能看见**（D166）。分片和它的 trace 事件挂同一个
+            # **它的思考也要能看见**（S126）。分片和它的 trace 事件挂同一个
             # `run_id`——显式传而不是靠 `self._run_id` 刚好设对了。
             on_delta=(
                 (lambda kind, text: self._emit_delta(Actor.GOAL_MANAGER.value, kind, text, run_id))
@@ -520,7 +520,7 @@ class SessionRunner:
             self._finish_goal(*step.finished)
             return
 
-        # 预算到顶**不是失败**，是暂停：用户可以把上限调大接着跑（D148）。
+        # 预算到顶**不是失败**，是暂停：用户可以把上限调大接着跑（S92）。
         # 对话原样留着，所以恢复时不用重新判一遍。
         exhausted = run.exhausted(goal)
         if exhausted is not None:
@@ -531,7 +531,7 @@ class SessionRunner:
             # 作废——继续推进度只会让界面显示一个已经不存在的目标。
             self._goal_input = None
             return
-        # **每一轮都推一次进度**（D161）：中间状态被一条条划掉是用户最想看的东西，
+        # **每一轮都推一次进度**（S129）：中间状态被一条条划掉是用户最想看的东西，
         # 而它此前只写在盘上，界面要等到 goal 结束才会动。
         self._emit(
             GoalProgress(
@@ -547,7 +547,7 @@ class SessionRunner:
 
     def _emit_delta(self, actor: str, kind: str, text: str, run_id: str | None = None) -> None:
         """把一段分片推出去。**能力关掉时根本走不到这里**——`ctx.stream_to`
-        返回 `None`，那一路直接退回非流式（D160）。
+        返回 `None`，那一路直接退回非流式（S118）。
 
         ``run_id`` 缺省用当前这一轮的。显式传是给 goal_manager 用的：它在 run
         结束**之后**跑，那时 `self._run_id` 还没被下一轮改掉，两者其实一样，
@@ -577,7 +577,7 @@ class SessionRunner:
         # 于是它当场被自己的开场白抹掉。
         #
         # 已经宣告过就不再宣告：goal 开场时 `_execute` 提前宣告过一次（要让
-        # 规划那几十秒在界面上有着落，D168），那和这里说的是同一轮。
+        # 规划那几十秒在界面上有着落，S100），那和这里说的是同一轮。
         if event.type is TraceEventType.RUN_STARTED and event.run_id != self._run_id:
             self._run_id = event.run_id
             self._emit(RunStarted(run_id=event.run_id))
@@ -585,7 +585,7 @@ class SessionRunner:
 
     def _save_goal_run(self, run: GoalRun) -> bool:
         """写回运行时状态。**每次都重新载入 session**——判定期间可能有 REST
-        请求改过它（元操作与生成并行，D24）。
+        请求改过它（元操作与生成并行，P10）。
 
         **目标没了就不写**：判定要跑几十秒，用户完全可能在这中间按了放弃。
         照写的话会留下一份没有主人的 `goal_run`——它带着几十万字的对话，而且
@@ -601,7 +601,7 @@ class SessionRunner:
 
     def _finish_goal(self, outcome: str, reason: str) -> None:
         """交回控制权。**两种终态都走这里，但用户必须知道是哪一种**：
-        一个是达成了，一个是这个目标已经不可能了，后续动作完全不同（D148）。
+        一个是达成了，一个是这个目标已经不可能了，后续动作完全不同（S92）。
 
         goal 与它的运行时状态一并清掉——**不留历史 goal**。
         """
@@ -626,7 +626,7 @@ class SessionRunner:
 
         self._emit(Question(question_id=question_id, question=question, options=options))
         try:
-            # 不设超时（D66）。这就是全部的挂起机制——suspend/resume，
+            # 不设超时（S24）。这就是全部的挂起机制——suspend/resume，
             # 不是 timeout/retry；上下文不会过期，因为逻辑上什么都没发生。
             return await future
         finally:
@@ -647,10 +647,10 @@ class SessionRunner:
 
 
 def _parent_for(repo: SessionRepository, leaf_id: str | None, item: _Queued | None) -> str | None:
-    """这一轮挂在哪个节点下。**分支只能在当前节点上开**（D147）。
+    """这一轮挂在哪个节点下。**分支只能在当前节点上开**（S44）。
 
     - 普通输入（含 goal 驱动的自动续跑）→ 挂在**当前叶**下，这是延长，不是分支。
-    - 重生成 → 挂在**当前叶的父**下，成为它的兄弟，原分支保留（D46）。
+    - 重生成 → 挂在**当前叶的父**下，成为它的兄弟，原分支保留（S44）。
 
     以前还有第三条路：提交时显式指定任意 `parent_id`，于是可以在历史上任何一点
     分叉。收掉它是因为**「当前节点」从此有唯一含义**——想在更早的地方分叉，

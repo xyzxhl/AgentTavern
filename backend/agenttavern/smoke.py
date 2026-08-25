@@ -61,7 +61,7 @@ def render_report(
         f"- 模型：`{settings.llm_model}` @ `{settings.llm_base_url}`",
         f"- 结果：{'**失败** — ' + failure if failure else '成功'}",
         f"- 指标：{json.dumps(metrics.as_dict(), ensure_ascii=False)}",
-        # 配置整体上调到了提示词层（D174），session 上没有它们了。记下**当前
+        # 配置整体上调到了提示词层（S80），session 上没有它们了。记下**当前
         # 选的哪几档**——冒烟报告要能回答"这份产出是在什么设定下跑出来的"。
         f"- 文风 / 视角 / 铺陈：{selected('writer', 'prose_style')} / "
         f"{selected('writer', 'pov')} / {selected('writer', 'density')}",
@@ -165,7 +165,7 @@ async def run_once(args: argparse.Namespace) -> int:
         make_session, worldbook, world_name = WORLDS[args.world]
         session = make_session()
         repo = store.create_session(session)
-        # 设定是一级资产（D170），而它只有条目（D175）——名字是唯一的字段。
+        # 设定是一级资产（S63），而它只有条目（S64）——名字是唯一的字段。
         book = repo.book()
         book.save(book.load().model_copy(update={"name": world_name}))
         for entry in worldbook:

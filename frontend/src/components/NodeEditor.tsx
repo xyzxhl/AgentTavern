@@ -5,14 +5,14 @@ import type { Node, StateDelta } from "../protocol";
 import { useSession } from "../store";
 
 /**
- * 直接改一轮的产出（D65）。**细纲 / 正文 / 状态摆在同一处**——它们是同一个节点
+ * 直接改一轮的产出（R22）。**细纲 / 正文 / 状态摆在同一处**——它们是同一个节点
  * 的三个面，分到三个地方去改，用户就得先知道"这一轮"是由这三样组成的。
  *
- * 改完在 trace 里留一条 `USER_EDIT`（D50）：手改过的正文不能在回看时被当成
+ * 改完在 trace 里留一条 `USER_EDIT`（S47）：手改过的正文不能在回看时被当成
  * 模型的产出去归因。
  *
  * **改的只是这一轮，下游照常重放。** 那不是危险，那就是 event-sourced 的正常
- * 行为（D48/D49）——所以界面上不写"改历史会连锁"之类的警告，那只会让用户不敢
+ * 行为（S42/S43）——所以界面上不写"改历史会连锁"之类的警告，那只会让用户不敢
  * 用一个本来正常的功能。
  */
 export function NodeEditor({ node }: { node: Node }): JSX.Element {
@@ -138,7 +138,7 @@ export function NodeEditor({ node }: { node: Node }): JSX.Element {
   );
 }
 
-/** 同一个编辑器的两个视图，**不是两个概念**（D65）。 */
+/** 同一个编辑器的两个视图，**不是两个概念**（R22）。 */
 function Toggle({
   now,
   pick,

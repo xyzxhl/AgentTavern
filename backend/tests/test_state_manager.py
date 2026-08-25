@@ -1,4 +1,4 @@
-"""state_manager：状态维护后置到 writer 之后（D143）。
+"""state_manager：状态维护后置到 writer 之后（S7）。
 
 这里守的是三件事，各自坏起来的样子完全不同：
 
@@ -60,7 +60,7 @@ async def test_it_does_not_read_the_world_or_the_goal(tmp_path: Path) -> None:
     """它不创作，所以不给它任何"该写什么"的依据——只给"发生了什么"。"""
     llm = ScriptedLLM(text("无变化。"), auto_state=False)
     ctx, tracer, reg = _ctx(tmp_path, llm, Session())
-    # 题材和设定都是 worldbook 条目（D175）——两样都不该到它手里。
+    # 题材和设定都是 worldbook 条目（S64）——两样都不该到它手里。
     book = ctx.repo.book()
     book.save_entry(WorldbookEntry(name="题材与基调", content="低魔悬疑"))
     book.save_entry(WorldbookEntry(name="教团", content="总部在旧城区。"))
@@ -101,7 +101,7 @@ async def test_recent_turns_carry_the_full_triple(tmp_path: Path) -> None:
 
 async def test_only_the_last_few_turns_come_along(tmp_path: Path) -> None:
     """滑动窗口，宽度是 `state_manager.yaml` 里 `recent` 那条 context 上的
-    `runs`（默认 3，D174）——**它从来不是一条独立的配置，是那段 context
+    `runs`（默认 3，S80）——**它从来不是一条独立的配置，是那段 context
     的属性**。
 
     **这是它最大的一笔开销**——前几轮的正文占了上下文的大头，而且每轮全变，
@@ -151,7 +151,7 @@ async def test_the_exit_is_calling_no_tool(tmp_path: Path) -> None:
 
 
 async def test_several_writes_accumulate_into_one_delta(tmp_path: Path) -> None:
-    """一轮内可多次写入，累积成**一份**增量——节点与 run 一一对应（D51/D56）。"""
+    """一轮内可多次写入，累积成**一份**增量——节点与 run 一一对应（S1/S20）。"""
     llm = ScriptedLLM(
         tool("state_write", set={"地点": "客厅"}),
         tool("state_write", append={"林.知情": ["照片"]}),
@@ -254,7 +254,7 @@ async def test_an_interrupt_is_not_a_failure(tmp_path: Path) -> None:
 
 
 async def test_state_off_means_it_never_runs(tmp_path: Path) -> None:
-    """**关掉这个 agent 就没人写 state**（D174）。
+    """**关掉这个 agent 就没人写 state**（S80）。
 
     开关是 `state_manager.yaml` 顶上的 `enabled`——它从来就是「这个 agent
     跑不跑」，而不是一条独立的能力，所以不需要第二个。

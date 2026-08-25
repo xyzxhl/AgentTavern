@@ -1,7 +1,7 @@
 import { useSession } from "../store";
 
 /**
- * 跑着的目标，摆在输入框正上方（D163）。
+ * 跑着的目标，摆在输入框正上方（S128）。
  *
  * **它会自己开下一轮**——这件事必须一直看得见。只放侧栏标签后面的话，用户切到
  * 状态页就再也不知道那边还在动，而下一轮什么时候开、还剩几轮预算，恰恰是他
@@ -20,7 +20,7 @@ export function GoalBar(): JSX.Element | null {
   const subgoals = progress?.subgoals ?? run?.plan?.subgoals ?? [];
   const done = subgoals.filter((s) => s.done).length;
   const spent = progress?.spent_runs ?? run?.spent_runs ?? 0;
-  // **`null` 是"不设上限"，不是 0**（D164）：`??` 会把它悄悄换成另一条的值。
+  // **`null` 是"不设上限"，不是 0**（S97）：`??` 会把它悄悄换成另一条的值。
   const cap = (progress ? progress.max_runs : goal.max_runs) ?? null;
   const paused = run?.paused ?? false;
 

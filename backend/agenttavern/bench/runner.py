@@ -35,14 +35,14 @@ from .scenarios import Scenario
 
 @dataclass(frozen=True)
 class Variant:
-    """一个消融/对照配置。**它改的是提示词，不是 session**（D174）。
+    """一个消融/对照配置。**它改的是提示词，不是 session**（S80）。
 
     以前它往 session 上写 `capabilities` / `control`。那两个类整体上调到了
     提示词层之后，这条路失去了全部着力点——而 P19 要求同一批素材跑多档，
     回归集不能就这么散掉。
 
     **补法是换一份 YAML，不是开一个 `overrides` 后门**：一个"只有程序能用"
-    的第二取值入口迟早会有第二个调用者，而那正是 D173 要消掉的东西。
+    的第二取值入口迟早会有第二个调用者，而那正是 R31 要消掉的东西。
     `prompts_as` 把 `prompting/` 复制一份、在副本上改那几档，跑完就删。
 
     变体只改配置，不改题材与输入——否则比的就不是同一件事了（P19）。
@@ -96,7 +96,7 @@ class TurnRecord:
 
     @property
     def ratio(self) -> float | None:
-        """正文 / 细纲。隔离是否生效最廉价的指标（D93）。"""
+        """正文 / 细纲。隔离是否生效最廉价的指标（S14）。"""
         if not self.outline or not self.prose:
             return None
         return len(self.prose) / len(self.outline)
@@ -162,7 +162,7 @@ class BenchResult:
             "prose_chars_avg": _mean([len(t.prose) for t in done]),
             "tokens_in": sum(t.metrics.tokens_in for t in done),
             "tokens_out": sum(t.metrics.tokens_out for t in done),
-            # 缓存命中率：D114 的**唯一**理由，此前从没被量过。
+            # 缓存命中率：S60 的**唯一**理由，此前从没被量过。
             "cache_rate": _rate(
                 sum(t.metrics.cache_hit for t in done),
                 sum(t.metrics.tokens_in for t in done),
@@ -171,12 +171,12 @@ class BenchResult:
             "e0_pushbacks": sum(t.metrics.e0_pushbacks for t in done),
             "parse_errors": sum(t.metrics.parse_errors for t in done),
             "tool_errors": sum(t.metrics.tool_errors for t in done),
-            # ask_question（D155）。**`questions_not_three` 是契约检查**：
+            # ask_question（S23）。**`questions_not_three` 是契约检查**：
             # 参数上写死了恰好三个，这里量的是模型实际给了几个。
             "questions": len(questions),
             "questions_not_three": sum(1 for n, _ in questions if n != 3),
             "questions_free_form": sum(1 for _, free in questions if free),
-            # 摘要**没有上限了，只统计**（D154）。看的是压缩比而不是绝对字数：
+            # 摘要**没有上限了，只统计**（S25）。看的是压缩比而不是绝对字数：
             # 249 字是 10× 还是 1.6×，取决于它从多少压下来。
             "segments": len(segments),
             "summary_chars_avg": _mean([out for _, _, out in segments]),
@@ -209,7 +209,7 @@ async def run_scenario(
     **一轮失败不终止整条序列**——后续轮次仍会在最后一个成功节点上继续。
     否则第一轮的偶发错误会让整批样本作废，而我们要的正是失败样本。
 
-    **整条序列跑在一份改过的提示词副本上**（D174）：场景自带的那几档（文风、
+    **整条序列跑在一份改过的提示词副本上**（S80）：场景自带的那几档（文风、
     要不要检索）加上变体要消融的那几处，一起写进副本，跑完删掉——仓库里那份
     不会被动过。
     """
@@ -231,7 +231,7 @@ async def _run_scenario(
     store = Store(settings.data_dir)
     session = scenario.make_session()
     repo = store.create_session(session)
-    # 设定是**一级资产**（D170）：场景把整份都建起来。**它只有条目**（D175）——
+    # 设定是**一级资产**（S63）：场景把整份都建起来。**它只有条目**（S64）——
     # 题材与基调也是其中一条，worldbook 上除了名字没有别的字段。
     book = repo.book()
     book.save(book.load().model_copy(update={"name": scenario.world_name}))
@@ -309,7 +309,7 @@ async def _drive_goal(
     result: BenchResult,
     usage: Usage,
 ) -> str | None:
-    """run 末跑一次 goal_manager，返回它写的下一条输入（D148）。
+    """run 末跑一次 goal_manager，返回它写的下一条输入（S92）。
 
     这是 `SessionRunner._check_goal` 的 bench 版：没有 WebSocket、没有队列，
     但**判定与预算的语义必须一致**——否则量出来的不是产品跑起来的样子。
@@ -397,7 +397,7 @@ _answered = itertools.count()
 
 
 async def auto_answer(question: str, options: list[str]) -> str:
-    """非交互作答。**两条路轮流走**（D155）：奇数次自由作答，偶数次挑一个选项。
+    """非交互作答。**两条路轮流走**（S23）：奇数次自由作答，偶数次挑一个选项。
 
     以前一律取第一个选项，于是「用户自己写一条」那条路在采集里**一次都没跑过**——
     而它和三选一对后续推演的分量完全不同（模型没列过的第四条路）。轮流走保证

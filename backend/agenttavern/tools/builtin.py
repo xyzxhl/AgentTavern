@@ -2,10 +2,10 @@
 
 **这里装的是全部工具，不是某一个 agent 的工具面**——谁拿到哪几个由
 `registry.py` 决定。`state_write` 只给 state_manager，`submit_outline` 只给
-director（D143）。
+director（S7）。
 
 **明确不提供**（同样重要）：任何让 director 读正文的工具、调用 writer 的工具、
-生成子 agent、修改元指令 / 控制维度、写文件 / 执行代码。头两条是 D54 的基础——
+生成子 agent、修改元指令 / 控制维度、写文件 / 执行代码。头两条是 S5 的基础——
 director 能覆盖五倍历史跨度，正是因为它自己从不读正文；工具返回值会回流到调用者
 上下文，正文一旦这样回流，隔离当场就没了。（正文经 state_manager 折成键值再进
 state 是另一回事：那是一次有损压缩，且跨了 run 边界。）
@@ -37,12 +37,12 @@ MAX_READ_CHARS = LIMITS.context.tool_read_chars
 
 class SubmitOutlineParams(BaseModel):
     # 「细纲该写什么、不该写什么」整节在 `director.yaml` 的 `output_contract` 里，
-    # 这里不重复（D152）。
+    # 这里不重复（S27）。
     outline: str = Field(description="本轮细纲，一整段文字。")
 
 
 async def _submit_outline(ctx: RunContext, params: SubmitOutlineParams) -> ToolResult:
-    # **E0 契约已作废**（D143）：它原先要求提交细纲前必须写过一次 state_write。
+    # **E0 契约已作废**（S7）：它原先要求提交细纲前必须写过一次 state_write。
     # director 不再维护状态，这里也就没有前置条件了。
     ctx.outline = params.outline
     return ToolResult(
@@ -131,7 +131,7 @@ async def _state_write(ctx: RunContext, params: StateWriteParams) -> ToolResult:
 
 
 # --------------------------------------------------------------------------
-# history —— 全量索引 + 按需展开（D63）
+# history —— 全量索引 + 按需展开（S53）
 # --------------------------------------------------------------------------
 
 
@@ -144,7 +144,7 @@ class HistorySearchParams(BaseModel):
 
 
 async def _history_search(ctx: RunContext, params: HistorySearchParams) -> ToolResult:
-    """**命中只做标注，不做筛选**（D62）。
+    """**命中只做标注，不做筛选**（P13）。
 
     此前 ``query`` 是个子串过滤器：查不中就返回空列表，而模型会把"空"读成
     "没这回事"——这正是 lorebook 关键词触发不合格的那个理由，我们自己却犯了。
@@ -197,7 +197,7 @@ class HistoryReadParams(BaseModel):
 async def _history_read(ctx: RunContext, params: HistoryReadParams) -> ToolResult:
     """展开索引里的一条 ref。
 
-    **索引按段给 ref，展开也必须按段给回全文**（D110）。摘要在上下文里
+    **索引按段给 ref，展开也必须按段给回全文**（S57）。摘要在上下文里
     顶替的是**整段**——那几轮的细纲、当时查了什么、写了什么，全被它替掉了。
     只还回末节点那一轮，等于告诉模型"这段就这么点内容"，比不展开更糟：
     它会以为自己已经看全了。
@@ -226,7 +226,7 @@ async def _history_read(ctx: RunContext, params: HistoryReadParams) -> ToolResul
 
     body: dict[str, Any] = {"轮次": out}
     # **预算耗尽必须说出来。** 以前这里直接 break，少返回的那几条无声消失——
-    # 模型拿到一份看起来完整的结果，不知道自己丢了什么。那正是 D62 判
+    # 模型拿到一份看起来完整的结果，不知道自己丢了什么。那正是 P13 判
     # lorebook 关键词触发不合格的同一条理由，只不过换成了体量而不是相关性。
     unserved = [rid for rid in params.run_ids if rid not in served]
     if unserved or budget <= 0:
@@ -247,7 +247,7 @@ def _segment_of(ctx: RunContext, end: Node) -> list[Node]:
     """由段落末节点上溯，取回整段。
 
     按「末节点 + 跨度」寻址：父指针唯一，所以上溯 ``span - 1`` 步得到的链是确定的，
-    **任何经过末节点的路径都得到同一段**，分支天然安全（D48）。
+    **任何经过末节点的路径都得到同一段**，分支天然安全（S42）。
     """
     nodes = ctx.repo.all_nodes()
     chain = [end]
@@ -329,7 +329,7 @@ async def _worldinfo_read(ctx: RunContext, params: WorldInfoReadParams) -> ToolR
 
 
 # --------------------------------------------------------------------------
-# summarize —— 懒惰生成 + 系统缓存（D69）
+# summarize —— 懒惰生成 + 系统缓存（S25）
 # --------------------------------------------------------------------------
 
 
@@ -400,10 +400,10 @@ async def _ask_question(ctx: RunContext, params: AskQuestionParams) -> ToolResul
     if ctx.ask_user is None:
         return error("当前没有可交互的用户。", label="无法提问")
 
-    # 不设超时（D66）：等待期间逻辑上什么都没发生，上下文不会过期。
+    # 不设超时（S24）：等待期间逻辑上什么都没发生，上下文不会过期。
     answer = await ctx.ask_user(params.question, params.options)
 
-    # **用户可以不选，直接自己写**（D155）。所以回执要分得清是哪一种：
+    # **用户可以不选，直接自己写**（S23）。所以回执要分得清是哪一种：
     # 三选一是在模型给的岔路里挑，自由作答是**模型没想到的第四条路**，
     # 两者对后续推演的分量完全不同。合成一句「用户选择：…」会把后者说成前者，
     # 于是模型照着"这是我列过的选项"去理解一句它其实没列过的话。
@@ -426,13 +426,13 @@ async def _ask_question(ctx: RunContext, params: AskQuestionParams) -> ToolResul
 
 
 def _tool(agent: str, name: str, params: type[BaseModel], handler: Any) -> Tool[Any]:
-    """**描述从那个 agent 的 YAML 里取**（D173，推翻 D140 ①）。
+    """**描述从那个 agent 的 YAML 里取**（S84）。
 
-    D140 当时判「工具描述不搬进 YAML」，理由是「一个工具怎么描述自己，跟它的参数、
+    S10 当时判「工具描述不搬进 YAML」，理由是「一个工具怎么描述自己，跟它的参数、
     错误信息、注册条件是同一件事，拆开写两处必然对不上」。**上面那条判据压过它**：
     描述是模型读到的字，就必须可审查可修改。
 
-    但 D140 担心的漂移是真的，所以**参数 schema 仍由 Python 生成**（`params_type`
+    但 S10 担心的漂移是真的，所以**参数 schema 仍由 Python 生成**（`params_type`
     导出），在 agent 管理页上与描述并排只读显示——漂移因此摆在人眼前，
     而不是藏在两个文件里。错误文案仍然留在代码里：它不进上下文，是工具实现的一部分。
 
@@ -448,7 +448,7 @@ def _tool(agent: str, name: str, params: type[BaseModel], handler: Any) -> Tool[
 
 
 def submit_tool(agent: str = "director") -> Tool[Any]:
-    """**没有前置条件了**（D143）：E0 契约（提交前必须写过一次 state）随
+    """**没有前置条件了**（S7）：E0 契约（提交前必须写过一次 state）随
     director 卸下 `state_write` 一并作废。
     """
     return _tool(agent, "submit_outline", SubmitOutlineParams, _submit_outline)
@@ -456,13 +456,13 @@ def submit_tool(agent: str = "director") -> Tool[Any]:
 
 def state_query_tool(agent: str) -> Tool[Any]:
     """读侧。**两个 agent 都可能拿到它**：director 读状态推演，state_manager
-    读状态决定该改哪个键。只在按需展开开着时才注册（D62）。
+    读状态决定该改哪个键。只在按需展开开着时才注册（P13）。
     """
     return _tool(agent, "state_query", StateQueryParams, _state_query)
 
 
 def state_write_tool(agent: str = "state_manager") -> Tool[Any]:
-    """写侧。**只给 state_manager**（D143）。
+    """写侧。**只给 state_manager**（S7）。
 
     它以前在 director 手上，边推演边记；现在挪到 writer 之后，读着这一轮的细纲和
     正文去记。换来两件事：记的人看得见**最终写出来的是什么**（正文常常落实了细纲
@@ -490,14 +490,14 @@ def summarize_tool(agent: str = "director") -> Tool[Any]:
 
 
 def ask_question_tool(agent: str = "director") -> Tool[Any]:
-    """**一个题干 + 恰好三个选项**（D155）。
+    """**一个题干 + 恰好三个选项**（S23）。
 
     三个是定死的，不是 2–4 的区间：两个把岔路压成二选一，四个开始出现凑数的那条。
     而**用户随时可以不选、自己写一条**，所以不必留一个「其他」位——实测模型自己
     造过这么一个选项（「其他：你另指定这一轮实际要用的手段」），那是在没有一等
     自由作答入口时的将就，白白花掉三分之一的选项位。
 
-    **剧情控制权那三档就是它描述里的 `choice`**（D140②/D155）：越高越少问，讲的
+    **剧情控制权那三档就是它描述里的 `choice`**（S10②/S23）：越高越少问，讲的
     正是「这个工具该多积极地调用」，不是创作要求——读到「不要调用 ask_question」
     的地方就该是 `ask_question` 自己。所以这里不再收一个 `authority` 参数，
     当前选哪一档写在 `director.yaml` 的 `tools.ask_question.selected` 上。

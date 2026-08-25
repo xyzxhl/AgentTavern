@@ -16,7 +16,7 @@ class Session(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     worldbook_id: str = ""
-    """在哪份设定上开的（D170）。**worldbook 是一级资产，一份能开出好几个 session。**
+    """在哪份设定上开的（S63）。**worldbook 是一级资产，一份能开出好几个 session。**
 
     存 id 而不是内嵌一份拷贝：拷贝的话「改一次、所有故事都跟着」就没了，而那正是
     把它独立出来要买的东西。代价是设定会在故事跑着的时候被别处改动——那件事的
@@ -28,19 +28,19 @@ class Session(BaseModel):
     meta: SessionMeta = Field(default_factory=SessionMeta)
     """元指令：**这局故事**要什么。创建时设定，很少改。
 
-    世界那一半是 worldbook 的条目（D170/D175）。
+    世界那一半是 worldbook 的条目（S63/S64）。
     """
 
-    # `control` 与 `capabilities` **已删除**（D173/D174）：控制维度与能力开关
+    # `control` 与 `capabilities` **已删除**（R31/S80）：控制维度与能力开关
     # 整体上调到了提示词层——它们全都在改「模型收到什么」，就该和提示词住在
     # 同一份文件里。**session 上从此只有内容，没有配置。**
 
     modes: SessionModes = Field(default_factory=SessionModes)
     """只剩 `time_driven` 一项。它改的是**触发源**——「这局故事没人说话时要不要
-    自己往前跑」，和 goal 的自动续跑是同一类东西，所以留在 session（D174）。"""
+    自己往前跑」，和 goal 的自动续跑是同一类东西，所以留在 session（S80）。"""
 
     initial_state: dict[str, Any] | None = None
-    """**冻结下来的初始状态**（D158）。``None`` = 故事还没开始，现算。
+    """**冻结下来的初始状态**（S67）。``None`` = 故事还没开始，现算。
 
     第一轮开始时由 `freeze_initial_state()` 定下来。之后再改 worldbook 的
     `STATE` 条目就只影响新会话，不再回头改写既有的每一轮——那些轮次已经依赖
@@ -53,10 +53,10 @@ class Session(BaseModel):
     """
 
     active_leaf_id: str | None = None
-    """活跃路径的叶节点。路径 = 根 → 此节点的一条链；state 沿该路径重放（D48）。"""
+    """活跃路径的叶节点。路径 = 根 → 此节点的一条链；state 沿该路径重放（S42）。"""
 
     goal_run: GoalRun | None = None
-    """当前 goal 的运行时状态（D148）：对话、计划与进度、花销、暂停与否。
+    """当前 goal 的运行时状态（S92）：对话、计划与进度、花销、暂停与否。
 
     **和 `meta.goal` 分开**：那个是用户配置（目标是什么、给多少预算），这个是
     跑起来之后的东西。混在一起的话"用户改了什么"和"系统跑出了什么"就分不开，

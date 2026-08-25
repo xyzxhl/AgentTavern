@@ -1,4 +1,4 @@
-# state_manager 的提示词。它管**这一轮之后世界变成了什么样**（D143）。
+# state_manager 的提示词。它管**这一轮之后世界变成了什么样**（S7）。
 #
 # 它跑在 writer 之后：拿到本轮的细纲和成文，把该记住的东西折成几个键值写进 state。
 # 以前这活在 director 手上，边推演边记。换到后置买到两件事：
@@ -11,7 +11,7 @@
 # 记法两节，其余每轮全变，前几轮的正文是最大的一块。实测 `data` 场景占掉全场
 # 42% 的 input token。
 #
-# 顶上那个 `enabled` 是**这个 agent 跑不跑**（原 `Capabilities.state`，D174）：
+# 顶上那个 `enabled` 是**这个 agent 跑不跑**（原 `Capabilities.state`，S80）：
 # 关掉它这一路整个不跑，它的两个工具也跟着没有。
 #
 # `recent` 那条的 `runs` 是「给几轮示范」（原 `Capabilities.state_recent_runs`）。

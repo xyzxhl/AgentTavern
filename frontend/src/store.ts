@@ -32,7 +32,7 @@ export interface Thought {
 
 export interface SessionState {
   meta: ServerMeta | null;
-  /** 会话列表。**带标题和它开在哪份设定上**（D172）——一串 id 认不出哪局是哪局。 */
+  /** 会话列表。**带标题和它开在哪份设定上**（R17）——一串 id 认不出哪局是哪局。 */
   sessions: SessionCard[];
   sessionId: string | null;
   session: Session | null;
@@ -41,7 +41,7 @@ export interface SessionState {
   path: Node[];
   state: Record<string, unknown>;
 
-  /** 路径上**有兄弟**的那几轮 → 兄弟 id 列表（D46/D147）。独苗不列。
+  /** 路径上**有兄弟**的那几轮 → 兄弟 id 列表（S44/S44）。独苗不列。
    *
    * 随路径一起拿，不是一个节点一次请求——切换器要显示 `⟨2/3⟩` 就得先知道有没有
    * 第 2 支，而一条 20 轮的路径会因此打 20 个请求。这份数据只在重生成之后才变。
@@ -61,14 +61,14 @@ export interface SessionState {
   /** 正在跑的那一轮：还没有节点，但已经有 run_id 和用户说的那句话。 */
   live: { runId: string; input: string } | null;
 
-  /** 流式攒出来的字：`run_id` → `{ 正文, 过程 }`（D160）。
+  /** 流式攒出来的字：`run_id` → `{ 正文, 过程 }`（S118）。
    *
    * **按来源分开，不按 kind 分**：`content` 分片几个 agent 都在发——director
    * 那些是推演途中的自言自语，goal_manager 那些是它判定时说的话，只有 writer
    * 的才是正文。混在一起攒，界面上就会把「我先把这一轮推演清楚」当成故事的
    * 第一句显示出来。
    *
-   * 过程那半**按 agent 分段留着**（D166）：一轮里最多四个 agent 说过话，
+   * 过程那半**按 agent 分段留着**（S126）：一轮里最多四个 agent 说过话，
    * 拼成一大坨就分不出哪句是谁的了，而"是谁在想这件事"恰恰是查问题时的第一个
    * 问题。相邻的同一个 agent 合并成一段。
    *
@@ -86,7 +86,7 @@ export interface SessionState {
   queue: string[];
   usage: { tokensIn: number; tokensOut: number };
 
-  /** 每一轮的 eval 采样标记（`run_id` → 若干条）。**从不影响运行时行为**（D43/D44）。
+  /** 每一轮的 eval 采样标记（`run_id` → 若干条）。**从不影响运行时行为**（P12/P12）。
    *
    * 服务端每轮都在算，而界面此前一条都不显示——`store` 收到 `run_finished`
    * 直接把 `notes` 丢掉了。它们是"这一轮有什么值得看一眼"，正是回看时要的东西。
@@ -100,30 +100,30 @@ export interface SessionState {
   /** 这一轮是重生成出来的——**落地之后要重拉兄弟关系**，切换器才知道有第几支。 */
   rerolling: boolean;
 
-  /** goal 的实时进度（D161）。`null` = 还没跑过一轮，或者没有 goal。
+  /** goal 的实时进度（S129）。`null` = 还没跑过一轮，或者没有 goal。
    *
    * **它是投影，不是权威**——权威在 `session.goal_run`。这里只为了让中间状态
    * 被划掉的那一刻界面就能动，不必等 goal 结束。
    */
   goal: GoalProgress | null;
 
-  /** 主区显示哪一页。**独立页面不是浮层**（D172）：编辑设定要待很久，
+  /** 主区显示哪一页。**独立页面不是浮层**（R17）：编辑设定要待很久，
    * 而浮层的语义是「临时打断，看完就关」。 */
   page: Page;
   go: (page: Page) => void;
 
-  /** 展开了节点编辑器的那一轮（D65）。**一次只开一个**——两个编辑器同时开着，
+  /** 展开了节点编辑器的那一轮（R22）。**一次只开一个**——两个编辑器同时开着，
    * 保存顺序就成了隐含语义。`null` 是都收着。 */
   editing: string | null;
   edit: (nodeId: string | null) => void;
 
-  /** 切到另一支（D147）。**回到历史分叉点的唯一路径**——重生成产生的兄弟节点
-   * 只能从这里回去。整条路径会换掉，状态随之重放（D48）。 */
+  /** 切到另一支（S44）。**回到历史分叉点的唯一路径**——重生成产生的兄弟节点
+   * 只能从这里回去。整条路径会换掉，状态随之重放（S42）。 */
   switchBranch: (nodeId: string) => void;
-  /** 在某一轮重开一支（D46）。不是当前叶时**先切过去**——D147 限制的是创建，
+  /** 在某一轮重开一支（S44）。不是当前叶时**先切过去**——S44 限制的是创建，
    * 切换不受限，所以"在第 3 轮重新生成"就是这两步。 */
   regenerate: (nodeId: string) => void;
-  /** 直接改一个节点的产出（D65）。改完服务端把整份节点回传（`node_updated`）。 */
+  /** 直接改一个节点的产出（R22）。改完服务端把整份节点回传（`node_updated`）。 */
   editNode: (patch: { nodeId: string } & Partial<EditNode>) => void;
 
   connect: (sessionId: string) => Promise<void>;
@@ -185,7 +185,7 @@ export const useSession = create<SessionState>((set, get) => {
         break;
 
       case "question":
-        // **挂起，不设超时**（D66）：等待期间逻辑上什么都没发生。
+        // **挂起，不设超时**（S24）：等待期间逻辑上什么都没发生。
         set({ phase: "asking", question: message });
         break;
 
@@ -196,7 +196,7 @@ export const useSession = create<SessionState>((set, get) => {
           phase: "idle",
           question: null,
           live: null,
-          // **正文到此为止，思考段留着**（D166）。
+          // **正文到此为止，思考段留着**（S126）。
           //
           // 正文有权威版本——节点里那份，留两份只会不一致。思考段没有：它不在
           // 节点里，也不在开发者模式之外的任何地方，扔掉就是永远看不到了。
@@ -211,7 +211,7 @@ export const useSession = create<SessionState>((set, get) => {
           },
           // 同一个 id 就替换（重生成会落新节点，切分支会整条换掉）。
           path: upsert(s.path, message.node),
-          // **采样标记留着**（D43/D44）：它们从不影响运行时行为，但"这一轮有
+          // **采样标记留着**（P12/P12）：它们从不影响运行时行为，但"这一轮有
           // 什么值得看一眼"正是回看时要的那一位信息。此前这里直接丢掉了。
           notes: message.notes?.length
             ? { ...s.notes, [message.node.id ?? ""]: message.notes }
@@ -227,7 +227,7 @@ export const useSession = create<SessionState>((set, get) => {
 
       case "node_updated":
         // **整份替换那个节点。** 改「结果」时落盘的增量是服务端求差算出来的，
-        // 把发出去的东西塞回本地，`state_delta` 就成了旧的——而它是权威（D48）。
+        // 把发出去的东西塞回本地，`state_delta` 就成了旧的——而它是权威（S42）。
         set((s) => ({ path: upsert(s.path, message.node) }));
         break;
 
@@ -236,7 +236,7 @@ export const useSession = create<SessionState>((set, get) => {
         break;
 
       case "run_interrupted":
-        // **打断是挂起不是作废**（D118）。用户以为按的是"取消"，结果下一句话
+        // **打断是挂起不是作废**（S48）。用户以为按的是"取消"，结果下一句话
         // 被接进了同一段推演——那是最难查的一类困惑，必须当场说清楚。
         set({
           phase: "idle",
@@ -327,14 +327,14 @@ export const useSession = create<SessionState>((set, get) => {
     edit: (nodeId) => set({ editing: nodeId }),
 
     switchBranch(nodeId) {
-      // 路径整条换掉，状态随之重放（D48）。这里只发消息——服务端回的那份
+      // 路径整条换掉，状态随之重放（S42）。这里只发消息——服务端回的那份
       // `state` 快照带着新的叶子 id，`apply` 认出来之后自己去把路径拉回来。
       get().send({ type: "switch_branch", node_id: nodeId });
       set({ editing: null });
     },
 
     regenerate(nodeId) {
-      // **D147 限制的是创建，不是切换**：分支只能在当前节点上开，所以"在第 3 轮
+      // **S44 限制的是创建，不是切换**：分支只能在当前节点上开，所以"在第 3 轮
       // 重新生成"就是「先切过去、再重生成」两步。这两步在这里做完，用户按的是
       // 一个按钮——但后面那几轮会移出当前路径，所以调用处要先问过。
       const { path, send } = get();
@@ -360,7 +360,7 @@ export const useSession = create<SessionState>((set, get) => {
     },
 
     async newSession(worldbookId) {
-      // 不传就由服务端现配一份空设定（D170）：**先开故事、边写边补**也要走得通。
+      // 不传就由服务端现配一份空设定（S63）：**先开故事、边写边补**也要走得通。
       const created = await api.createSession(
         worldbookId ? { worldbook_id: worldbookId } : undefined,
       );
@@ -439,7 +439,7 @@ function append(process: Thought[], actor: string, text: string): Thought[] {
 function upsert(path: Node[], node: Node): Node[] {
   const at = path.findIndex((n) => n.id === node.id);
   if (at >= 0) return path.map((n, i) => (i === at ? node : n));
-  // **重生成落的是兄弟：它顶掉原来那一支，不是接在它后面**（D46）。同父的那个
+  // **重生成落的是兄弟：它顶掉原来那一支，不是接在它后面**（S44）。同父的那个
   // 还留在路径上的话，界面会把同一轮的两个版本前后摆着，读起来像故事写了两遍。
   const sibling = path.findIndex((n) => n.parent_id === node.parent_id);
   if (sibling >= 0) return [...path.slice(0, sibling), node];

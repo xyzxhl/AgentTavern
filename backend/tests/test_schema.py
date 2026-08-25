@@ -41,7 +41,7 @@ def test_shared_models_are_defined_once() -> None:
     "类型不兼容"，而它们本来就是同一个东西。
     """
     defs = export_schema()["$defs"]
-    # `ControlOverride` 已经删掉（D174）：控制维度的取值上调到
+    # `ControlOverride` 已经删掉（S80）：控制维度的取值上调到
     # 提示词层之后，「覆盖」没有被覆盖的对象了。
     for shared in ("Node", "TraceEvent", "StateDelta"):
         assert shared in defs, f"{shared} 应当作为共享定义出现"
@@ -53,7 +53,7 @@ def test_shared_models_are_defined_once() -> None:
         "Session",
         "WorldbookEntry",
         "WorldbookBundle",
-        # worldbook 是一级资产（D170），有自己的管理界面，所以它的类型也要生成。
+        # worldbook 是一级资产（S63），有自己的管理界面，所以它的类型也要生成。
         "Worldbook",
     }
 

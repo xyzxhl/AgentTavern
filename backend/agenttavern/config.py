@@ -5,7 +5,7 @@
 - `Limits` —— 从 ``config.yaml`` 读：各种上限、预算、窗口。它们跟机器无关，
   是**调过就该重测**的数，所以进版本控制，且每个值旁边都记着当初为什么是它。
 
-**曾经的第三处（`Capabilities`，session 级）已经没了**（D174）：那些开关整体
+**曾经的第三处（`Capabilities`，session 级）已经没了**（S80）：那些开关整体
 上调到了提示词层——它们全都在改「模型收到什么」，就该和提示词住在同一份 YAML 里。
 只有两条落在这里：`stream`（关于交付）与 `trace`（关于运维），两条都跟模型无关。
 
@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     llm_model: str = ""
 
     llm_timeout_seconds: float = 300.0
-    """director 的 tool loop 可能跑很久，且 D7 已放弃流式——超时要给足。"""
+    """director 的 tool loop 可能跑很久，且 P21 已放弃流式——超时要给足。"""
 
     llm_max_retries: int = 2
     """仅对瞬时错误（429 / 5xx / 网络）重试。"""
@@ -46,25 +46,25 @@ class Settings(BaseSettings):
     data_dir: Path = Path("data")
 
     stream: bool = True
-    """**边生成边推**（D160）。关掉则一轮写完才整段出现。
+    """**边生成边推**（S118）。关掉则一轮写完才整段出现。
 
-    **它在服务级，不在 session 上**（D174）：D160 自己就写着「这是这组里唯一一条
+    **它在服务级，不在 session 上**（S80）：S118 自己就写着「这是这组里唯一一条
     关于交付而不是关于能力的」——开关它不改变模型收到什么、也不改变产出，
     只改变用户什么时候看到。别的开关全都上调到了提示词层，而这一条上调到服务。
 
-    D7 说的是「不为保住逐 token 流式而扭曲 agent 结构」。这条不扭曲任何结构：
+    P21 说的是「不为保住逐 token 流式而扭曲 agent 结构」。这条不扭曲任何结构：
     四个 agent 的顺序、工具循环、契约、重放全都不变，流式只是多了一条旁路。
     """
 
     trace: bool = False
-    """trace 落不落盘。**运维，跟模型完全无关**（D174），所以也在服务级。
+    """trace 落不落盘。**运维，跟模型完全无关**（S80），所以也在服务级。
 
-    `developer` 开着时强制落盘（D156）——查问题总是事后，记了不给读回来的路
+    `developer` 开着时强制落盘（S113）——查问题总是事后，记了不给读回来的路
     等于没记。
     """
 
     developer: bool = False
-    """**开发者模式，启动服务时选**（D156）。开了才额外记录每次模型往返的完整
+    """**开发者模式，启动服务时选**（S113）。开了才额外记录每次模型往返的完整
     输入输出（`Tracer.exchange` → `MODEL_REQUEST` 事件），并强制 trace 落盘。
 
     **它是服务级的**：「这台服务是拿来查问题的还是拿来玩的」不该每个故事各答
@@ -96,7 +96,7 @@ class _StateManager(BaseModel):
 
 class _GoalManager(BaseModel):
     max_rounds: int = 4
-    # `max_runs` / `max_total_tokens` **已删除**（D164）：预算不再有默认值，
+    # `max_runs` / `max_total_tokens` **已删除**（S97）：预算不再有默认值，
     # 留空就是不设上限。一个配置里的默认数只会在用户没要求的时候把他拦下来。
 
 

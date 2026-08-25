@@ -60,10 +60,10 @@ class Metrics:
     tokens_in: int = 0
     tokens_out: int = 0
     cache_hit: int = 0
-    """命中前缀缓存的输入 token。占 `tokens_in` 的比例才是 D114 该看的数。"""
+    """命中前缀缓存的输入 token。占 `tokens_in` 的比例才是 S60 该看的数。"""
 
     questions: list[tuple[int, bool]] = field(default_factory=list)
-    """问过的问题：``(选项个数, 用户是否自由作答)``（D155）。
+    """问过的问题：``(选项个数, 用户是否自由作答)``（S23）。
 
     选项个数要记，是因为「恰好三个」是参数契约，而契约有没有被守住只有实跑看得出来。
     """
@@ -71,7 +71,7 @@ class Metrics:
     segments: list[tuple[int, int, int]] = field(default_factory=list)
     """这一轮归掉的段：``(轮数, 压缩前字数, 压缩后字数)``。
 
-    **只统计不约束**（D154）——摘要没有字数上限了，所以"压到多少"是唯一还能看的
+    **只统计不约束**（S25）——摘要没有字数上限了，所以"压到多少"是唯一还能看的
     东西，而它只有和"从多少压下来的"放在一起才有意义。
     """
 

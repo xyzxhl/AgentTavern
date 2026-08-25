@@ -44,7 +44,7 @@ export function Transcript(): JSX.Element {
             events={traces[node.id ?? ""] ?? []}
             node={node}
             last={at === path.length - 1}
-            // **落地之后思考段还留着**（D166）：它不在节点里，扔掉就再也看不到了。
+            // **落地之后思考段还留着**（S126）：它不在节点里，扔掉就再也看不到了。
             // goal_manager 更是在这一轮落地**之后**才跑的，它的思考只能挂在这儿。
             thinking={streaming[node.id ?? ""]?.process}
           />
@@ -85,16 +85,16 @@ function Turn({
    * 为止还没归段的那几轮"，在中间某一轮点它，收的仍然是到末端为止的那一段。 */
   last?: boolean;
   running?: boolean;
-  /** 流式攒出来的正文。**只在这一轮还没落地时用**——节点一到就让位（D160）。 */
+  /** 流式攒出来的正文。**只在这一轮还没落地时用**——节点一到就让位（S118）。 */
   streamed?: string;
-  /** 过程那半反过来：节点里没有它，落地之后照样留着（D166）。 */
+  /** 过程那半反过来：节点里没有它，落地之后照样留着（S126）。 */
   thinking?: import("../store").Thought[];
 }): JSX.Element {
   const editing = useSession((s) => s.editing);
   const notes = useSession((s) => s.notes[node?.id ?? ""] ?? []);
 
-  // **时间线不能在正文这里倒着走**（D167）：状态维护跑在 writer 之后（D143），
-  // goal 判定更在 run 末（D28），它们的思考与工具调用因此归到正文**下面**那一块。
+  // **时间线不能在正文这里倒着走**（S125）：状态维护跑在 writer 之后（S7），
+  // goal 判定更在 run 末（R24），它们的思考与工具调用因此归到正文**下面**那一块。
   const [beforeEvents, afterEvents] = splitAtProse(events);
   const [beforeThinking, afterThinking] = splitAtProse(thinking ?? []);
   const post = afterEvents.length > 0 || afterThinking.length > 0;
@@ -106,7 +106,7 @@ function Turn({
         <div className="mb-3 flex items-baseline gap-2">
           {said && <span className="select-none text-dim">›</span>}
           <p className="min-w-0 flex-1 whitespace-pre-wrap text-sm text-dim">{said}</p>
-          {/* **模拟输入要标出来**（D148）：那一条不是用户打的，是 goal_manager
+          {/* **模拟输入要标出来**（S92）：那一条不是用户打的，是 goal_manager
               写的。不标的话用户会以为自己说过这句话。 */}
           {simulated && (
             <span className="shrink-0 rounded border border-line px-1 py-0.5 text-[10px] text-dim">
@@ -146,7 +146,7 @@ function Turn({
         </p>
       )}
 
-      {/* **写完之后**：状态维护（D143）与目标判定（D28）。goal_manager 尤其晚——
+      {/* **写完之后**：状态维护（S7）与目标判定（R24）。goal_manager 尤其晚——
           它跑在这一轮落地之后，那时 `running` 已经是 false 了，所以这块是收着的。 */}
       {post && (
         <Process
@@ -158,7 +158,7 @@ function Turn({
         />
       )}
 
-      {/* **采样标记**（D43/D44）：服务端每轮都在算，而它从不影响运行时行为。
+      {/* **采样标记**（P12/P12）：服务端每轮都在算，而它从不影响运行时行为。
           放在这一轮的末尾、收着摆——它是"这一轮有什么值得看一眼"，不是警告。 */}
       {notes.length > 0 && (
         <ul className="mt-3 space-y-0.5">
@@ -173,14 +173,14 @@ function Turn({
 
       {node && editing === node.id && <NodeEditor node={node} />}
 
-      {/* 已归段的分界画出来，没归段的给一个「在这里断段」（D112 的第三条支路）。 */}
+      {/* 已归段的分界画出来，没归段的给一个「在这里断段」（S22 的第三条支路）。 */}
       {node?.closes_segment && <SegmentEnd span={node.segment_span ?? 1} />}
       {node && last && !node.closes_segment && <CloseSegment />}
     </article>
   );
 }
 
-/** 一段剧情收在这里。**它是索引的单位**——摘要存在段落的最后一个节点上（D110）。 */
+/** 一段剧情收在这里。**它是索引的单位**——摘要存在段落的最后一个节点上（S57）。 */
 function SegmentEnd({ span }: { span: number }): JSX.Element {
   return (
     <div className="my-6 flex items-center gap-3 text-[11px] text-dim">
@@ -192,7 +192,7 @@ function SegmentEnd({ span }: { span: number }): JSX.Element {
 }
 
 /**
- * 手动归段（D112 的第三条支路）。**用户说这一段收了，就是收了**——不再追问模型。
+ * 手动归段（S22 的第三条支路）。**用户说这一段收了，就是收了**——不再追问模型。
  *
  * 自动追问判早了或判晚了，用户随时可以自己断；归段追问关掉时它更是唯一的路。
  * 后端一直有这个接口，而界面此前连方法都没有。
@@ -223,10 +223,10 @@ function CloseSegment(): JSX.Element {
 }
 
 /**
- * 一轮的操作：`⟨2/3⟩` 切支、`↻` 重生成、`✎` 编辑。**悬停才出现**（D172）。
+ * 一轮的操作：`⟨2/3⟩` 切支、`↻` 重生成、`✎` 编辑。**悬停才出现**（R17）。
  *
  * 这三样是「回头」这个方向的全部入口。此前后端全齐、界面一个都没有——而
- * `⟨2/3⟩` 尤其重要：**它是回到历史分叉点的唯一路径**（D147），没有它，
+ * `⟨2/3⟩` 尤其重要：**它是回到历史分叉点的唯一路径**（S44），没有它，
  * 重生成产生的兄弟节点永远回不去。
  */
 function TurnControls({ node }: { node: Node }): JSX.Element {

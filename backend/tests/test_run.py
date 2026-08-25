@@ -35,10 +35,10 @@ def setup(tmp_path: Path, llm: ScriptedLLM, session: Session | None = None):
 
 
 async def test_the_run_hands_the_control_dimensions_to_the_tool_face(tmp_path: Path) -> None:
-    """**控制维度必须传到工具面**（D155）。
+    """**控制维度必须传到工具面**（S23）。
 
     `ask_question` 的调用积极性写在它自己的工具描述里，三档是那条描述自己的
-    `choice`（D39/D58/D140②/D173）。`execute_run` 组装工具面时曾经漏掉过档位，
+    `choice`（S24/S23/S10②/R31）。`execute_run` 组装工具面时曾经漏掉过档位，
     于是不管调成什么，模型读到的永远是 `medium` 那档——`low` 档「遇到任何值得
     由用户决定的分岔都调用它征询」从来没真正发出去过。
 
@@ -75,7 +75,7 @@ async def test_full_run_produces_a_node(tmp_path: Path) -> None:
 
 
 async def test_state_lands_only_when_run_completes(tmp_path: Path) -> None:
-    """暂存的增量随节点一并落盘——细纲与增量同时抵达，节点是原子的（D56）。"""
+    """暂存的增量随节点一并落盘——细纲与增量同时抵达，节点是原子的（S20）。"""
     llm = happy_llm()
     repo, session, gw, reg = setup(tmp_path, llm)
 
@@ -104,8 +104,8 @@ async def test_second_run_builds_on_the_first(tmp_path: Path) -> None:
     assert second.node.parent_id == first.node.id
     assert repo.state_at(second.node.id).values["地点"] == "阳台"
 
-    # 第二轮的 director 应当看到第一轮的细纲，而**看不到**第一轮的正文（D54）。
-    # 对话跨轮持续之后（D114），细纲在重放的消息里（上一轮的 submit_outline 调用），
+    # 第二轮的 director 应当看到第一轮的细纲，而**看不到**第一轮的正文（S5）。
+    # 对话跨轮持续之后（S60），细纲在重放的消息里（上一轮的 submit_outline 调用），
     # 不再在 system prompt 里——**这个断言因此比原来更强**：它现在检查的是
     # director 收到的**全部**上下文，而不只是开头那一段。
     everything = str(llm2.messages_of(0))
@@ -114,7 +114,7 @@ async def test_second_run_builds_on_the_first(tmp_path: Path) -> None:
 
 
 async def test_writer_sees_prose_upstream_director_does_not(tmp_path: Path) -> None:
-    """writer 读正文上文以保证衔接——这正是 D33 那一刀能切开的原因。"""
+    """writer 读正文上文以保证衔接——这正是 S3 那一刀能切开的原因。"""
     repo, session, gw, reg = setup(tmp_path, happy_llm())
     first = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
 
@@ -136,7 +136,7 @@ async def test_writer_sees_prose_upstream_director_does_not(tmp_path: Path) -> N
 
 
 async def test_deviation_report_is_extracted(tmp_path: Path) -> None:
-    """writer 不改写细纲，只报告实质增删（D57）。"""
+    """writer 不改写细纲，只报告实质增删（S8）。"""
     llm = ScriptedLLM(
         tool("submit_outline", outline="她推开门。"),
         text("门开了。\n---偏离---\n补了一句她的犹豫。"),
@@ -150,14 +150,14 @@ async def test_deviation_report_is_extracted(tmp_path: Path) -> None:
 
 
 async def test_the_current_choice_lives_in_the_yaml_not_the_session(tmp_path: Path) -> None:
-    """**没有单轮覆盖**（D174）：取值只剩一处，没有被覆盖的对象了。
+    """**没有单轮覆盖**（S80）：取值只剩一处，没有被覆盖的对象了。
 
     取而代之的是这条：换一档就是改 `director.yaml` 里那个 `choice` 的
     `selected`，而它必须真的发到模型手上。
 
     位置也一起钉住：控制维度**每轮都可能变**，所以它排在前情之后、跟这一轮的
     输入在一起，不进跨轮不变的那一段——那段是持续对话的缓存前缀，放会变的东西
-    进去，前缀每轮都失效（D114）。
+    进去，前缀每轮都失效（S60）。
     """
     llm = happy_llm()
     repo, session, gw, reg = setup(tmp_path, llm)
@@ -176,7 +176,7 @@ async def test_the_current_choice_lives_in_the_yaml_not_the_session(tmp_path: Pa
 async def test_interrupt_during_director_lands_no_node(tmp_path: Path) -> None:
     """director 阶段被打断：细纲未成型，**不落节点**。
 
-    早先这条测的是"什么都不留"。**现在推演本身会被存成草稿等续跑**（D118）
+    早先这条测的是"什么都不留"。**现在推演本身会被存成草稿等续跑**（S48）
     ——不落节点这一点没变，变的是被截断的推演去了哪。
     挂起与续跑的行为见 `test_branch.py`。
     """
@@ -192,7 +192,7 @@ async def test_interrupt_during_director_lands_no_node(tmp_path: Path) -> None:
 
     assert repo.all_nodes() == {}
     # 第一次 complete 就被掐掉，模型什么都没产出，所以 `messages` 是空的——
-    # **它只装 loop 里产出的东西，不装提示词各节**（D145）。但草稿仍然要存：
+    # **它只装 loop 里产出的东西，不装提示词各节**（S119）。但草稿仍然要存：
     # 那条用户输入是**唯一不可再生的东西**，丢了用户的下一句话就没有指代了，
     # 所以它有自己的字段。
     draft = repo.load_draft()
@@ -203,7 +203,7 @@ async def test_interrupt_during_director_lands_no_node(tmp_path: Path) -> None:
 
 
 async def test_interrupt_during_writer_drops_the_half_written_prose(tmp_path: Path) -> None:
-    """**半截正文不留**（D142）。
+    """**半截正文不留**（S49）。
 
     曾经的做法是「保留已生成的正文片段——那段剧情确实发生了」。那是把一个失败的
     阶段当成了产出：下一轮会接着那半句往下写，而用户按停止恰恰是因为不想要它。
@@ -310,7 +310,7 @@ async def test_interrupt_during_state_keeps_outline_and_prose(tmp_path: Path) ->
     assert repo.state_at(outcome.node.id).values["地点"] == "客厅"
 
 
-# -- 交叉比对：只提示不拦截（D43） --------------------------------------------
+# -- 交叉比对：只提示不拦截（P12） --------------------------------------------
 
 
 async def test_absent_character_gaining_knowledge_is_not_flagged(tmp_path: Path) -> None:
@@ -342,10 +342,10 @@ async def test_long_prose_with_empty_delta_is_flagged(tmp_path: Path) -> None:
 
 
 async def test_prose_barely_longer_than_outline_is_flagged(tmp_path: Path) -> None:
-    """正文/细纲长度比是**隔离是否生效**最廉价的指标（D93）。
+    """正文/细纲长度比是**隔离是否生效**最廉价的指标（S14）。
 
     比值贴近 1 说明 writer 在照抄——通常是因为 director 越界写了描写，
-    正文侧已无事可做。这不是质量判断，只是把样本挑出来送审（D43/D44）。
+    正文侧已无事可做。这不是质量判断，只是把样本挑出来送审（P12/P12）。
     """
     outline = "她推开门，屋里坐着陈。" * 10
     llm = ScriptedLLM(
@@ -404,7 +404,7 @@ async def test_collapsing_a_list_into_a_string_is_flagged(tmp_path: Path) -> Non
 def _script(runs: int, outline: str, *tail, closes: list[str] | None = None, followup: bool = True):
     """每轮的调用序列：state_write / submit_outline / writer（/ 归段追问）。
 
-    追问**每轮都发生**——判定在生成时，不等它滑出窗口（D113）。
+    追问**每轮都发生**——判定在生成时，不等它滑出窗口（S58）。
     """
     answers = closes or ["0"] * runs
     body: list = []
@@ -428,7 +428,7 @@ async def _drive(repo, session, gateway, reg, runs: int):
 
 
 async def test_segment_closes_when_the_director_says_it_closed(tmp_path: Path) -> None:
-    """**归段是"生成后"的动作，而且要问 director 本人**（D112）。
+    """**归段是"生成后"的动作，而且要问 director 本人**（S22）。
 
     它对本轮产出毫无帮助，所以不能放进 tool loop；但"这场戏完了没有"是语义判断，
     需要 state、前情和故事走向——冷调用给不出来，只能接在刚写完的那段对话后面追问。
@@ -455,7 +455,7 @@ async def test_open_run_count_resets_at_the_previous_close(tmp_path: Path) -> No
     """追问要带上**这一段已经开了几轮**，而那是"上一个结尾之后有多少轮"。
 
     不能用"待归段有多少轮"——那只含已滑出全文窗口的部分，拿它去问会让模型
-    以为这一段才刚开始，于是每轮都答"收"。实测那一版查准只有 0.25（D113）。
+    以为这一段才刚开始，于是每轮都答"收"。实测那一版查准只有 0.25（S58）。
     """
     from agenttavern.orchestration.run import _open_segment
 
@@ -485,7 +485,7 @@ async def test_open_segment_waits_another_run(tmp_path: Path) -> None:
 
 
 async def test_every_segment_goes_through_the_summarizer(tmp_path: Path) -> None:
-    """**一律压，短段也压**（D154）。
+    """**一律压，短段也压**（S25）。
 
     这里以前有条近路：整段拼起来还比摘要短就原样留下。它的阈值是
     `summary_max_chars`，而那个数已经删掉了——它说了不算（48 条落盘摘要里 16 条
@@ -509,7 +509,7 @@ async def test_manual_close_does_not_ask_the_model(tmp_path: Path) -> None:
     归段追问关掉时它是唯一的归段方式，开着时也保留——自动追问判早了或判晚了，
     用户随时可以自己断。
 
-    **开关是 director 的 `specials.segment.enabled`**（D174）：它从来就是
+    **开关是 director 的 `specials.segment.enabled`**（S80）：它从来就是
     「这条追问发不发」，不是一条独立的能力。
     """
     import yaml
@@ -660,7 +660,7 @@ async def test_trace_covers_the_whole_run(tmp_path: Path) -> None:
     """
     llm = happy_llm()
     repo, session, gw, reg = setup(tmp_path, llm)
-    # **落不落盘是服务级的**（`Settings.trace`，D174）：运维，跟模型完全无关。
+    # **落不落盘是服务级的**（`Settings.trace`，S80）：运维，跟模型完全无关。
     outcome = await execute_run(
         repo, session, gw, reg, user_input=UserInput(text="我推开门"), persist_trace=True
     )
@@ -679,7 +679,7 @@ async def test_trace_covers_the_whole_run(tmp_path: Path) -> None:
 
 
 async def test_going_back_to_the_director_starts_the_round_count_over(tmp_path: Path) -> None:
-    """**回 director 重来是一次新的推演，不是续跑**，所以轮数归零（D142）。
+    """**回 director 重来是一次新的推演，不是续跑**，所以轮数归零（S49）。
 
     硬上限防的是「反复打断、把同一段推演无限续下去」，所以 director 阶段续跑时
     用掉的额度不退。但正文阶段被打断后回来，交的是**另一份细纲**——把额度算在

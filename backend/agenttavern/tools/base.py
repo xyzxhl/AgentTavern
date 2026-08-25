@@ -32,7 +32,7 @@ class ToolResult(BaseModel):
     is_error: bool = False
 
     label: str = ""
-    """**人类可读的语义标签**，供 UI 投影（D25）。
+    """**人类可读的语义标签**，供 UI 投影（S111）。
 
     例："确认了她现在在哪"，而不是 ``state_query(location)``。这是"呈现 agent
     工作过程"这一体验的架构侧前提，事后补代价很高。
@@ -43,7 +43,7 @@ class ToolResult(BaseModel):
 
 
 def error(message: str, *, label: str = "") -> ToolResult:
-    """一条模型可恢复的错误。**文案留在代码里，不进 YAML**（D140）。
+    """一条模型可恢复的错误。**文案留在代码里，不进 YAML**（S10）。
 
     轮次内只有 tool 往返和推理段，它们的位置由协议决定、编排不了；工具怎么
     描述自己、怎么报错、什么条件下注册，是同一件事，拆开写两处必然对不上。

@@ -1,4 +1,4 @@
-"""state_manager：状态维护者（D143）。
+"""state_manager：状态维护者（S7）。
 
 **它是第四个 agent，跑在 writer 之后。** 拿到这一轮的细纲和成文，把该被记住的
 东西折成几个键值写进 state。以前这活在 director 手上，边推演边记。
@@ -11,13 +11,13 @@
   记"，而它当时还不知道最后会写成什么样；催促词里那条「先 state_write 再 submit」
   的分支也是这么来的，实测在 `pulp` 第 4 轮空转掉整场 84% 的 input token。
 
-## 这削掉了 D54 的一半，必须说在明处
+## 这削掉了 S5 的一半，必须说在明处
 
-D54 是「director 从不读正文」，它换来 director 能覆盖五倍历史跨度。现在正文经由
+S5 是「director 从不读正文」，它换来 director 能覆盖五倍历史跨度。现在正文经由
 这里转写进 state，state 下一轮进 director——**正文确实回流了**，但回流的是被压缩
-和筛选过的几十个键值，不是原文。D54 买到的东西还在，说法要改。
+和筛选过的几十个键值，不是原文。S5 买到的东西还在，说法要改。
 
-它也不违反 D53（director → writer 单向、无回流）：那条讲的是**一个 run 内部**，
+它也不违反 S4（director → writer 单向、无回流）：那条讲的是**一个 run 内部**，
 这里的回流跨了 run 边界，走 state 这个共享数据，性质和 history 一样。
 
 ## loop 的出口是"这一次不再调用工具"
@@ -70,7 +70,7 @@ async def run_state_manager(
     """读这一轮的细纲和正文，把状态变化写进 ``ctx.staged_delta``。
 
     **只暂存不落盘**：增量随节点一并落地，细纲、正文、增量必须同时抵达，
-    节点是原子的（D48/D56）。
+    节点是原子的（S42/S20）。
     """
     path = ctx.repo.path_to(ctx.parent_id) if ctx.parent_id else []
     window = state_recent_runs()
@@ -99,7 +99,7 @@ async def run_state_manager(
     rounds = 0
 
     for rounds in range(1, max_rounds + 1):  # noqa: B007 — 出口在循环体里，要留住轮数
-        # **它的思考也要能看见**（D166/D167）：它和 director、writer 一样是个
+        # **它的思考也要能看见**（S126/S125）：它和 director、writer 一样是个
         # agent，而它跑在正文之后，界面上归到正文下面那一块。
         response = await ctx.gateway.complete(
             messages,

@@ -48,7 +48,7 @@ def attribution_table(judgements: list[list[Judgement]]) -> str:
 
     lines.append("")
     lines.append(
-        "**「writer 文风失败」不在表内**——它没有参照物，AI 判不了（D83）。"
+        "**「writer 文风失败」不在表内**——它没有参照物，AI 判不了（P19）。"
         "那一类只能人看，样本见下。"
     )
     return "\n".join(lines)
@@ -90,7 +90,7 @@ def render(
         out += [
             "## 语义分界",
             "",
-            "摘要与细纲是 n : 1，n 由模型判断（D110）。下面是它切出来的位置"
+            "摘要与细纲是 n : 1，n 由模型判断（S57）。下面是它切出来的位置"
             "与设计时预期的对比——**预期分界不喂给模型**。",
             "",
             _fence(json.dumps(score, ensure_ascii=False, indent=2), "json"),

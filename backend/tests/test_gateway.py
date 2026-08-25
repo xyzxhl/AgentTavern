@@ -79,7 +79,7 @@ async def test_request_shape_is_openai_format() -> None:
 
     payload = sent[0]
     assert payload["model"] == "test-model"
-    assert payload["stream"] is False  # D7：非流式
+    assert payload["stream"] is False  # P21：非流式
     assert payload["temperature"] == 0.8
     assert payload["tools"][0]["function"]["name"] == "state_query"
     assert payload["messages"] == [{"role": "user", "content": "hi"}]
@@ -185,7 +185,7 @@ async def test_empty_choices_raises() -> None:
         await gw.complete([Message(role=Role.USER, content="hi")])
 
 
-# -- reasoning_content（D120） -------------------------------------------------
+# -- reasoning_content（S62） -------------------------------------------------
 
 
 def _tool_reply(reasoning: str | None) -> dict[str, Any]:

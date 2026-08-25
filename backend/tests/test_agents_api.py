@@ -1,4 +1,4 @@
-"""agent 管理的读写接口（D173）。
+"""agent 管理的读写接口（R31）。
 
 判据是：**所有被输入模型的内容，用户都能审查和修改。** 这份文件钉的是那条判据
 的三个落点——工具描述、附属提示词、渲染文案——以及写盘前那道**试装配**。
@@ -42,9 +42,9 @@ def test_the_list_comes_from_the_yaml_files(client) -> None:
 
 
 def test_a_tool_carries_its_description_and_its_schema(client) -> None:
-    """**描述可编，参数只读**（D173，落地 D140 那条担忧）。
+    """**描述可编，参数只读**（R31，落地 S10 那条担忧）。
 
-    D140 判过「工具描述不搬进 YAML」，理由是描述跟参数是同一件事、拆开必然对不上。
+    S10 判过「工具描述不搬进 YAML」，理由是描述跟参数是同一件事、拆开必然对不上。
     那个风险是真的，所以参数 schema 仍由 Python 生成，在页面上与描述**并排显示**
     ——漂移摆在人眼前，而不是藏在两个文件里。
     """
@@ -52,7 +52,7 @@ def test_a_tool_carries_its_description_and_its_schema(client) -> None:
 
     assert "提交本轮细纲" in doc["data"]["tools"]["submit_outline"]["body"]
     # `ask_question` 的描述本身是一个 `choice`：控制权三档讲的正是「这个工具该
-    # 多积极地调用」（D140②），三类不必为工具再加第四类。
+    # 多积极地调用」（S10②），三类不必为工具再加第四类。
     assert set(doc["data"]["tools"]["ask_question"]["options"]) == {"low", "medium", "high"}
 
     schema = doc["params"]["submit_outline"]
@@ -60,7 +60,7 @@ def test_a_tool_carries_its_description_and_its_schema(client) -> None:
 
 
 def test_the_specials_and_the_rendering_strings_are_reachable(client) -> None:
-    """**归段追问和渲染文案也在这份文件里**（D173 那次审计新发现的两处）。
+    """**归段追问和渲染文案也在这份文件里**（R31 那次审计新发现的两处）。
 
     `_CLOSE_SEGMENT` 曾经是 `postrun.py` 里一段四百多字的 Python 字符串——模型
     每轮都会读到它，而它从界面完全够不着。渲染文案更隐蔽：`用 worldinfo_read 按
@@ -74,10 +74,10 @@ def test_the_specials_and_the_rendering_strings_are_reachable(client) -> None:
 
 
 def test_saving_runs_a_dry_assembly_first(client) -> None:
-    """**装不出来就不写盘**（D173）。
+    """**装不出来就不写盘**（R31）。
 
     装配器对未知的 context、缺值的 `{{var}}`、没写 role、`selected` 不在 options
-    里一律报错（D135 刻意如此）。不先跑一遍的话，用户改坏一个字，下一轮生成直接
+    里一律报错（S75 刻意如此）。不先跑一遍的话，用户改坏一个字，下一轮生成直接
     500，而错误信息离原因很远。
     """
     doc = client.get("/agents/writer").json()["data"]
@@ -95,7 +95,7 @@ def test_a_missing_rendering_string_is_refused(client) -> None:
     """`rendering` 少一条 = **运行时 KeyError**，而它藏在渲染函数深处。
 
     删掉一条不会有任何静态检查拦住，直到某一轮真的走到那一句——所以在写盘那一刻
-    就拦下来（同 D125：没生效的东西不该悄悄没生效）。
+    就拦下来（同 P29：没生效的东西不该悄悄没生效）。
     """
     doc = client.get("/agents/director").json()["data"]
     doc["rendering"].pop("state_empty")

@@ -11,17 +11,17 @@ import type {
   WorldbookEntry,
 } from "./protocol";
 
-/** 列表里的一份设定：**带上「谁在用」**——删之前必须看得见这件事（D170）。 */
+/** 列表里的一份设定：**带上「谁在用」**——删之前必须看得见这件事（S63）。 */
 export interface WorldbookCard {
   worldbook: Worldbook;
   entries: number;
   sessions: string[];
-  /** 读不出来的那几条（D179）。**一条坏数据不该让整张列表 500**，但也不能
+  /** 读不出来的那几条（S73）。**一条坏数据不该让整张列表 500**，但也不能
    * 悄悄跳过——用户得知道自己丢了什么。 */
   broken: string[];
 }
 
-/** 会话列表里的一条。**带标题**——一串 `sess_a1b2c3…` 认不出哪局是哪局（D172）。 */
+/** 会话列表里的一条。**带标题**——一串 `sess_a1b2c3…` 认不出哪局是哪局（R17）。 */
 export interface SessionCard {
   id: string;
   title: string;
@@ -32,7 +32,7 @@ export interface SessionCard {
 export interface ServerMeta {
   developer: boolean;
   model: string;
-  /** 边生成边推。**服务级**（D174）：关于交付，不关于能力，所以它没跟着配置
+  /** 边生成边推。**服务级**（S80）：关于交付，不关于能力，所以它没跟着配置
    * 一起上调到提示词层。在 `.env` 里定，运行时只读。 */
   stream: boolean;
 }
@@ -48,7 +48,7 @@ export interface AgentCard {
 
 /** 一份 agent 配置，加上**由 Python 生成的参数 schema**（只读）。
  *
- * 参数不搬进 YAML 是 D140 那条担忧的落地方式：「描述跟参数是同一件事，拆开
+ * 参数不搬进 YAML 是 S10 那条担忧的落地方式：「描述跟参数是同一件事，拆开
  * 必然对不上」——那个风险是真的，所以让它们**并排显示**，漂移摆在人眼前。
  */
 export interface AgentDoc {
@@ -57,7 +57,7 @@ export interface AgentDoc {
   params: Record<string, { properties?: Record<string, { description?: string; type?: string }> }>;
 }
 
-/** 一条提示词条目。**类型是显式字段**（D173）——拖动排序要先读出它是什么。 */
+/** 一条提示词条目。**类型是显式字段**（R31）——拖动排序要先读出它是什么。 */
 export interface Section {
   type: "text" | "context" | "choice";
   role?: string;
@@ -75,7 +75,7 @@ async function json<T>(input: string, init?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", ...init?.headers },
   });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-  // **状态码 200 不等于拿到了 JSON**（D172）。开发时漏配一条代理前缀，Vite 会
+  // **状态码 200 不等于拿到了 JSON**（R17）。开发时漏配一条代理前缀，Vite 会
   // 把请求当成前端路由、回一份 `index.html` 且状态码 200——于是异常一路拖到
   // `res.json()` 才发生，而那时的报错（`Unexpected token '<'`）离原因很远。
   // 在这儿认出来，说得出是哪个地址。
@@ -98,7 +98,7 @@ export const api = {
       session: Session;
       path: Node[];
       state: Record<string, unknown>;
-      /** 路径上**有兄弟**的那几轮 → 兄弟 id 列表（D46/D147）。独苗不列。 */
+      /** 路径上**有兄弟**的那几轮 → 兄弟 id 列表（S44/S44）。独苗不列。 */
       siblings: Record<string, string[]>;
     }>(`/sessions/${id}`),
 
@@ -112,7 +112,7 @@ export const api = {
       `/sessions/${id}/nodes/${nodeId}/state`,
     ),
 
-  // -- worldbook：**一级资产，不属于任何 session**（D170）--------------------
+  // -- worldbook：**一级资产，不属于任何 session**（S63）--------------------
   //
   // 一份设定能开出好几个故事，所以它有自己的管理界面，不挂在某个会话下面。
   // 条目分三类：`world` / `character` 的 `content` 进 worldinfo（静态设定），
@@ -120,12 +120,12 @@ export const api = {
   //
   // **改设定立刻对所有故事生效**，那是对的——这些是"这个世界是什么"，改它等于
   // 改角色卡。已经发生过的剧情所依赖的事实是另一回事：初始状态在**每局故事
-  // 各自的第一轮**冻结（D158），此后改它只影响还没开始的那些。
+  // 各自的第一轮**冻结（S67），此后改它只影响还没开始的那些。
   listWorldbooks: () => json<WorldbookCard[]>("/worldbooks"),
   createWorldbook: (book?: Partial<Worldbook>) =>
     json<Worldbook>("/worldbooks", { method: "POST", body: JSON.stringify(book ?? null) }),
   /** 导入一份文件 → **得到一份新设定**。拿到别人分享的文件时要的是这个，
-   * 而不是"先建个空的再往里导"（D172）。 */
+   * 而不是"先建个空的再往里导"（R17）。 */
   importAsNewWorldbook: (bundle: WorldbookBundle) =>
     json<Worldbook>("/worldbooks/import", { method: "POST", body: JSON.stringify(bundle) }),
   getWorldbook: (id: string) =>
@@ -135,7 +135,7 @@ export const api = {
       sessions: string[];
       initial_state: Record<string, unknown>;
     }>(`/worldbooks/${id}`),
-  /** **只能改名**——worldbook 上没有别的字段了（D175），题材与尺度都是条目。 */
+  /** **只能改名**——worldbook 上没有别的字段了（S64），题材与尺度都是条目。 */
   patchWorldbook: (id: string, name: string) =>
     json<Worldbook>(`/worldbooks/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
   /** 有故事开在上面时服务端返回 409——删掉的话那几局会当场失忆。 */
@@ -147,14 +147,14 @@ export const api = {
   deleteEntry: (id: string, entryId: string) =>
     json<{ deleted: string }>(`/worldbooks/${id}/entries/${entryId}`, { method: "DELETE" }),
 
-  /** 用户手动归段（D112 的第三条支路）。**用户说这一段收了，就是收了。** */
+  /** 用户手动归段（S22 的第三条支路）。**用户说这一段收了，就是收了。** */
   closeSegment: (id: string) =>
     json<{ closed: boolean; reason?: string; end?: string; span?: number }>(
       `/sessions/${id}/close-segment`,
       { method: "POST" },
     ),
 
-  // -- agent 管理（D173）----------------------------------------------------
+  // -- agent 管理（R31）----------------------------------------------------
   //
   // **一份配置 = 一个 agent 收到的全部文字**：`sections`（消息串）、`tools`
   // （工具描述）、`specials`（运行时另外追加的整条消息）、`rendering`（嵌在
@@ -167,7 +167,7 @@ export const api = {
   putAgent: (name: string, data: Record<string, unknown>) =>
     json<AgentDoc>(`/agents/${name}`, { method: "PUT", body: JSON.stringify({ data }) }),
 
-  /** 回看某一轮落盘的 trace（D162）。开发者面板靠它看当前连接之前的轮次。 */
+  /** 回看某一轮落盘的 trace（S115）。开发者面板靠它看当前连接之前的轮次。 */
   readTrace: (id: string, runId: string) => json<TraceEvent[]>(`/sessions/${id}/trace/${runId}`),
 
   // 导入导出。格式与三条约定见 docs/design/WorldbookFormat.md。

@@ -88,14 +88,34 @@ S133 外观归本地 · S134 选取值只有一种交互形态。
 
 ---
 
-## 迁移期间的临时状态
+---
 
-文档正在从旧的 `D<n>` 决策台账迁到 req / spec / test 三层
-（进度见 [_migration.md](_migration.md)）。迁移完成前：
+## 野生测试：65 条钉不到任何 spec
 
-- `docs/design/` 与 `docs/spec/` 会短暂并存，**以 `spec/` 为准**
-- 代码注释里的 `D<n>` 引用尚未换成 `S<n>`，它们仍指向 `Decisions.md`
-- `Decisions.md` 已降级为**只读历史**，不再新增条目
+**有断言，但没有任何一条 spec 的「验收」点过它们。** 这不一定是坏事——
+其中 13 条在 `test_bench.py`、11 条在 `test_gateway.py`，测的是评测工具与 SDK 封装，
+本来就不服务某条产品规格。
 
-迁移结束时 `_migration.md`、`Decisions.md`、`docs/design/` 一并删除，
-这一节也跟着删。
+但另外那些值得逐条看一眼：**要么补一条 spec，要么这条测试钉的是文案不是不变量。**
+
+| 文件 | 条数 |
+|---|---|
+| test_bench.py | 13 |
+| test_gateway.py | 11 |
+| test_server.py | 10 |
+| test_run.py | 6 |
+| test_state.py · test_state_manager.py | 各 5 |
+| test_director.py | 4 |
+| test_repository.py · test_schema.py | 各 3 |
+| test_runner_lifecycle.py · test_tools.py | 各 2 |
+| test_agents_api.py | 1 |
+
+## test → spec 的反向链接没做
+
+spec 那侧的「验收」字段点了 **211 个测试名**，所以 **spec → test 是通的**。
+反过来（每条测试的 docstring 首行写它钉的 `S<n>`）**只做到 141 条**，
+其余靠人从 spec 那侧查。
+
+试过一次自动加，脚本在多行签名上匹配跑偏、写坏了一个文件（84 条改动而可推导的只有
+79 条），已整个回滚。**这件事要么逐文件手工做，要么不做**——
+自动化在这里的风险大于收益，而正向链路已经够用。
