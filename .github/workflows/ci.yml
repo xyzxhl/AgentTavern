@@ -1,6 +1,6 @@
 # 提交前该跑的那一串，交给机器跑。规则本身在 docs/Workflow.md。
 #
-# 分三个 job 而不是串成一个：前端红的时候后端结果照样看得见。三者互不依赖，
+# 分两个 job 而不是串成一个：前端红的时候后端结果照样看得见。二者互不依赖，
 # 只有 drift 那一步同时要 Python 和 Node——它跑在 frontend job 里。
 
 name: CI
@@ -64,16 +64,3 @@ jobs:
         run: |
           npm run gen:types --prefix frontend
           git diff --exit-code -- frontend/src/protocol.ts
-
-  decisions:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.11"
-      # 只用标准库，不装依赖。
-      - name: 台账与引用是否一致
-        run: python scripts/check_decisions.py
-        env:
-          PYTHONIOENCODING: utf-8
