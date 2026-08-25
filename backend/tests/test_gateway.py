@@ -1,12 +1,12 @@
 """gateway：OpenAI 兼容格式的请求构造、响应解析、重试。
 
-用 httpx 的 MockTransport 拦截，不打真实网络。
+用 httpx2 的 MockTransport 拦截，不打真实网络。
 """
 
 import json
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 
 from agenttavern.config import Settings
@@ -23,35 +23,35 @@ def settings(**kw: Any) -> Settings:
     return Settings(**{**base, **kw})
 
 
-def gateway_returning(*responses: httpx.Response, capture: list[dict[str, Any]] | None = None):
+def gateway_returning(*responses: httpx2.Response, capture: list[dict[str, Any]] | None = None):
     queue = list(responses)
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if capture is not None:
             capture.append(json.loads(request.content))
         return queue.pop(0) if len(queue) > 1 else queue[0]
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     return LLMGateway(settings(), http_client=client)
 
 
-def ok(message: dict[str, Any], usage: dict[str, int] | None = None) -> httpx.Response:
+def ok(message: dict[str, Any], usage: dict[str, int] | None = None) -> httpx2.Response:
     body = {
         "choices": [{"message": message, "finish_reason": "stop"}],
         "usage": usage or {"prompt_tokens": 10, "completion_tokens": 5},
     }
-    return httpx.Response(200, json=body)
+    return httpx2.Response(200, json=body)
 
 
 async def test_hits_the_configured_base_url() -> None:
     """只用 chat completions 这一个面，任何兼容端点都能接——base_url 决定去哪。"""
-    captured: list[httpx.Request] = []
+    captured: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         captured.append(request)
         return ok({"content": "好"})
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     gw = LLMGateway(settings(), http_client=client)
 
     await gw.complete([Message(role=Role.USER, content="hi")])
@@ -61,7 +61,7 @@ async def test_hits_the_configured_base_url() -> None:
 
 async def test_blank_api_key_is_accepted() -> None:
     """本地端点（llama.cpp / vLLM）常常不校验 key，但 SDK 要求非空。"""
-    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: ok({"content": "好"})))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(lambda _: ok({"content": "好"})))
     gw = LLMGateway(settings(llm_api_key=""), http_client=client)
     assert (await gw.complete([Message(role=Role.USER, content="hi")])).content == "好"
 
@@ -157,19 +157,19 @@ async def test_tool_result_message_roundtrip() -> None:
 
 
 async def test_retries_transient_then_succeeds() -> None:
-    gw = gateway_returning(httpx.Response(503, text="busy"), ok({"content": "好"}))
+    gw = gateway_returning(httpx2.Response(503, text="busy"), ok({"content": "好"}))
     assert (await gw.complete([Message(role=Role.USER, content="hi")])).content == "好"
 
 
 async def test_does_not_retry_client_error() -> None:
     calls = 0
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal calls
         calls += 1
-        return httpx.Response(401, text="bad key")
+        return httpx2.Response(401, text="bad key")
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     gw = LLMGateway(settings(), http_client=client)
 
     with pytest.raises(LLMError) as exc:
@@ -180,7 +180,7 @@ async def test_does_not_retry_client_error() -> None:
 
 async def test_empty_choices_raises() -> None:
     """部分端点在被过滤/拒绝时返回空 choices 而非错误码。"""
-    gw = gateway_returning(httpx.Response(200, json={"choices": []}))
+    gw = gateway_returning(httpx2.Response(200, json={"choices": []}))
     with pytest.raises(LLMError, match="choices"):
         await gw.complete([Message(role=Role.USER, content="hi")])
 

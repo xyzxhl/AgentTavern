@@ -39,17 +39,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LEDGER = ROOT / "docs" / "Decisions.md"
 
-# 只扫这些树；`data/` 是用户数据，`node_modules/` 与 `.venv/` 不是我们的字。
-TREES = ("backend/agenttavern", "backend/tests", "frontend/src", "docs")
-SUFFIXES = {".py", ".ts", ".tsx", ".yaml", ".yml", ".md"}
+# **扫全部被 git 跟踪的文件**，只按后缀过滤。曾经这里列的是几棵子树
+# （`backend/agenttavern`、`frontend/src`、`docs` …），结果 `backend/pyproject.toml`
+# 和仓库根的 `dev.ps1` 都在名单外——它们里面的 D 引用一处也检查不到，而
+# **一个有盲区的检查器比没有检查器更坏**：它会给出"全都查过了"的错觉。
+SUFFIXES = {".py", ".ts", ".tsx", ".mjs", ".yaml", ".yml", ".toml", ".ps1", ".md"}
+
+# 第三方素材，不是我们的字；里面的 `D<数字>` 是巧合。
+SKIP_PREFIXES = ("docs/sillytavern_preset_example/",)
 
 
 def tracked_files() -> list[Path]:
     out = subprocess.run(
-        ["git", "ls-files", *TREES],
+        ["git", "ls-files"],
         cwd=ROOT, capture_output=True, text=True, check=True,
     ).stdout.split()
-    return [ROOT / rel for rel in out]
+    return [ROOT / rel for rel in out if not rel.startswith(SKIP_PREFIXES)]
 
 
 OFF = re.compile(r"check-decisions:\s*off")

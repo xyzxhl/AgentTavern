@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 
 from agenttavern.config import Settings
@@ -72,14 +72,14 @@ class ScriptedLLM:
         self._on_goal_request = on_goal_request
         self.requests: list[dict[str, Any]] = []
 
-    def _reply(self, message: dict[str, Any], *, streaming: bool = False) -> httpx.Response:
+    def _reply(self, message: dict[str, Any], *, streaming: bool = False) -> httpx2.Response:
         body = {
             "choices": [{"message": message, "finish_reason": "stop"}],
             "usage": {"prompt_tokens": 10, "completion_tokens": 1},
         }
-        return _sse(body) if streaming else httpx.Response(200, json=body)
+        return _sse(body) if streaming else httpx2.Response(200, json=body)
 
-    def _handle(self, request: httpx.Request) -> httpx.Response:
+    def _handle(self, request: httpx2.Request) -> httpx2.Response:
         payload = json.loads(request.content)
         self.requests.append(payload)
         messages = payload["messages"]
@@ -106,10 +106,10 @@ class ScriptedLLM:
             "choices": [{"message": reply, "finish_reason": "stop"}],
             "usage": {"prompt_tokens": 10, "completion_tokens": 4},
         }
-        return _sse(body) if streaming else httpx.Response(200, json=body)
+        return _sse(body) if streaming else httpx2.Response(200, json=body)
 
     def gateway(self) -> LLMGateway:
-        client = httpx.AsyncClient(transport=httpx.MockTransport(self._handle))
+        client = httpx2.AsyncClient(transport=httpx2.MockTransport(self._handle))
         return LLMGateway(Settings(llm_model="test-model"), http_client=client)
 
     @property
@@ -120,7 +120,7 @@ class ScriptedLLM:
         return self.requests[index]["messages"]
 
 
-def _sse(body: dict[str, Any]) -> httpx.Response:
+def _sse(body: dict[str, Any]) -> httpx2.Response:
     """把一个整块响应拆成 SSE 分片。
 
     **正文按字拆**，好让"边写边推"这件事在测试里真的发生；工具调用整块给——
@@ -163,7 +163,7 @@ def _sse(body: dict[str, Any]) -> httpx.Response:
     chunks.append({"choices": [], "usage": body["usage"]})
 
     body_text = "".join("data: " + json.dumps(c) + "\n\n" for c in chunks) + "data: [DONE]\n\n"
-    return httpx.Response(200, text=body_text, headers={"content-type": "text/event-stream"})
+    return httpx2.Response(200, text=body_text, headers={"content-type": "text/event-stream"})
 
 
 def text(content: str) -> dict[str, Any]:
@@ -205,7 +205,7 @@ class CancelWriter(ScriptedLLM):
     director 用了几轮取决于它查了几次东西。认提示词特征才稳。
     """
 
-    def _handle(self, request: httpx.Request) -> httpx.Response:
+    def _handle(self, request: httpx2.Request) -> httpx2.Response:
         messages = json.loads(request.content)["messages"]
         if STATE_MARK not in messages[0].get("content", "") and WRITER_MARK in str(messages):
             raise asyncio.CancelledError

@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-import httpx
+import httpx2
 from openai import APIError, AsyncOpenAI
 
 from ..config import Settings
@@ -32,7 +32,9 @@ OnDelta = Callable[[str, str], None]
 
 
 class LLMGateway:
-    def __init__(self, settings: Settings, http_client: httpx.AsyncClient | None = None) -> None:
+    # `http_client` 是**测试注入真实网络替身的唯一入口**（`MockTransport`）。
+    # 类型必须跟着 SDK 走：openai 3.x 用的是 `httpx2`，不是 `httpx`。
+    def __init__(self, settings: Settings, http_client: httpx2.AsyncClient | None = None) -> None:
         self._settings = settings
         self._client = AsyncOpenAI(
             base_url=settings.llm_base_url,

@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 from conftest import using
 
@@ -30,8 +30,8 @@ from agenttavern.tools.builtin import MAX_READ_CHARS
 
 
 def fake_gateway(reply: str = "摘要文本") -> LLMGateway:
-    def handler(_: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             json={
                 "choices": [{"message": {"content": reply}, "finish_reason": "stop"}],
@@ -39,7 +39,7 @@ def fake_gateway(reply: str = "摘要文本") -> LLMGateway:
             },
         )
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     return LLMGateway(Settings(llm_model="m"), http_client=client)
 
 
