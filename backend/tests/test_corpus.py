@@ -11,10 +11,43 @@ import pytest
 
 from agenttavern.corpus.bm25 import BM25Index, tokenise
 from agenttavern.corpus.chunking import chunk
+from agenttavern.corpus.search import search_corpus
 from agenttavern.models.corpus import BuildState, Corpus
 from agenttavern.storage.corpora import CorpusRepository, CorpusStore
 
-# -- S142 切块 ----------------------------------------------------------------
+# -- S142 递归字符切分 -------------------------------------------------------
+
+
+def test_it_splits_on_paragraph_before_sentence() -> None:
+    """**先试最大的自然边界**（S142）：能按段落切开就不要拆句子。"""
+    text = "第一段讲甲。第一段还讲乙。\n\n第二段讲丙。第二段还讲丁。"
+    chunks = chunk(text, size=20, overlap=0)
+
+    assert any(c.text.startswith("第一段讲甲") for c in chunks)
+    assert any(c.text.lstrip().startswith("第二段讲丙") for c in chunks), (
+        f"段落边界应当优先于句号：{[c.text for c in chunks]}"
+    )
+
+
+def test_a_sentence_keeps_its_full_stop() -> None:
+    """分隔符跟着**前一片**走——句子要以句号结尾，不能把句号甩到下一块开头。"""
+    chunks = chunk("甲乙丙丁。戊己庚辛。壬癸子丑。", size=10, overlap=0)
+    assert all(not c.text.startswith(("。", "，", "；")) for c in chunks), (
+        f"标点被甩到了块首：{[c.text for c in chunks]}"
+    )
+
+
+def test_it_falls_back_to_characters_when_nothing_else_fits() -> None:
+    """一整段没有任何分隔符的长文本仍然要切开——**最后一档是按字符**（S142）。"""
+    chunks = chunk("甲" * 250, size=100, overlap=0)
+    assert len(chunks) >= 3
+    assert all(len(c.text) <= 100 for c in chunks)
+
+
+def test_no_chunk_exceeds_the_limit() -> None:
+    """限长是硬的。超了的块会让「一次检索回几段」这笔账全部失真。"""
+    text = ("这是一个比较长的句子，里面有逗号，也有句号。" * 30) + "另起一段" * 40
+    assert all(len(c.text) <= 120 for c in chunk(text, size=120, overlap=20))
 
 
 def test_a_chunk_remembers_where_it_came_from() -> None:
@@ -22,22 +55,18 @@ def test_a_chunk_remembers_where_it_came_from() -> None:
 
     用户判得出这条链路准不准，靠的正是"这段是从哪儿来的"（R42）。
     """
-    text = "甲" * 250
-    chunks = chunk(text, size=100, overlap=20)
-
-    assert all(text[c.start : c.end] == c.text for c in chunks), "区间必须能还原出原文"
-    assert chunks[0].start == 0
-    assert chunks[-1].end == len(text)
+    text = "第一句。第二句。第三句。\n\n新的一段，里面还有逗号，以及句号。"
+    for c in chunk(text, size=16, overlap=4):
+        assert text[c.start : c.end] == c.text, "区间必须能还原出原文"
 
 
 def test_chunks_overlap_so_nothing_falls_between_them() -> None:
-    """**重叠是为了不让一句话正好被切断**——被切断的那句谁也检索不到（S142）。"""
-    text = "".join(str(i % 10) for i in range(500))
-    chunks = chunk(text, size=100, overlap=30)
-
+    """**自然边界也会切断跨句的指代**——"他把它放回原处"里的"它"在上一句（S142）。"""
+    text = "甲乙丙丁戊己庚辛。壬癸子丑寅卯辰巳。午未申酉戌亥子丑。"
+    chunks = chunk(text, size=20, overlap=6)
+    assert len(chunks) > 1
     for prev, nxt in zip(chunks, chunks[1:], strict=False):
-        assert nxt.start < prev.end, "相邻两块必须有交叠，否则边界上的句子会掉进缝里"
-        assert prev.end - nxt.start == 30
+        assert nxt.start < prev.end, "相邻两块必须有交叠"
 
 
 def test_overlap_must_be_smaller_than_the_chunk() -> None:
@@ -159,3 +188,42 @@ def test_listing_survives_one_broken_corpus(tmp_path: Path) -> None:
     ok, broken = store.survey()
     assert [c.name for c in ok] == ["好的"]
     assert broken == ["cp_broken"], "坏的要被点出来，不是静默跳过"
+
+
+# -- S148 置信度：相关度不够就判为没找到 ---------------------------------------
+
+
+def test_coverage_not_raw_score_decides() -> None:
+    """**判据是词覆盖率，不是 BM25 原始分**（S148）。
+
+    原始分依赖这份资料的词频分布：同一个 3.7 分在一本小说里是强命中、
+    在一份术语表里可能是噪声。拿它设阈值，**换一份资料整条链路的松紧就变了，
+    而没有任何地方会报错**。覆盖率是比例，到哪儿都一样。
+    """
+    index = BM25Index.build(["尚书省左仆射掌管吏部铨选"])
+    # 分词结果分别是 [尚书省, 吏部] / [尚书省, 铨选, 天文] / [完全, 无关]，
+    # **断言按实际切分写**——照想当然写会得到一个测的是分词器而不是覆盖率的测试。
+    assert index.coverage("尚书省 吏部", 0) == pytest.approx(1.0)
+    assert index.coverage("尚书省 铨选 天文", 0) == pytest.approx(2 / 3)
+    assert index.coverage("完全无关", 0) == 0.0
+
+
+def test_a_weak_match_is_reported_as_a_miss() -> None:
+    """**勉强沾边的比没有更糟**（S148）：模型会把不相关的资料当成相关的用，
+    写进剧情的就是一段有出处、但出处对不上的东西。没找到，它至少知道自己不知道。
+    """
+    index = BM25Index.build(
+        ["尚书省左仆射掌管吏部铨选，凡内外文官皆属焉。", "今日天气晴朗，适合出游踏青。"]
+    )
+    strong = search_corpus(index, "尚书省 吏部 铨选", limit=2, min_coverage=0.5)
+    weak = search_corpus(index, "量子纠缠 与 贝尔不等式 的 实验验证", limit=2, min_coverage=0.5)
+
+    assert strong, "该找到的要找到"
+    assert weak == [], f"覆盖率不够就该判为没找到，而不是端上来：{weak}"
+
+
+def test_the_threshold_comes_from_config() -> None:
+    """阈值是旋钮，不是写死的字面量——它要能按资料调（同 S86）。"""
+    from agenttavern.config import LIMITS
+
+    assert 0.0 < LIMITS.corpus.min_coverage <= 1.0

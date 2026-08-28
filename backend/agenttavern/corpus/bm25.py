@@ -119,6 +119,20 @@ class BM25Index(BaseModel):
         scored.sort(key=lambda pair: (-pair[1], pair[0]))
         return scored[:limit]
 
+    def coverage(self, query: str, chunk_index: int) -> float:
+        """query 切出来的词，有多大比例出现在这一块里（S148）。
+
+        **判定用它，不用 BM25 原始分。** 原始分依赖这份资料的词频分布：
+        同一个 3.7 分在一本小说里是强命中、在一份术语表里可能是噪声。
+        拿它设阈值，**换一份资料整条链路的松紧就变了，而没有任何地方会报错**。
+        覆盖率是比例，到哪儿都一样。
+        """
+        terms = set(tokenise(query))
+        if not terms or not 0 <= chunk_index < self.total:
+            return 0.0
+        present = self.term_freq[chunk_index].keys()
+        return len(terms & present) / len(terms)
+
     def dump(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(self.model_dump_json(), encoding="utf-8")

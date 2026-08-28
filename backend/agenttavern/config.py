@@ -126,6 +126,7 @@ class _Corpus(BaseModel):
     chunk_overlap: int = 80
     candidates: int = 20
     top_k: int = 5
+    min_coverage: float = 0.5
 
 
 class Limits(BaseModel):
