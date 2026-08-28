@@ -55,8 +55,8 @@ state_manager（tool loop，run 末）
 | | |
 |---|---|
 | [Workflow.md](Workflow.md) | **改动怎么落地**：三层怎么保持一致、什么时候停下来问。**动手前先读这份** |
-| [req/](req/) | **39 条需求**（R1–R39），按用户场景分六篇 |
-| [spec/](spec/) | **135 条规格**（S1–S135），按机制对象分十四篇。每条带服务的 R、不做什么、为什么、验收 |
+| [req/](req/) | **45 条需求**（R1–R45），按用户场景分七篇 |
+| [spec/](spec/) | **147 条规格**（S1–S147），按机制对象分十五篇。每条带服务的 R、不做什么、为什么、验收 |
 | [Principles.md](Principles.md) | **35 条判据**（P1–P35）：从 req 推 spec 时用的工具箱 |
 | [Glossary.md](Glossary.md) | **术语**。每一条都对应一次实际的澄清 |
 | [Ideas.md](Ideas.md) | **还没成形的想法**。层次在 req 之上，想清楚了就下沉成 req |
@@ -74,6 +74,7 @@ state_manager（tool loop，run 末）
 | [State.md](spec/State.md) | 为何不预设任何维度；记什么、不记什么 |
 | [Branching.md](spec/Branching.md) | 分支树、"状态是路径的函数"、打断与续跑 |
 | [Retrieval.md](spec/Retrieval.md) | 规则检索的准入标准、全量索引 + 按需展开、跨轮上下文 |
+| [Corpus.md](spec/Corpus.md) | 外部资料检索。**尽力而为的一层**，写在代码前面 |
 | [Worldbook.md](spec/Worldbook.md) | 设定库：条目分类、两路投影、交换格式 |
 | [Prompting.md](spec/Prompting.md) | 提示词层：三类条目、所见即所得、档位取值住哪 |
 | [Prose.md](spec/Prose.md) | 文风落成系统行为的那四条 |
