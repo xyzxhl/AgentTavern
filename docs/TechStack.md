@@ -32,6 +32,11 @@ SSE 三条都不满足。不用 socket.io——不需要它的房间与 fallback
 
 **不用 agent SDK / 编排框架**（LangChain、LangGraph、各家 agent SDK）：本项目对 tool loop 的控制粒度要求很高——run 内暂存区、`submit_outline` 的终止语义、契约校验、按阶段打断（S49）、无超时挂起（S24）。框架会挡在中间。
 
+**这条拒绝的是编排层，不是工具函数。** 框架挡在 tool loop 中间才是问题，
+而一个切分器没有控制流。工具函数按 P36 单独判：实测 `langchain-text-splitters`
+带进 28 个传递依赖（含云端追踪客户端），而它的功能我们已有等价实现，所以不用；
+将来要解析 PDF / epub 时，用它封装的那几个库（`pypdf` 等）**直连**，同样不引框架。
+
 **但官方 SDK 可以用。** 区别在于它只负责**一次调用**（重试、错误分类、超时、解析），**loop 完全由我们自己写**——SDK 不会挡在中间。省下的是一整套自己写的 HTTP 管道。
 
 只用 **chat completions 这一个面**意味着任何兼容端点都能接：OpenAI、OpenRouter、DeepSeek、本地 llama.cpp / vLLM。配置走 `.env`（`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`），换 provider 不动代码。本地端点常常不校验 key，而 SDK 要求非空，因此空值时填占位串。
