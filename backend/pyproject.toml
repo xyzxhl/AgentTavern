@@ -19,6 +19,7 @@ dependencies = [
     "httpx2>=2.7,<3",
     "httpx>=0.27,<1",
     "pyyaml>=6.0,<7",
+    "jieba>=0.42,<1",
 ]
 
 [project.optional-dependencies]
@@ -61,3 +62,9 @@ addopts = "--basetemp=.pytest-tmp --timeout=30"
 [tool.mypy]
 python_version = "3.11"
 strict = true
+
+# jieba 没有 py.typed。**只放宽这一个模块**，不整体调低 strict——
+# 为一个第三方库把全项目的检查降一档，代价会落在自己的代码上。
+[[tool.mypy.overrides]]
+module = ["jieba", "jieba.*"]
+ignore_missing_imports = true

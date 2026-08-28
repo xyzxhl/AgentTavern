@@ -121,6 +121,13 @@ class _Windows(BaseModel):
     state_recent_runs: int = 3
 
 
+class _Corpus(BaseModel):
+    chunk_chars: int = 400
+    chunk_overlap: int = 80
+    candidates: int = 20
+    top_k: int = 5
+
+
 class Limits(BaseModel):
     """`config.yaml` 的形状。
 
@@ -136,6 +143,7 @@ class Limits(BaseModel):
     segment: _Segment = _Segment()
     sampling: _Sampling = _Sampling()
     windows: _Windows = _Windows()
+    corpus: _Corpus = _Corpus()
 
 
 def load_limits(path: Path | None = None) -> Limits:

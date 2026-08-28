@@ -8,6 +8,7 @@ from .control import (
     SessionModes,
     SubGoal,
 )
+from .corpus import BuildState, BuildStatus, Chunk, Corpus
 from .draft import RunDraft, RunStage, trim_dangling_tool_call
 from .node import InputSource, Node, RunStatus, UserInput, new_id
 from .session import Session
@@ -16,6 +17,10 @@ from .trace import Actor, AttributionClass, TraceEvent, TraceEventType
 from .worldbook import EntryKind, Worldbook, WorldbookEntry, WorldbookMode
 
 __all__ = [
+    "BuildState",
+    "BuildStatus",
+    "Chunk",
+    "Corpus",
     "Actor",
     "AttributionClass",
     "Goal",

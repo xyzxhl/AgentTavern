@@ -146,8 +146,9 @@ def test_config_yaml_covers_every_knob() -> None:
     哪个文件；想调一个数得改代码。这条钉的是"每个旋钮都真的从 config.yaml 来"——
     漏掉一个的症状是改了配置没反应，而那是最难查的一类。
     """
+    import agenttavern
     from agenttavern.agents import director, goal_manager, replay, state_manager, summarizer
-    from agenttavern.config import LIMITS, load_limits
+    from agenttavern.config import LIMITS, Limits, load_limits
     from agenttavern.models import Goal
     from agenttavern.orchestration import checks
     from agenttavern.prompting import prompts, state_recent_runs, upstream_runs
@@ -195,6 +196,22 @@ def test_config_yaml_covers_every_knob() -> None:
 
     # **文件里的值就是真值**，不是被模型里那份兜底默认悄悄顶掉的。
     assert load_limits().model_dump() == LIMITS.model_dump()
+
+    # **反向也要查：YAML 里的每个顶层节都必须在 `Limits` 上有字段。**
+    #
+    # 上面那张表是白名单，只查列进去的那几个。而 Pydantic 默认**忽略多余的键**——
+    # 于是往 config.yaml 加一整节、忘了在 `Limits` 上加字段，它会被静默丢掉，
+    # 而这条测试照样全绿。**这正是本条 docstring 自己写的那个失败模式**
+    # （改了配置没反应），它此前防不住。踩过一次，加了 corpus 那一节时。
+    import yaml
+
+    raw = yaml.safe_load(
+        (Path(agenttavern.__file__).parent / "config.yaml").read_text(encoding="utf-8")
+    )
+    assert set(raw) <= set(Limits.model_fields), (
+        f"config.yaml 里这几节在 Limits 上没有对应字段，会被静默忽略："
+        f"{sorted(set(raw) - set(Limits.model_fields))}"
+    )
 
 
 def test_a_missing_config_file_falls_back_instead_of_crashing(tmp_path: Path) -> None:

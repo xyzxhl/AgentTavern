@@ -133,7 +133,12 @@ goal_manager 管的是「推到哪儿了」，一条检索路都没有，这一�
 **规格** 两路各取 N 条 → 按块 id 合并去重 → rerank 取前 k。
 
 BM25 那一路**不依赖任何外部模型**，所以它是**降级路径**：
-向量端点没配或不可用时，整条链路退回纯 BM25 并在回执里说明。
+**embeddings 没配、或调用失败时，整条链路退回纯 BM25 并在回执里说明**，
+不是拒绝启用。
+
+**为什么降级而不是拒绝**：拒绝的话，一个只配了 chat 端点的部署**整个功能用不了**——
+而纯 BM25 对这个场景（专名、术语、黑话）本来就有相当一部分价值。
+降级是有损的，所以它必须**说出来**（同 [S139](#s139)）。
 
 **不做** 只用向量。
 
@@ -141,7 +146,13 @@ BM25 那一路**不依赖任何外部模型**，所以它是**降级路径**：
 而这恰恰是这个功能要解决的那一类问题（同人黑话、朝代官职、专业术语）。
 向量补的是「说法不同但意思相近」。两者的强项互不重叠。
 
-**验收** `test_both_paths_contribute_and_duplicates_collapse` · `test_it_falls_back_to_bm25_when_embeddings_are_unavailable`
+**中文分词用 `jieba`。** 不分词就只能按字符 n-gram，而 BM25 的强项恰恰是
+**专名与术语这类低频词**——切成单字之后那个强项就没了。
+
+**embeddings 走独立的一组配置**（`EMBED_BASE_URL` / `EMBED_API_KEY` / `EMBED_MODEL`）,
+不复用 chat 那一组：多数人的 chat 与 embedding 未必在同一家。
+
+**验收** `test_both_paths_contribute_and_duplicates_collapse` · `test_it_falls_back_to_bm25_when_embeddings_are_unavailable` · `test_chinese_terms_survive_tokenisation`
 
 ### S141 · rerank 复用 chat 模型，但它是一次**独立调用**
 
