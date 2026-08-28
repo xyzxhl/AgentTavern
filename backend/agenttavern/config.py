@@ -43,6 +43,19 @@ class Settings(BaseSettings):
     llm_max_retries: int = 2
     """仅对瞬时错误（429 / 5xx / 网络）重试。"""
 
+    embed_base_url: str = ""
+    """embeddings 的端点。**独立的一组**（S140）——多数人的 chat 与 embedding
+    未必在同一家。留空则回落到 `llm_base_url`。
+    """
+
+    embed_api_key: str = ""
+    embed_model: str = ""
+    """**留空 = 不启用向量那一路**，整条链路走纯 BM25（S140）。
+
+    不去拿 `llm_model` 猜一个：猜错的后果是每次检索都对着一个不存在的模型报错，
+    而症状只是"检索总是查不到"。
+    """
+
     data_dir: Path = Path("data")
 
     stream: bool = True
@@ -127,6 +140,7 @@ class _Corpus(BaseModel):
     candidates: int = 20
     top_k: int = 5
     min_coverage: float = 0.5
+    min_similarity: float = 0.35
 
 
 class Limits(BaseModel):
