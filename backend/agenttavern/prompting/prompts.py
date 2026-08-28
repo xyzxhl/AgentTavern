@@ -255,7 +255,7 @@ def director_prompt(
             "user_input": user_text or special_text("director", "no_input"),
         },
         # **`{{goal}}` 现在没人用**：`director.yaml` 里一个引用都没有，因为
-        # director 不该读目标（S92——模拟输入和真输入在它眼里必须一模一样，
+        # director 不该读目标（S102——模拟输入和真输入在它眼里必须一模一样，
         # 而知道目标会让它对前者区别对待）。值留着是**一个可选的接口**：
         # 想让它看见，在 YAML 里写一句 `{{goal}}` 即可；不写就什么也不发生。
         # 不留的话那一句会直接报 KeyError，而那是个坏得多的发现方式。

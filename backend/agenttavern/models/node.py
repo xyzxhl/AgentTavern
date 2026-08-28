@@ -39,7 +39,7 @@ class RunStatus(StrEnum):
 
 
 class InputSource(StrEnum):
-    """这条输入是谁给的（S92）。
+    """这条输入是谁给的（S102）。
 
     **只有 goal_manager 读它。** director 不知道有 goal 这回事，两种输入在它眼里
     完全一样——那是有意的：模拟输入必须和真实输入长得一模一样，否则 director
@@ -61,7 +61,7 @@ class UserInput(BaseModel):
 
     text: str
     source: InputSource = InputSource.USER
-    """**给 goal_manager 分辨用的**（S92）：剧情偏了，是它自己推错了，还是用户
+    """**给 goal_manager 分辨用的**（S102）：剧情偏了，是它自己推错了，还是用户
     主动把剧情带走了？后者强得多——用户的意图优先于目标，那往往意味着计划该重拆，
     甚至该判 failed。不标注的话两种偏离在梗概里长得一模一样，而应对完全不同。
     """

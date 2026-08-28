@@ -46,7 +46,7 @@ state_manager（tool loop，run 末）
 
 **先填 `backend/.env`**（`copy backend\.env.example backend\.env`，填 `LLM_API_KEY` 与 `LLM_MODEL`）。任何 OpenAI 兼容端点都行。不填也起得来——但要到第一次真调模型才 401，那时报错离原因已经很远，所以 `dev.ps1` 在启动前就拦掉。
 
-端口写死在 `frontend/vite.config.ts`（监听 5173、代理目标 8000），要换在那一处换。**别只换一边**：漏掉代理那条不会报错，Vite 会把请求当成前端路由回一份 `index.html` 且状态码 200（R17）。
+端口写死在 `frontend/vite.config.ts`（监听 5173、代理目标 8000），要换在那一处换。**别只换一边**：漏掉代理那条不会报错，Vite 会把请求当成前端路由回一份 `index.html` 且状态码 200——而 `res.ok` 为真，异常拖到解析才发生（S135）。
 
 ## 文档
 
@@ -64,7 +64,7 @@ state_manager（tool loop，run 末）
 | [Optimization.md](Optimization.md) | 怎么改提示词与装配规则，以及怎么知道改对了 |
 | [TechStack.md](TechStack.md) | 库选型与理由、目录结构、前后端契约 |
 
-### spec/ 十四篇
+### spec/ 十五篇
 
 | | |
 |---|---|

@@ -97,7 +97,7 @@ class ToolRegistry:
 
     @classmethod
     def for_goal_manager(cls) -> ToolRegistry:
-        """goal_manager 的工具面：`plan` / `check` / `steer` / `finish`（S92/S94）。
+        """goal_manager 的工具面：`plan` / `check` / `steer` / `finish`（S95/S94）。
 
         **不吃开关**——goal 要么在跑要么不在，没有中间档；这四个是它全部的
         表达方式，缺一个就有话说不出来。

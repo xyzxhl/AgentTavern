@@ -98,7 +98,7 @@ export const api = {
       session: Session;
       path: Node[];
       state: Record<string, unknown>;
-      /** 路径上**有兄弟**的那几轮 → 兄弟 id 列表（S44/S44）。独苗不列。 */
+      /** 路径上**有兄弟**的那几轮 → 兄弟 id 列表（S44）。独苗不列。 */
       siblings: Record<string, string[]>;
     }>(`/sessions/${id}`),
 

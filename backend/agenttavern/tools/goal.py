@@ -111,7 +111,7 @@ class FinishParams(BaseModel):
 
 
 async def _finish(ctx: GoalContext, params: FinishParams) -> ToolResult:
-    # **不检查中间状态是否全部成立**（S94）。S92 曾在这里加过一条硬前提，
+    # **不检查中间状态是否全部成立**（S94）。S93 曾在这里加过一条硬前提，
     # 想靠它挡住自我确认倾向；但中间状态无序、可跳过、可能已经不必要（S93），
     # 于是那条前提在「目标确实达成、只是某条中间状态已经作废」这个常见情形下
     # 只是多逼出两次工具调用——先 `plan` 重给一版，再 `check` 标全，然后原样通过。

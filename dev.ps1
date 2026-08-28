@@ -9,7 +9,7 @@
     端口没做成参数，是故意的。`vite.config.ts` 里代理目标写死 `127.0.0.1:8000`、
     监听写死 `127.0.0.1:5173`；这里再开一个 `-Port` 只会让两边悄悄对不上——
     前端照样起得来，请求却被 Vite 当成前端路由回一份 index.html **且状态码 200**
-    （R17 那个坑）。要换端口就去改 vite.config.ts，一处。
+    （S135 那个坑）。要换端口就去改 vite.config.ts，一处。
 
 .PARAMETER Setup
     先装依赖再起。新 clone 下来第一次用这个——仓库里没有 .venv 和 node_modules。

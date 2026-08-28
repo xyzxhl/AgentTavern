@@ -86,7 +86,7 @@ def load_takes(
         takes.append(
             Take(index=i + 1, outline=node.outline, upstream=upstream, original=node.prose)
         )
-    # 文风实验要的是角色语言习惯与用户扮演谁——两样都在**条目**上（S65/S65），
+    # 文风实验要的是角色语言习惯与用户扮演谁——两样都在**条目**上（S65），
     # worldbook 已经没有字段了（S64）。文风与视角也不在 session 上了（R31），
     # 它们是 `writer.yaml` 里那两个 `choice` 的 `selected`。
     return repo.worldbook(), takes[:limit] if limit else takes

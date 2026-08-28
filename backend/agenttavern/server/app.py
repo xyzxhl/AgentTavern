@@ -171,7 +171,7 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
         session = repo.load_session()
         leaf = session.active_leaf_id
         path = repo.path_to(leaf) if leaf else []
-        # **哪几轮有兄弟，随路径一起给**（S44/S44）。切换器要显示 `⟨2/3⟩` 就得
+        # **哪几轮有兄弟，随路径一起给**（S44）。切换器要显示 `⟨2/3⟩` 就得
         # 先知道有没有第 2 支；一个节点一次 `siblings` 请求会让一条 20 轮的路径
         # 打 20 个请求，而这份数据只在重生成之后才变。
         #
@@ -525,7 +525,7 @@ async def _handle(
         await broadcast(StateSnapshot(values=repo.state_at(leaf).values, leaf_id=leaf))
 
     elif isinstance(message, SetGoal):
-        # **同一时间只有一个 goal**（S92）。已有的必须先放弃——goal_manager 的
+        # **同一时间只有一个 goal**（S104）。已有的必须先放弃——goal_manager 的
         # 对话是围着那个目标建起来的，换一个就得整份重来，而那正是 `abandon`。
         session = repo.load_session()
         if session.meta.goal is not None:
@@ -548,7 +548,7 @@ async def _handle(
 
     elif isinstance(message, SetGoalBudget):
         # **这是"加预算接着跑"的入口。** 目标本身禁改，预算恰恰要能在跑到一半
-        # 时调大——预算耗尽是暂停不是失败（S92）。调大之后顺手解除那次暂停。
+        # 时调大——预算耗尽是暂停不是失败（S96）。调大之后顺手解除那次暂停。
         session = repo.load_session()
         if session.meta.goal is None:
             await broadcast(ServerError(message="当前没有目标。"))

@@ -289,7 +289,7 @@ class Store:
         return self._migrate_worldbooks()
 
     def migrate_kinds(self) -> int:
-        """条目的 `kind` 换过两次名，把旧值改成现在的（S65/S65/S64）。返回改了几条。
+        """条目的 `kind` 换过两次名，把旧值改成现在的（S65/S64）。返回改了几条。
 
         | 旧值 | 现在 |
         |---|---|

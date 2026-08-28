@@ -66,7 +66,7 @@ class Actor(StrEnum):
     DIRECTOR = "director"
     WRITER = "writer"
     GOAL_MANAGER = "goal_manager"
-    """目标管理者（S92）。它拆阶段、核对进度、替用户写下一条输入、判目标去向。
+    """目标管理者（S95）。它拆阶段、核对进度、替用户写下一条输入、判目标去向。
     以前叫 `goal_judge`，那时它只做最后一件事——**判定只是它四件事里的一件**，
     名字得跟上。
     """

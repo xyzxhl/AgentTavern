@@ -105,7 +105,7 @@ async def test_stop_cancels_only_the_run_not_the_loop(tmp_path: Path) -> None:
 
 
 async def test_regenerate_opens_a_sibling_of_the_current_leaf(tmp_path: Path) -> None:
-    """重生成 = 在**当前叶的父**下新建兄弟（S44/S44）。
+    """重生成 = 在**当前叶的父**下新建兄弟（S44）。
 
     父节点只有一个来源：出队那一刻的活跃叶。以前它随输入一起入队，因为可以
     重生成任意历史节点，而活跃叶是共享状态（有 run 在飞时会被覆盖）。**分支只能
@@ -158,7 +158,7 @@ async def test_goal_spending_is_counted_and_lands_on_disk(tmp_path: Path) -> Non
 
     它以前用默认参数的 Tracer——既不推事件也不落盘，于是"goal 为什么迟迟不达标"
     无从查起；而且**计数在 `SessionRunner` 的实例字段上，进程重启就归零**，
-    R24 那个用来兜住自主运行成本的上限实际上从来没生效过（S92 修掉）。
+    R24 那个用来兜住自主运行成本的上限实际上从来没生效过（S98 修掉）。
 
     而**算进预算的是这一轮的全部开销**，不只是 goal_manager 自己那一两次判定调用：
     钱主要花在它开出来的 run 上（细纲 + 正文 + 状态）。只算判定的话，一个名义上

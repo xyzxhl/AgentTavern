@@ -96,7 +96,7 @@ export type CreatedAt = string;
 export type RunStatus = "complete" | "failed";
 export type Text3 = string;
 /**
- * 这条输入是谁给的（S92）。
+ * 这条输入是谁给的（S102）。
  *
  * **只有 goal_manager 读它。** director 不知道有 goal 这回事，两种输入在它眼里
  * 完全一样——那是有意的：模拟输入必须和真实输入长得一模一样，否则 director
@@ -303,7 +303,7 @@ export interface Remove {
   [k: string]: unknown;
 }
 /**
- * 重生成：在**当前节点**的父节点下新建兄弟（S44/S44）。原分支保留。
+ * 重生成：在**当前节点**的父节点下新建兄弟（S44）。原分支保留。
  *
  * ``node_id`` 必须是当前活跃叶——**分支只能在当前节点上开**（S44）。想在更早
  * 的地方分叉，先 `SwitchBranch` 切过去，再重生成或推进；**切换不受限制，
@@ -315,7 +315,7 @@ export interface Regenerate {
   node_id: NodeId2;
 }
 /**
- * 设一个新目标（S92）。**已有 goal 时报错**——同一时间只有一个。
+ * 设一个新目标（S104）。**已有 goal 时报错**——同一时间只有一个。
  *
  * `description` 一旦定下就不能改：goal_manager 的对话是围着它建起来的，
  * 改了等于换了个目标，而对话还是旧的。要换就先 `GoalControl(abandon)`。
@@ -327,7 +327,7 @@ export interface SetGoal {
   max_total_tokens?: MaxTotalTokens;
 }
 /**
- * 改预算。**这是"加预算接着跑"的入口**（S92）。
+ * 改预算。**这是"加预算接着跑"的入口**（S96）。
  *
  * 和 `SetGoal` 分开，因为它俩的可改时机相反：目标定了就不能动，
  * 预算恰恰要能在跑到一半时调大——预算耗尽是暂停不是失败。
@@ -339,7 +339,7 @@ export interface SetGoalBudget {
   unlimited?: Unlimited;
 }
 /**
- * 暂停 / 恢复 / 放弃当前 goal（S92）。
+ * 暂停 / 恢复 / 放弃当前 goal（S104）。
  *
  * **恢复不是"从头再来"**：对话原样留着，只是按当前路径补齐暂停期间发生的轮次。
  * 暂停期间用户可以自己跑几轮、也可以切分支——恢复时**以最终选择的分支为准**。
@@ -524,7 +524,7 @@ export interface Branches {
   active_index: ActiveIndex;
 }
 /**
- * goal 走完了，控制权交回用户（S92/S92）。
+ * goal 走完了，控制权交回用户（S96）。
  *
  * **`outcome` 必须传出去**：两种终态都停下来，但那是两件完全不同的事——
  * 一个是达成了，一个是这个目标已经不可能达成了，用户的下一步动作完全不同。
@@ -635,7 +635,7 @@ export interface SessionModes {
  * 这个是**跑起来之后的东西**（对话、进度、花销）。混在一起的话，"用户改了什么"
  * 和"系统跑出了什么"就分不开，而前者要禁改、后者每轮都在变。
  *
- * **它挂在 session 上，不挂节点。** goal 跑着的时候不允许切分支，所以 S92 让
+ * **它挂在 session 上，不挂节点。** goal 跑着的时候不允许切分支，所以 S104 让
  * `GoalPlan` 跟着节点走的那个理由（分支隔离）不再成立。
  */
 export interface GoalRun {
@@ -649,7 +649,7 @@ export interface GoalRun {
   seen_leaf_id?: SeenLeafId;
 }
 /**
- * 把 goal 拆成的一串阶段（S92/S92）。
+ * 把 goal 拆成的一串阶段（S93）。
  *
  * **它们是脚手架，不是执行契约。** 存在的目的是逼模型在动手之前先想清楚差距
  * 在哪；某一条最终有没有原样实现并不要紧——剧情变了就重给一版。因此没有
@@ -659,8 +659,8 @@ export interface GoalRun {
  * **重给随时可以，而宣布完成之前必须用「当前的」那一版重核一遍**，不是照着
  * 三轮前那份打勾。
  *
- * **它挂在 session 上**（`GoalRun.plan`），不再挂节点。S92 让它跟着节点走是
- * 为了分支隔离；goal 跑着的时候不允许切分支（S92），那个理由不成立了。
+ * **它挂在 session 上**（`GoalRun.plan`），不再挂节点。S104 让它跟着节点走是
+ * 为了分支隔离；goal 跑着的时候不允许切分支（S104），那个理由不成立了。
  */
 export interface GoalPlan {
   subgoals?: Subgoals1;

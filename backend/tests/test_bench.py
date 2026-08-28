@@ -548,7 +548,7 @@ async def test_a_goal_scenario_is_driven_by_the_goal_manager(tmp_path: Path) -> 
 
 
 async def test_a_goal_scenario_stops_when_the_budget_runs_out(tmp_path: Path) -> None:
-    """预算到顶 → **暂停，不是失败**（S92）。bench 记下来就收，不再往下跑。"""
+    """预算到顶 → **暂停，不是失败**（S96）。bench 记下来就收，不再往下跑。"""
     llm = ScriptedLLM(
         *one_run(outline="第一轮。", prose="正文一。"),
         tools(

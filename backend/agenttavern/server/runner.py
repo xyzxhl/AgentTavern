@@ -123,12 +123,12 @@ class SessionRunner:
         self._out: asyncio.Queue[ServerMessage] = asyncio.Queue()
         self._sender_task: asyncio.Task[None] | None = None
 
-        # goal 的预算计数**已经落盘**了（`GoalRun.spent_*`，S92）。它以前是这里的
+        # goal 的预算计数**已经落盘**了（`GoalRun.spent_*`，S98）。它以前是这里的
         # 两个实例字段——进程重启就归零，于是 R24 那个用来兜住自主运行成本的上限
         # 实际上从来没生效过。
 
         self._goal_input: str | None = None
-        """goal_manager 替用户写的下一条输入（S92）。
+        """goal_manager 替用户写的下一条输入（S95）。
 
         自动续跑时拿它当 `user_input`——**这就是「模拟用户输入」落地的地方**。
         它不是持久状态：进程内的一次传递，用完即清。
@@ -336,7 +336,7 @@ class SessionRunner:
                 self._gateway,
                 # 不传 registry：工具面依赖各 agent YAML 里的开关与 worldinfo 模式，
                 # 两者都可能被用户改，必须每轮重新组装。
-                # **来源要标注**（S92）：goal_manager 靠它分辨"剧情偏了是我推错了"
+                # **来源要标注**（S102）：goal_manager 靠它分辨"剧情偏了是我推错了"
                 # 和"用户主动把剧情带走了"。director 不读这个字段——两种输入在它
                 # 眼里必须一模一样，否则它会对模拟输入区别对待。
                 user_input=(
@@ -415,7 +415,7 @@ class SessionRunner:
         return step.next_input
 
     async def _check_goal(self, leaf_id: str, usage: Usage) -> None:
-        """goal_manager 在 **run 末**跑（R24/S92/S92/S92）——与控制权（轮内）
+        """goal_manager 在 **run 末**跑（R24/S92/S92）——与控制权（轮内）
         作用点不同。
 
         它做的事都在那三个工具里（`plan` / `advance` / `finish`），这里只负责
@@ -520,7 +520,7 @@ class SessionRunner:
             self._finish_goal(*step.finished)
             return
 
-        # 预算到顶**不是失败**，是暂停：用户可以把上限调大接着跑（S92）。
+        # 预算到顶**不是失败**，是暂停：用户可以把上限调大接着跑（S96）。
         # 对话原样留着，所以恢复时不用重新判一遍。
         exhausted = run.exhausted(goal)
         if exhausted is not None:

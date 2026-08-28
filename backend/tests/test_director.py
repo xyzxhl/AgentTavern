@@ -194,7 +194,7 @@ STYLE = "jishi"
 
 def make_book() -> list[WorldbookEntry]:
     """整份设定就是**一串条目**（S64）：题材是 `WORLD` 条目，语言习惯在
-    `CHARACTER` 条目的 `voice` 上（S65/S65）——两样都没有第二个入口。"""
+    `CHARACTER` 条目的 `voice` 上（S65）——两样都没有第二个入口。"""
     return [
         WorldbookEntry(name="题材与基调", kind=EntryKind.WORLD, content="悬疑"),
         WorldbookEntry(name="陈", kind=EntryKind.CHARACTER, voice="说话总是绕圈子"),
@@ -878,7 +878,7 @@ def test_the_player_is_a_character_not_a_fourth_kind() -> None:
 
 
 def test_voices_have_exactly_one_source(monkeypatch) -> None:
-    """**语言习惯只有一个入口：角色条目上的 `voice`**（S65/S65）。
+    """**语言习惯只有一个入口：角色条目上的 `voice`**（S65）。
 
     以前还有一个 `名字 → 说话方式` 的字典，靠名字和条目对上。两个入口的代价不是
     多写一份，是**它们迟早对不上，而对不上的时候不报错**——只是那个角色忽然不再

@@ -106,7 +106,7 @@ function Turn({
         <div className="mb-3 flex items-baseline gap-2">
           {said && <span className="select-none text-dim">›</span>}
           <p className="min-w-0 flex-1 whitespace-pre-wrap text-sm text-dim">{said}</p>
-          {/* **模拟输入要标出来**（S92）：那一条不是用户打的，是 goal_manager
+          {/* **模拟输入要标出来**（S102）：那一条不是用户打的，是 goal_manager
               写的。不标的话用户会以为自己说过这句话。 */}
           {simulated && (
             <span className="shrink-0 rounded border border-line px-1 py-0.5 text-[10px] text-dim">

@@ -795,7 +795,7 @@ def test_siblings_endpoint(client_for) -> None:
 
 
 def test_session_detail_carries_the_sibling_map(client_for) -> None:
-    """**哪几轮有兄弟随路径一起给**（S44/S44）。
+    """**哪几轮有兄弟随路径一起给**（S44）。
 
     切换器要显示 `⟨2/3⟩` 就得先知道有没有第 2 支，而一个节点一次 `siblings`
     请求会让一条 20 轮的路径打 20 个请求——那份数据只在重生成之后才变。
@@ -837,7 +837,7 @@ def test_goal_drives_another_run_with_a_simulated_input(client_for) -> None:
 
     第一轮之后还没有中间状态，所以那一次是 `plan` + `steer`：下一条输入就在这一轮
     写好，下一轮直接能用。所以第二个 run 是有输入的，只不过那条不是人打的——
-    它的 `source` 因此是 `simulated`（S92）。
+    它的 `source` 因此是 `simulated`（S102）。
     """
     llm = ScriptedLLM(
         *one_run(outline="第一轮。", prose="正文一。"),
@@ -866,7 +866,7 @@ def test_goal_drives_another_run_with_a_simulated_input(client_for) -> None:
     assert second["user_input"]["text"] == "我把照片推过去。"
     assert second["user_input"]["source"] == "simulated"
 
-    # 中间状态挂在 session 上（S92），不再挂节点——goal 跑着的时候不允许切分支，
+    # 中间状态挂在 session 上（S93），不再挂节点——goal 跑着的时候不允许切分支，
     # S92 让它跟着节点走的那个理由（分支隔离）不成立了。
     run = client.get(f"/sessions/{session.id}").json()["session"]["goal_run"]
     assert [s["description"] for s in run["plan"]["subgoals"]] == ["他先松口", "两人摊开说"]
@@ -963,7 +963,7 @@ def test_a_goal_set_mid_story_also_plans_before_it_runs(client_for) -> None:
 
 
 def test_the_opening_conversation_carries_into_the_first_judgement(client_for) -> None:
-    """开场那次和紧接着的判定**是同一份对话**，中间不重建（S92/S100）。
+    """开场那次和紧接着的判定**是同一份对话**，中间不重建（S103/S100）。
 
     `sync_conversation` 只在"上次看到的节点还在 goal 期间那一段里"时才增量追加，
     否则整份重建。开场恰好卡在这个判据的缝上：那时 goal 期间一轮都还没有，
@@ -1224,7 +1224,7 @@ def test_progress_is_pushed_every_turn_not_only_at_the_end(client_for) -> None:
 
 
 def test_a_finished_goal_says_which_way_it_ended(client_for) -> None:
-    """两种终态都交回控制权，**但用户必须知道是哪一种**（S92/S92）。"""
+    """两种终态都交回控制权，**但用户必须知道是哪一种**（S96）。"""
     llm = ScriptedLLM(
         *one_run(outline="第一轮。", prose="正文一。"),
         tools(
@@ -1246,14 +1246,14 @@ def test_a_finished_goal_says_which_way_it_ended(client_for) -> None:
 
     assert finished["outcome"] == "done"
     assert "已兑现" in finished["reason"]
-    # goal 与它的运行时状态一并清掉——**不留历史 goal**（S92）。
+    # goal 与它的运行时状态一并清掉——**不留历史 goal**（S104）。
     body = client.get(f"/sessions/{session.id}").json()["session"]
     assert body["meta"]["goal"] is None
     assert body["goal_run"] is None
 
 
 def test_a_spent_budget_pauses_instead_of_finishing(client_for) -> None:
-    """**预算耗尽是暂停，不是失败**（S92）：用户可以把上限调大接着跑。
+    """**预算耗尽是暂停，不是失败**（S96）：用户可以把上限调大接着跑。
 
     所以推出去的是 `goal_paused` 而不是 `goal_finished`，而且 goal 还在
     session 上——对话原样留着，恢复时不用重新判一遍。
@@ -1284,7 +1284,7 @@ def test_a_spent_budget_pauses_instead_of_finishing(client_for) -> None:
 
 
 def test_raising_the_budget_resumes_a_paused_goal(client_for) -> None:
-    """**这就是"加预算接着跑"**（S92）。
+    """**这就是"加预算接着跑"**（S96）。
 
     目标本身禁改（对话是围着它建的），预算恰恰要能在跑到一半时调大——
     两者可改的时机相反，所以是两条不同的消息。
@@ -1319,7 +1319,7 @@ def test_raising_the_budget_resumes_a_paused_goal(client_for) -> None:
 
 
 def test_abandoning_is_the_only_way_to_swap_a_goal(client_for) -> None:
-    """**同一时间只有一个 goal**（S92）。`SetGoal` 直接换会被拒——goal_manager 的
+    """**同一时间只有一个 goal**（S104）。`SetGoal` 直接换会被拒——goal_manager 的
     对话是围着那个目标建起来的，换一个就得整份重来，而那正是 `abandon` 做的事。
 
     所以放弃之后，目标与它的运行时状态一并清掉，新的目标才设得进去。
@@ -1973,7 +1973,7 @@ def test_the_model_facing_path_still_refuses_to_guess(client_for, tmp_path) -> N
 
 
 def test_old_entry_kinds_are_migrated_on_startup(tmp_path) -> None:
-    """`kind` 换过两次名，旧值要搬过来（S65/S65/S64）。
+    """`kind` 换过两次名，旧值要搬过来（S65/S64）。
 
     - `lore` → `world`
     - `player` → `character` + `is_player`：**用户扮演的角色不是第四种 kind**，

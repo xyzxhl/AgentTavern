@@ -117,7 +117,7 @@ class EditNode(BaseModel):
 
 
 class Regenerate(BaseModel):
-    """重生成：在**当前节点**的父节点下新建兄弟（S44/S44）。原分支保留。
+    """重生成：在**当前节点**的父节点下新建兄弟（S44）。原分支保留。
 
     ``node_id`` 必须是当前活跃叶——**分支只能在当前节点上开**（S44）。想在更早
     的地方分叉，先 `SwitchBranch` 切过去，再重生成或推进；**切换不受限制，
@@ -130,7 +130,7 @@ class Regenerate(BaseModel):
 
 
 class SetGoal(BaseModel):
-    """设一个新目标（S92）。**已有 goal 时报错**——同一时间只有一个。
+    """设一个新目标（S104）。**已有 goal 时报错**——同一时间只有一个。
 
     `description` 一旦定下就不能改：goal_manager 的对话是围着它建起来的，
     改了等于换了个目标，而对话还是旧的。要换就先 `GoalControl(abandon)`。
@@ -148,7 +148,7 @@ class SetGoal(BaseModel):
 
 
 class SetGoalBudget(BaseModel):
-    """改预算。**这是"加预算接着跑"的入口**（S92）。
+    """改预算。**这是"加预算接着跑"的入口**（S96）。
 
     和 `SetGoal` 分开，因为它俩的可改时机相反：目标定了就不能动，
     预算恰恰要能在跑到一半时调大——预算耗尽是暂停不是失败。
@@ -169,7 +169,7 @@ class SetGoalBudget(BaseModel):
 
 
 class GoalControl(BaseModel):
-    """暂停 / 恢复 / 放弃当前 goal（S92）。
+    """暂停 / 恢复 / 放弃当前 goal（S104）。
 
     **恢复不是"从头再来"**：对话原样留着，只是按当前路径补齐暂停期间发生的轮次。
     暂停期间用户可以自己跑几轮、也可以切分支——恢复时**以最终选择的分支为准**。
@@ -317,7 +317,7 @@ class Branches(BaseModel):
 
 
 class GoalFinished(BaseModel):
-    """goal 走完了，控制权交回用户（S92/S92）。
+    """goal 走完了，控制权交回用户（S96）。
 
     **`outcome` 必须传出去**：两种终态都停下来，但那是两件完全不同的事——
     一个是达成了，一个是这个目标已经不可能达成了，用户的下一步动作完全不同。
