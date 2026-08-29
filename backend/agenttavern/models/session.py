@@ -25,6 +25,16 @@ class Session(BaseModel):
     空串是**旧数据**：升级时会给它建一份自己的 worldbook（`Store.migrate`）。
     """
 
+    corpus_ids: list[str] = Field(default_factory=list)
+    """这局故事挂了哪几份外部资料（S136）。**零到多份。**
+
+    同 `worldbook_id`，存 id 不存拷贝——一份资料要能被很多局故事挂。
+    但和它不同的是**这里是列表且可以为空**：设定是一局故事的地基，资料是可选的
+    增援，没有资料的故事是完全正常的（那时 `corpus_search` 根本不注册，S145）。
+
+    **旧数据不需要迁移**：字段缺席时就是空列表，而空列表的语义正是"没挂"。
+    """
+
     meta: SessionMeta = Field(default_factory=SessionMeta)
     """元指令：**这局故事**要什么。创建时设定，很少改。
 

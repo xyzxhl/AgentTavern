@@ -15,14 +15,25 @@
 
 ## spec 有，代码没有
 
-### 外部资料检索整条链路（S136–S147）
+### 外部资料检索：还差 REST 与前端（S136 / S143 / S144）
 
-[`spec/Corpus.md`](spec/Corpus.md) **整篇写在代码前面**——12 条规格，
-「验收」点的 24 个测试名一个都还不存在。这是刻意的：spec 与 test 先行，
-代码后落（见 [Workflow.md](Workflow.md)）。
+[`spec/Corpus.md`](spec/Corpus.md) **整篇写在代码前面**（S136–S148）。已经落地的
+是**模型这一侧的全部**：切块、BM25、向量与混合、rerank、工具接入 director、
+回执、trace。还没有的是**人这一侧**——
 
-落地要动的：新依赖（BM25 分词器 + embeddings 端点配置）、
-`data/corpora/` 存储层、一个新工具、异步建索引、提示词分组、前端一个管理页。
+| 还差什么 | 谁在等它 |
+|---|---|
+| 资料的增删改查接口、导入原文 | S136 的 `test_a_corpus_can_be_attached_to_several_sessions` · `test_deleting_a_corpus_in_use_is_refused` |
+| 后台建索引，进度可见、失败可见 | S144 的 `test_import_returns_before_the_index_is_built` · `test_a_failed_build_is_visible_not_silent` |
+| 索引整体的落盘往返 | S143 的 `test_the_index_survives_a_round_trip_through_disk` · `test_files_are_human_readable` |
+| 前端资料管理页、挂载与摘除 | 无（前端零断言，见下） |
+
+**后果是这条链路现在只能靠测试喂进去，用户还导不了资料。** `Session.corpus_ids`
+已经在，但没有任何接口能往里写。
+
+**另外：`corpus` 那一组参数一个都没量过**（`min_coverage: 0.5` /
+`min_similarity: 0.35` / `rrf_k: 60` / `top_k: 5`）。它们是常规取值，不是这个项目
+量出来的——能导入真实资料之后，**按 [P27](Principles.md) 先量方差再动它们**。
 
 
 ### 归因第六类「写入冗余」

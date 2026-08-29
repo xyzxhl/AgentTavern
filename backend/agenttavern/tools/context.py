@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from ..corpus.search import EmbedderLike
 from ..llm import LLMGateway, OnDelta
 from ..models import Actor, Session, StateDelta, WorldState
 from ..storage import SessionRepository
@@ -37,6 +38,14 @@ class RunContext:
 
     parent_id: str | None = None
     """本 run 挂在哪个节点下。历史与状态沿这条路径读取（S42）。"""
+
+    embedder: EmbedderLike | None = None
+    """资料检索里向量那一路的客户端（S140）。
+
+    **`None` 是常态，不是故障**：没配 embeddings 时整条链路退回纯 BM25。
+    它从服务层一路传下来而不是在这里现建——现建就要在工具深处读一次 `.env`，
+    而"每次检索都新建一个 HTTP 客户端"是那种不会报错、只会变慢的事。
+    """
 
     ask_user: AskUser | None = None
 

@@ -199,6 +199,14 @@ tools:
   worldinfo_read:
     enabled: true
     body: 展开指定设定条目的全文。
+  corpus_search:
+    enabled: true
+    body: |-
+      在用户导入的**外部资料**里查原文：同人设定、史料、专业领域的说法。
+      **用资料里会出现的说法去查，不要问句**——「尚书省 职权」比「尚书省是干什么的」查得到。
+
+      查到的是**原文段落**，可以直接引用其中的名字、称谓、数字、术语。
+      一次查一件事；要查两件就调两次。
   summarize:
     enabled: true
     body: 把过长的内容压缩成摘要。结果会被缓存，之后出现在索引里。
@@ -284,6 +292,20 @@ rendering:
   state_long: （{{chars}} 字，用 state_query 展开）
   state_deeper: （{{count}} 项，用 state_query 展开）
   worldinfo_expand: 用 worldinfo_read 按 ref 展开。
+  # corpus_search 的回执（S139）。**只有两种：找到了，或这次没找到。**
+  #
+  # 不要在这里加「这可能不全，仅供参考」之类的话。那是免责声明不是机制：
+  # 每次都出现、每次都一样的话模型会忽略它，而它每轮都在占上下文。
+  #
+  # `corpus_miss` 有一条硬线：说的是「**这次检索**没找到」，不是「资料里没有」。
+  # 前者是系统对自己这次动作的陈述，后者是对资料的断言——而查得到查不到取决于
+  # query 问得对不对，这条链路没有资格下那个断言。
+  corpus_hit: 查到 {{count}} 段原文：
+  corpus_passage: |-
+    【{{name}} 第 {{start}}–{{end}} 字】
+    {{text}}
+  corpus_miss: 这次检索没有找到足够相关的段落（查的是「{{query}}」）。换个说法再查一次，或者不依赖资料继续。
+  corpus_building: （{{names}} 还在建索引，这次没查它。）
   flat_user_input: |-
     <用户输入>
     {{text}}

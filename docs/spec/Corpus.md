@@ -5,8 +5,9 @@
 > **不回答**：状态与设定的检索（见 [Retrieval.md](Retrieval.md)——那两条的准入标准
 > 和这一条**根本不同**，见下）、工具面全貌（见 [Tools.md](Tools.md)）。
 
-> ⚠ **这一篇写在代码前面。** 下面的「验收」点的是**还不存在**的测试，
-> 它们会先红后绿。进度见 [TODO.md](../TODO.md)。
+> ⚠ **这一篇写在代码前面。** 模型这一侧已经落地（切块、检索、rerank、工具、回执、
+> trace）；**人这一侧还没有**——资料的增删改查接口、后台建索引、前端管理页都还缺，
+> 那几条的「验收」点的仍是不存在的测试。进度见 [TODO.md](../TODO.md)。
 
 ## 全貌
 
@@ -18,7 +19,7 @@
 director 调 corpus_search(query)
     → BM25 取 N 条 + 向量取 N 条，合并去重
     → rerank（独立的模型调用）取前 k
-    → 回执带着「从多少字里筛的、没挑中不代表不存在」
+    → 回执只有两种：那几段原文 + 位置，或者「这次没找到」
 ```
 
 ## 这一层和别的检索的根本差别
@@ -61,7 +62,7 @@ director 调 corpus_search(query)
 **得为它开特例**——而 [S65](Worldbook.md) 刚说过「用户扮演的角色不是第四类 kind」
 正是为了避免特例。
 
-**验收** `test_a_corpus_can_be_attached_to_several_sessions` · `test_deleting_a_corpus_in_use_is_refused`
+**验收** `test_a_corpus_can_be_attached_to_several_sessions` · `test_deleting_a_corpus_in_use_is_refused` · `test_a_dangling_corpus_id_does_not_break_the_run`
 
 ### S137 · 检索工具只给 director，writer 一个工具都没有
 
@@ -127,7 +128,7 @@ goal_manager 管的是「推到哪儿了」，一条检索路都没有，这一�
 **措辞上有一条硬线**：没找到时说的是**「这次检索没找到」**，不是**「资料里没有」**。
 前者是系统对自己这次动作的陈述，后者是对资料的断言——而这条链路没有资格下那个断言。
 
-**验收** `test_a_hit_carries_where_it_came_from` · `test_a_miss_says_the_search_failed_not_that_the_corpus_lacks_it` · `test_the_query_is_echoed_back` · `test_no_disclaimer_is_appended_to_a_hit`
+**验收** `test_a_hit_carries_where_it_came_from` · `test_a_miss_says_the_search_failed_not_that_the_corpus_lacks_it` · `test_the_query_is_echoed_back` · `test_no_disclaimer_is_appended_to_a_hit` · `test_a_hit_points_back_into_the_original_text` · `test_every_line_of_the_receipt_is_editable`
 
 <a id="s148"></a>
 
@@ -226,7 +227,7 @@ BM25 那一路**不依赖任何外部模型**，所以它是**降级路径**：
   rerank 端点是三件里**可移植性最差的**——自建与本地部署常常没有。
   代价照单收下：慢一些、多花 token。
 
-**验收** `test_rerank_is_its_own_call_not_appended_to_the_director` · `test_rerank_uses_its_own_cache_space` · `test_rerank_orders_rather_than_scores`
+**验收** `test_rerank_is_its_own_call_not_appended_to_the_director` · `test_rerank_uses_its_own_cache_space` · `test_rerank_orders_rather_than_scores` · `test_rerank_sees_more_candidates_than_it_returns` · `test_candidates_from_several_corpora_are_reranked_together`
 
 ### S142 · 递归字符切分：先按自然边界，切不动才按字符
 
@@ -308,7 +309,7 @@ BM25 那一路尤其吃亏：一个专名被劈成两半，两边都命中不了
 
 返回空列表会被读成「资料里没有」——**和 [S139](#s139) 是同一条罪**。
 
-**验收** `test_import_returns_before_the_index_is_built` · `test_searching_an_unbuilt_corpus_says_so_instead_of_returning_nothing` · `test_a_failed_build_is_visible_not_silent`
+**验收** `test_import_returns_before_the_index_is_built` · `test_searching_an_unbuilt_corpus_says_so_instead_of_returning_nothing` · `test_an_unbuilt_corpus_alone_is_not_reported_as_a_miss` · `test_a_failed_build_is_visible_not_silent`
 
 ### S145 · 关掉时工具不注册
 
@@ -320,7 +321,7 @@ BM25 那一路尤其吃亏：一个专名被劈成两半，两边都命中不了
 **为什么** 同 [S21](Tools.md)：注册了但没东西可查的工具，
 白占提示词体量、还会被试着调一次、失败还要消耗一轮往返。
 
-**验收** `test_the_corpus_tool_disappears_when_switched_off` · `test_no_corpus_attached_means_no_tool`
+**验收** `test_the_corpus_tool_disappears_when_switched_off` · `test_no_corpus_attached_means_no_tool` · `test_the_tool_stays_while_a_corpus_is_still_building`
 
 ### S146 · 每次检索都进 trace
 

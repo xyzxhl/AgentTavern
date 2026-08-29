@@ -9,7 +9,7 @@
 
 | agent | 工具 |
 |---|---|
-| director | `submit_outline` · `state_query` · `history_*` · `worldinfo_*` · `summarize` · `ask_question` |
+| director | `submit_outline` · `state_query` · `history_*` · `worldinfo_*` · `corpus_search` · `summarize` · `ask_question` |
 | writer | **一个都没有**，单次调用 |
 | state_manager | `state_write` · `state_query` |
 | goal_manager | `plan` · `check` · `steer` · `finish` |
@@ -55,7 +55,8 @@
 **服务** [R14](../req/推进剧情.md)
 
 **规格** 关闭一项能力时，它的工具**根本不注册**，而不是注册了再拒绝。
-世界设定全是"一直在"时，`worldinfo_read` 不注册。
+**没有对象可操作时同样不注册**：世界设定全是"一直在"时 `worldinfo_read` 不注册，
+一份外部资料都没挂时 `corpus_search` 不注册（[S145](Corpus.md)）。
 
 **不做** 注册一个只会返回"该功能已关闭"的工具。
 

@@ -3,11 +3,12 @@
 目录布局::
 
     data/sessions/<session_id>/
-      session.json              worldbook_id、标题、goal、控制维度默认值
+      session.json              worldbook_id、corpus_ids、标题、goal
       nodes/<node_id>.json      一个 run 一个节点
       trace/<run_id>.jsonl      append-only，每 run 一个文件
 
 **设定不在这里**——它是一级资产，见 `worldbooks.py`（S63）。
+**外部资料也不在这里**，见 `corpora.py`（S136）：session 上只存挂了哪几份的 id。
 
 写入是**单线程**的（P5），因此不需要锁。规模上限是几百个 run × 每个几 KB，
 全量读取毫秒级；真到瓶颈再加索引缓存，模型不变。
@@ -20,6 +21,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from ..corpus.lookup import Source
 from ..models import (
     EntryKind,
     Node,
@@ -31,6 +33,8 @@ from ..models import (
     WorldbookEntry,
     WorldState,
 )
+from ..models.corpus import Corpus
+from .corpora import CorpusStore
 from .jsonfile import append_jsonl, read_jsonl, read_model, read_model_or_none, write_model
 from .worldbooks import WorldbookRepository
 
@@ -193,6 +197,30 @@ class SessionRepository:
     def worldbook(self) -> list[WorldbookEntry]:
         """这个 session 看得见的全部设定条目。**不做预筛选**（P13/S53）。"""
         return self.book().entries()
+
+    def corpora(self) -> list[Corpus]:
+        """这个 session 挂着的外部资料，**只有元信息**（S136）。
+
+        索引不在这里读——注册工具时只需要知道"挂没挂、建好没有"（S145/S144），
+        而把几十万字的块表读进来只为了数一下有没有，代价完全不对等。
+        真要查时走 `corpus_sources()`。
+
+        **挂了但目录已经不在的，跳过。** 一条悬空的 id 让整局故事开不起来，
+        症状会是"点了没反应"，而它本该只是少一份资料（同 S72）。
+        """
+        store = CorpusStore(self.root)
+        out: list[Corpus] = []
+        for corpus_id in self.load_session().corpus_ids:
+            repo = store.repo(corpus_id)
+            if repo.exists():
+                out.append(repo.load())
+        return out
+
+    def corpus_sources(self) -> list[Source]:
+        """挂着的资料里**这一刻能查的那几份**。还在建索引的不在其中（S144）。"""
+        store = CorpusStore(self.root)
+        sources = (store.repo(c.corpus_id).source() for c in self.corpora())
+        return [s for s in sources if s is not None]
 
     # `world_meta()` **已删除**（S64）：worldbook 上没有字段了，题材与尺度都是
     # `WORLD` 条目，跟着 `worldbook()` 一起来。

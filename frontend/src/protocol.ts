@@ -158,6 +158,7 @@ export type Message1 = string;
 export type Id2 = string;
 export type CreatedAt1 = string;
 export type WorldbookId = string;
+export type CorpusIds = string[];
 export type Title = string;
 export type Description2 = string;
 export type MaxRuns3 = number | null;
@@ -582,6 +583,7 @@ export interface Session {
   id?: Id2;
   created_at?: CreatedAt1;
   worldbook_id?: WorldbookId;
+  corpus_ids?: CorpusIds;
   meta?: SessionMeta;
   modes?: SessionModes;
   initial_state?: InitialState;

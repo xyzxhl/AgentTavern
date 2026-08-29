@@ -12,6 +12,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..corpus.bm25 import BM25Index
+from ..corpus.lookup import Source
+from ..corpus.vectors import VectorIndex
 from ..models.corpus import BuildState, BuildStatus, Chunk, Corpus
 from .jsonfile import read_model, write_model
 
@@ -92,6 +94,36 @@ class CorpusRepository:
     def bm25(self) -> BM25Index | None:
         return BM25Index.load(self.bm25_path) if self.bm25_path.exists() else None
 
+    def vectors(self) -> VectorIndex | None:
+        """向量索引。**没有是常态**——embeddings 没配时整条链路走纯 BM25（S140）。"""
+        return VectorIndex.load(self.vectors_path) if self.vectors_path.exists() else None
+
+    def source(self) -> Source | None:
+        """把这份资料读成可检索的样子。**还不能查就返回 `None`。**
+
+        「还在建 / 建失败 / 索引文件不见了」在这里合成同一个答案，因为对检索
+        那一侧来说它们是同一件事：**这次查不了它**。区别（还要等多久、为什么
+        失败）是给用户看的，在 `Corpus.build` 上，由界面呈现（S144）。
+
+        **不返回一个空索引**：空索引查出来是"没找到"，而没找到和查不了是
+        两回事——前者是关于这次检索的结论，后者是这份资料压根没参加（同 S139）。
+        """
+        corpus = self.load()
+        if not corpus.build.searchable:
+            return None
+        index = self.bm25()
+        if index is None:
+            return None
+        return Source(
+            corpus_id=corpus.corpus_id,
+            name=corpus.name,
+            chunks=self.chunks(),
+            bm25=index,
+            # **状态说没建向量就不读那个文件。** 换过 embedding 模型的话盘上
+            # 可能还躺着一份维度对不上的旧向量，读进来只会在检索时报维度错。
+            vectors=self.vectors() if corpus.build.embedded else None,
+        )
+
 
 class CorpusStore:
     """`data/` 底下的资料这一棵树。"""
@@ -137,4 +169,4 @@ class CorpusStore:
         shutil.rmtree(self.repo(corpus_id).dir, ignore_errors=True)
 
 
-__all__ = ["BuildState", "CorpusRepository", "CorpusStore"]
+__all__ = ["BuildState", "CorpusRepository", "CorpusStore", "Source"]

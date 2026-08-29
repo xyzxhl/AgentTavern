@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Literal, cast
 
 from ..agents import GoalStep, advance_goal, sync_conversation
+from ..corpus.search import EmbedderLike
 from ..llm import LLMGateway, Usage
 from ..models import (
     Actor,
@@ -85,10 +86,18 @@ class SessionRunner:
         developer: bool = False,
         stream: bool = True,
         persist_trace: bool = False,
+        embedder: EmbedderLike | None = None,
     ) -> None:
         self._repo = repo
         self._gateway = gateway
         self._broadcast = broadcast
+        self._embedder = embedder
+        """资料检索里向量那一路的客户端（S140）。**`None` 是常态**：没配
+        embeddings 时那条链路退回纯 BM25，不是拒绝启用。
+
+        从这里往下传而不是在工具里现建——现建就要在工具深处读一次 `.env`，
+        而"每次检索新建一个 HTTP 客户端"是那种不会报错、只会变慢的事。
+        """
         self._stream = stream
         """**边生成边推**（`Settings.stream`，S118/S80）。**它在服务级**：
         这组开关里唯一一条**关于交付而不是关于能力**的——开关它不改变模型
@@ -334,6 +343,7 @@ class SessionRunner:
                 self._repo,
                 session,
                 self._gateway,
+                embedder=self._embedder,
                 # 不传 registry：工具面依赖各 agent YAML 里的开关与 worldinfo 模式，
                 # 两者都可能被用户改，必须每轮重新组装。
                 # **来源要标注**（S102）：goal_manager 靠它分辨"剧情偏了是我推错了"

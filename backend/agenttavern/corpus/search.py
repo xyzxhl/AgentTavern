@@ -36,6 +36,12 @@ class Hit(BaseModel):
     chunk_index: int
     text: str = ""
 
+    corpus_id: str = ""
+    """来自哪一份资料。**一局故事可以挂好几份**（S136），而块序号只在一份之内
+    唯一——两份资料的第 7 块是两段完全不同的话。合并候选之后没有这个字段就
+    指不回原文了。
+    """
+
     coverage: float = 0.0
     """query 的词有多大比例落在这一块里。**BM25 侧的判定用它**——不是原始分。"""
 
@@ -67,6 +73,15 @@ class Retrieval(BaseModel):
     degraded: bool = False
     degrade_reason: str = ""
     """向量那一路没用上，以及为什么。**这两样进 trace 与界面，不进工具回执**（S140）。"""
+
+    lexical: list[int] = Field(default_factory=list)
+    semantic: list[int] = Field(default_factory=list)
+    """两路**各自**的候选，按各自的名次排好（S146 要记的就是这个）。
+
+    不从 `hits` 反推：`hits` 已经是融合排序的结果，`coverage > 0` 这种反推
+    看着等价，**却会在融合规则改动的那天悄悄失真**——而 trace 是用来判断
+    「rerank 到底有没有起作用」的，它自己失真就没有意义了。
+    """
 
 
 def rrf(*ranked: dict[K, int], k: int = 60) -> dict[K, float]:
@@ -175,4 +190,10 @@ async def hybrid_search(
             for h in hits
             if 0 <= h.chunk_index < len(texts)
         ]
-    return Retrieval(hits=hits[:limit], degraded=degraded, degrade_reason=reason)
+    return Retrieval(
+        hits=hits[:limit],
+        degraded=degraded,
+        degrade_reason=reason,
+        lexical=sorted(lex_rank, key=lambda i: lex_rank[i]),
+        semantic=sorted(sem_rank, key=lambda i: sem_rank[i]),
+    )

@@ -16,6 +16,7 @@ from typing import Any
 
 from ..llm import ToolCall, ToolSpec
 from ..models import WorldbookEntry, WorldbookMode
+from ..models.corpus import Corpus
 from ..prompting import enabled, tool_enabled
 from .base import Tool, ToolResult, error
 from .builtin import (
@@ -27,10 +28,14 @@ from .builtin import (
     summarize_tool,
     worldinfo_tools,
 )
+from .corpus import corpus_tool
 from .goal import goal_tools
 
 
-def build_tools(worldinfo: list[WorldbookEntry] | None = None) -> list[Tool[Any]]:
+def build_tools(
+    worldinfo: list[WorldbookEntry] | None = None,
+    corpora: list[Corpus] | None = None,
+) -> list[Tool[Any]]:
     """director 的工具面。
 
     ``submit_outline`` 永远存在——它是 loop 的唯一终止点（S4）。
@@ -55,6 +60,13 @@ def build_tools(worldinfo: list[WorldbookEntry] | None = None) -> list[Tool[Any]
         e.mode is WorldbookMode.ON_DEMAND and e.is_lore for e in worldinfo or []
     ):
         tools += worldinfo_tools()
+
+    # **一份资料都没挂就不注册**（S145）：同上一条，注册一个没东西可查的工具
+    # 白占提示词体量、还会被试着调一次。还在建索引的那几份**算挂着**——
+    # 那时工具要在，才说得出「还在建索引」（S144）；不注册的话模型只会觉得
+    # 这局故事根本没有资料可查。
+    if corpora and tool_enabled("director", "corpus_search"):
+        tools.append(corpus_tool())
 
     if tool_enabled("director", "summarize"):
         tools.append(summarize_tool())
@@ -88,8 +100,12 @@ class ToolRegistry:
         self._tools = {t.name: t for t in (build_tools() if tools is None else tools)}
 
     @classmethod
-    def for_session(cls, worldinfo: list[WorldbookEntry] | None = None) -> ToolRegistry:
-        return cls(build_tools(worldinfo))
+    def for_session(
+        cls,
+        worldinfo: list[WorldbookEntry] | None = None,
+        corpora: list[Corpus] | None = None,
+    ) -> ToolRegistry:
+        return cls(build_tools(worldinfo, corpora))
 
     @classmethod
     def for_state_manager(cls) -> ToolRegistry:

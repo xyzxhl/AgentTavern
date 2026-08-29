@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, ValidationError, model_validator
 
 from ..config import Settings, load_settings
+from ..corpus.embed import Embedder
 from ..llm import LLMGateway
 from ..models import (
     Actor,
@@ -95,11 +96,18 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
     owned = gateway is None
     active = gateway or LLMGateway(resolved)
 
+    # 资料检索里向量那一路（S140）。**没配 `EMBED_MODEL` 时它是 `None`**，
+    # 那条链路退回纯 BM25——降级不是拒绝启用。整个进程共用一个：它是个 HTTP
+    # 客户端，每次检索新建一个不会报错，只会变慢。
+    embedder = Embedder.from_settings(resolved)
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):  # type: ignore[no-untyped-def]
         yield
         if owned:
             await active.aclose()
+        if embedder is not None:
+            await embedder.aclose()
 
     app = FastAPI(title="AgentTavern", lifespan=lifespan)
 
@@ -433,6 +441,7 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
             developer=resolved.developer,
             stream=resolved.stream,
             persist_trace=resolved.trace,
+            embedder=embedder,
         )
         runner.start()
 

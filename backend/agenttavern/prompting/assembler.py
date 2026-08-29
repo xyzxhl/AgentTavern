@@ -403,7 +403,7 @@ def special_text(name: str, key: str, *, values: Mapping[str, str] | None = None
 # --------------------------------------------------------------------------
 
 
-def rendering(name: str, key: str, **values: object) -> str:
+def rendering(name: str, key: str, /, **values: object) -> str:
     """嵌在渲染里的那些短句。**它们也是模型读到的字**（R31）。
 
     量不大但每轮都进上下文，其中几条是**明确的操作指令**（"用 X 展开"）——
@@ -414,6 +414,9 @@ def rendering(name: str, key: str, **values: object) -> str:
     "一件事两个入口"：它们是发给两个不同 agent 的两条不同消息，本来就该能分别改
     （director 读 state 是为了推演，state_manager 读它是为了比对该记什么）。
     """
+    # 前两个参数**只能按位置传**：`{{name}}` 和 `{{key}}` 是渲染文案里再自然
+    # 不过的变量名，不挡住的话「填一个叫 name 的值」会撞上这个函数自己的形参，
+    # 而报错信息（"gets multiple values"）离真正的原因很远。
     table = load(name).get("rendering") or {}
     if key not in table:
         raise KeyError(f"{name}.yaml 的 rendering 里没有 `{key}`")

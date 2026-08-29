@@ -149,6 +149,7 @@ def test_config_yaml_covers_every_knob() -> None:
     import agenttavern
     from agenttavern.agents import director, goal_manager, replay, state_manager, summarize
     from agenttavern.config import LIMITS, Limits, load_limits
+    from agenttavern.corpus import lookup
     from agenttavern.models import Goal
     from agenttavern.orchestration import checks
     from agenttavern.prompting import prompts, state_recent_runs, upstream_runs
@@ -182,6 +183,13 @@ def test_config_yaml_covers_every_knob() -> None:
             state_recent_runs(),
         ),
         "goal_manager.max_rounds": (LIMITS.goal_manager.max_rounds, goal_manager.MAX_ROUNDS),
+        # 资料检索这一组**一个都还没量过**（S140/S148 的「未定」）：先接出来，
+        # 等能导入真实资料之后按 P27 先量方差再定值。
+        "corpus.candidates": (LIMITS.corpus.candidates, lookup.CANDIDATES),
+        "corpus.top_k": (LIMITS.corpus.top_k, lookup.TOP_K),
+        "corpus.min_coverage": (LIMITS.corpus.min_coverage, lookup.MIN_COVERAGE),
+        "corpus.min_similarity": (LIMITS.corpus.min_similarity, lookup.MIN_SIMILARITY),
+        "corpus.rrf_k": (LIMITS.corpus.rrf_k, lookup.RRF_K),
     }
     assert {k for k, (a, b) in wired.items() if a != b} == set()
 

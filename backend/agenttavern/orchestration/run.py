@@ -19,6 +19,7 @@ from ..agents.replay import without_reasoning
 from ..agents.state_manager import run_state_manager
 from ..agents.summarize import MAX_SEGMENT_RUNS, summarize_text
 from ..agents.writer import run_writer
+from ..corpus.search import EmbedderLike
 from ..llm import LLMGateway, Message, Usage
 from ..models import (
     Actor,
@@ -63,6 +64,7 @@ async def execute_run(
     persist_trace: bool = False,
     on_delta: RunDelta | None = None,
     run_id: str | None = None,
+    embedder: EmbedderLike | None = None,
 ) -> RunOutcome:
     """``run_id`` 由调用方指定时，**这一轮开始之前发生的事也能挂在它名下**。
 
@@ -90,7 +92,7 @@ async def execute_run(
     # 工具面按各 agent YAML 里的开关组装（S80）：关掉的工具**不注册**，
     # 模型看不到。worldinfo 全部常驻时也不注册其工具——没有东西可展开。
     if registry is None:
-        registry = ToolRegistry.for_session(repo.worldbook())
+        registry = ToolRegistry.for_session(repo.worldbook(), repo.corpora())
 
     # **打断是挂起**（S48）：上一次被截断的那一段在这里被接回来。
     # 认领的条件是父节点一致——不一致说明用户已经切到别的分支去了，接不上（S42）。
@@ -110,6 +112,8 @@ async def execute_run(
         ask_user=ask_user,
         inbox=inbox,
         on_delta=on_delta,
+        # 没配 embeddings 时它就是 `None`，资料检索退回纯 BM25（S140）。
+        embedder=embedder,
         # state 阶段被打断时，已经写下的那几笔是**已经完成的动作**，不必重来（S48）。
         staged_delta=draft.staged_delta if draft and stage is RunStage.STATE else StateDelta(),
     )

@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..llm import Message, Role
+from ..models.corpus import Corpus
 from ..prompting import AGENTS, PROMPT_FILES, assemble, load, save
 from ..tools import build_state_tools, build_tools, goal_tools
 
@@ -39,7 +40,9 @@ def _params() -> dict[str, dict[str, Any]]:
     看它的参数，才决定要不要打开。
     """
     out: dict[str, dict[str, Any]] = {}
-    for tool in [*build_tools(), *build_state_tools(), *goal_tools()]:
+    # `corpora=[…]` 是个占位：`corpus_search` 只在挂了资料时才注册（S145），
+    # 而页面要显示的是「这个工具长什么样」，跟此刻挂没挂资料无关。
+    for tool in [*build_tools(corpora=[Corpus()]), *build_state_tools(), *goal_tools()]:
         out[tool.name] = tool.params_type.model_json_schema()
     return out
 
