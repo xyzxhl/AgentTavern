@@ -15,12 +15,16 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, TypeVar
 
 from pydantic import BaseModel, Field
 
 from .bm25 import BM25Index
 from .vectors import VectorIndex
+
+
+K = TypeVar("K")
+"""RRF 只按名次融合，键是什么类型它不关心——块序号、ref、都行。"""
 
 
 class EmbedderLike(Protocol):
@@ -39,12 +43,20 @@ class Hit(BaseModel):
     similarity: float = 0.0
     """余弦相似度。向量侧的判定用它。没走向量那一路时是 0。"""
 
-    both: bool = False
-    """两路都命中。**比任何单路都强的信号**，排序时优先。"""
+    rrf: float = 0.0
+    """RRF 融合分。**排序只看它。**
+
+    早先这里是 `max(coverage, similarity)` 外加一个「两路都命中」的加成——
+    那是**把两个不可比的刻度放在一起比**，正是 S148 反对 BM25 原始分当阈值的
+    同一条罪。RRF 只看名次，从根上没有这个问题。
+    """
 
     @property
-    def rank_key(self) -> tuple[int, float]:
-        return (1 if self.both else 0, max(self.coverage, self.similarity))
+    def both(self) -> bool:
+        """两路都命中。**只用于 trace，不参与排序**——RRF 已经把它算进去了
+        （两个倒数相加），另设加成等于凭感觉再定一次权重。
+        """
+        return self.coverage > 0 and self.similarity > 0
 
 
 class Retrieval(BaseModel):
@@ -56,6 +68,23 @@ class Retrieval(BaseModel):
     degraded: bool = False
     degrade_reason: str = ""
     """向量那一路没用上，以及为什么。**这两样进 trace 与界面，不进工具回执**（S140）。"""
+
+
+def rrf(*ranked: dict[K, int], k: int = 60) -> dict[K, float]:
+    """Reciprocal Rank Fusion：`score = Σ 1 / (k + 名次)`，名次从 1 起。
+
+    **只看名次，不看分数。** 这是选它的全部理由——BM25 原始分与余弦相似度
+    尺度完全不可比，任何加权求和都要先把两者归一化到同一个刻度，
+    **而那个刻度没有依据，换一份资料就变**。
+
+    `k` 压平头部：k 越大，第一名相对第二名的优势越小。60 是这类融合的通用取值，
+    **这个项目还没有数据支持任何别的值**（P27：先量方差，再改东西）。
+    """
+    out: dict[K, float] = {}
+    for ranking in ranked:
+        for key, rank in ranking.items():
+            out[key] = out.get(key, 0.0) + 1.0 / (k + rank)
+    return out
 
 
 def search_bm25(
@@ -91,6 +120,7 @@ async def hybrid_search(
     limit: int,
     min_coverage: float,
     min_similarity: float,
+    rrf_k: int = 60,
     texts: list[str] | None = None,
 ) -> Retrieval:
     """两路各取候选，按块序号合并去重，**两个阈值都不过的一律丢掉**。
@@ -123,17 +153,23 @@ async def hybrid_search(
             degraded = True
             reason = f"embeddings 调用失败（{exc}），这次只用了关键词匹配"
 
-    merged: dict[int, Hit] = {}
-    for i, coverage in lexical.items():
-        merged[i] = Hit(chunk_index=i, coverage=coverage)
-    for i, similarity in semantic.items():
-        hit = merged.get(i)
-        if hit is None:
-            merged[i] = Hit(chunk_index=i, similarity=similarity)
-        else:
-            merged[i] = hit.model_copy(update={"similarity": similarity, "both": True})
+    # 每一路各自的名次（各自已经过了自己的阈值）。**名次从 1 起。**
+    lex_rank = {i: n for n, i in enumerate(sorted(lexical, key=lambda i: -lexical[i]), 1)}
+    sem_rank = {i: n for n, i in enumerate(sorted(semantic, key=lambda i: -semantic[i]), 1)}
+    fused = rrf(lex_rank, sem_rank, k=rrf_k)
 
-    hits = sorted(merged.values(), key=lambda h: (h.rank_key, -h.chunk_index), reverse=True)
+    merged = [
+        Hit(
+            chunk_index=i,
+            coverage=lexical.get(i, 0.0),
+            similarity=semantic.get(i, 0.0),
+            rrf=score,
+        )
+        for i, score in fused.items()
+    ]
+    # 同分时按块序号——**排序必须是确定的**，否则同一次查询两次跑出不同顺序，
+    # 而那种不确定性会混进任何一次前后对照里（P28）。
+    hits = sorted(merged, key=lambda h: (-h.rrf, h.chunk_index))
     if texts is not None:
         hits = [
             h.model_copy(update={"text": texts[h.chunk_index]})

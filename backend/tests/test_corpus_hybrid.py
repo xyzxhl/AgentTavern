@@ -97,8 +97,43 @@ async def test_both_paths_contribute_and_duplicates_collapse() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rrf_ranks_by_position_not_by_score() -> None:
+    """**RRF 只看名次，不看分数**（S140）。
+
+    BM25 原始分与余弦相似度尺度完全不可比，任何加权求和都要先把两者归一化到
+    同一个刻度，**而那个刻度没有依据，换一份资料就变**。名次没有这个问题。
+
+    这里两路给出完全相反的顺序、且分数量级差着几十倍；只要融合看的是名次，
+    结果就该由名次决定，而不是被分数大的那一路碾过去。
+    """
+    from agenttavern.corpus.search import rrf
+
+    fused = rrf({"甲": 1, "乙": 2, "丙": 3}, {"丙": 1, "乙": 2, "甲": 3}, k=60)
+    assert fused["乙"] == pytest.approx(2 / 62), "两路都排第二"
+    assert fused["甲"] == pytest.approx(fused["丙"]), "一头一尾对称，分数必须相等"
+
+    # **三者几乎相等，这是 RRF 的固有性质，不是 bug。** k 大的时候
+    # 1/61 + 1/63 由凸性略大于 2/62（差 0.03%）——「一路第一一路垫底」和
+    # 「两路都第二」在 RRF 眼里基本打平。
+    # 记在这里是为了以后没人把它当缺陷去"修"：真要拉开差距，
+    # 该调的是 k（调小则头部权重变大），而那需要数据支持（P27）。
+    assert fused["甲"] / fused["乙"] == pytest.approx(1.0, abs=1e-3)
+
+
+@pytest.mark.asyncio
+async def test_two_paths_beat_one_regardless_of_score() -> None:
+    """**两路都命中 > 只有一路命中**——这才是 RRF 在这里真正买到的东西。"""
+    from agenttavern.corpus.search import rrf
+
+    fused = rrf({"两路": 3}, {"两路": 3, "单路": 1}, k=60)
+    assert fused["两路"] > fused["单路"], "两路各排第三，仍然胜过一路排第一"
+
+
+@pytest.mark.asyncio
 async def test_a_chunk_found_by_both_paths_ranks_above_one_found_by_one() -> None:
-    """两路都命中是**比任何单路都强的信号**——合并时要体现出来。"""
+    """两路都命中天然得分更高（两个倒数相加）——**不需要另设一个加成**，
+    那种手写的加成是在凭感觉定权重（S140）。
+    """
     texts = ["尚书省掌管吏部。", "尚书省。"]
     embedder = FakeEmbedder(["吏部"])
     result = await hybrid_search(

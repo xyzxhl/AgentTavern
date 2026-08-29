@@ -141,6 +141,7 @@ class _Corpus(BaseModel):
     top_k: int = 5
     min_coverage: float = 0.5
     min_similarity: float = 0.35
+    rrf_k: int = 60
 
 
 class Limits(BaseModel):
