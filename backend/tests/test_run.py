@@ -484,7 +484,7 @@ async def test_open_segment_waits_another_run(tmp_path: Path) -> None:
     assert all(n.outline_summary is None for n in repo.path_to(parent))
 
 
-async def test_every_segment_goes_through_the_summarizer(tmp_path: Path) -> None:
+async def test_every_segment_goes_through_summarize(tmp_path: Path) -> None:
     """**一律压，短段也压**（S25）。
 
     这里以前有条近路：整段拼起来还比摘要短就原样留下。它的阈值是

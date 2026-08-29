@@ -103,7 +103,8 @@ backend/agenttavern/
   llm/            gateway（裸 HTTP + OpenAI 格式）
   tools/          spec/Tools.md 的实现 + 注册表与调度（四份工具面）
   agents/         director / writer / state_manager / goal_manager
-                  + summarizer（摘要）/ postrun（归段追问）/ replay（上下文重建）
+                  + summarize（摘要）/ postrun（归段追问）/ replay（上下文重建）
+                  summarize 不是 agent，是一次单次调用（S147）
   prompting/      提示词 YAML + 装配器。约定见 prompting/README.md
   orchestration/  一个 run 的时序、归段、eval 采样标记
   server/         FastAPI 入口、WS 协议、SessionRunner

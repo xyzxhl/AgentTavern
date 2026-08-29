@@ -1,11 +1,19 @@
 import { useEffect, useState } from "react";
 
-import { api, type AgentCard, type AgentDoc, type Section } from "../api";
-import { useSession } from "../store";
+import { api, type PromptCard, type PromptDoc, type PromptGroup, type Section } from "../api";
+import { type Page, useSession } from "../store";
 import { Pick, YesNo } from "./Pick";
 
+/** 每一类默认打开哪一份——列表还没回来时也得有个选中项。 */
+const FIRST: Record<PromptGroup, string> = { agent: "director", call: "summarize" };
+
+/** 这一类住在哪个入口下。**两个入口并列**（S147）。 */
+function pageOf(group: PromptGroup, open: string): Page {
+  return group === "agent" ? { kind: "agents", open } : { kind: "calls", open };
+}
+
 /**
- * agent 管理：**所有被输入模型的内容，用户都能审查和修改**（R31）。
+ * 提示词管理：**所有被输入模型的内容，用户都能审查和修改**（R31）。
  *
  * 这条判据比"提示词可编辑"强得多，它同时管**工具描述**、**运行时另外追加的
  * 整条消息**、以及嵌在渲染里的那些短句。所以这一页分三块，每块对应 YAML 里
@@ -17,28 +25,34 @@ import { Pick, YesNo } from "./Pick";
  * | **工具** | 它拿得到的工具，每个一条描述 + 开关；参数只读 |
  * | **特殊** | 运行时另外追加的整条消息，以及渲染里嵌的短句 |
  *
+ * **同一套编辑界面，两个并列的入口**（S147）：`agent`（一个角色，名词命名）和
+ * `call`（一次单次调用，动词命名）。编辑方式相同，但**不共用一个入口**——
+ * 并进一页的一个小标题底下，读起来就成了「agent，以及一些附属的东西」，
+ * 而那个误解会影响判断：比如以为该给单次调用配工具面。
+ *
  * **保存前服务端会试装配一遍**：装不出来就拒绝并说是哪一节坏了——否则改坏一个
  * 字，下一轮生成直接 500，而错误信息离原因很远。
  */
-export function AgentsPage(): JSX.Element {
+export function PromptsPage({ group }: { group: PromptGroup }): JSX.Element {
   const page = useSession((s) => s.page);
   const go = useSession((s) => s.go);
-  const picked = page.kind === "agents" ? (page.open ?? "director") : "director";
+  const opened = page.kind === "agents" || page.kind === "calls" ? page.open : undefined;
+  const picked = opened ?? FIRST[group];
 
-  const [cards, setCards] = useState<AgentCard[]>([]);
-  const [doc, setDoc] = useState<AgentDoc | null>(null);
+  const [cards, setCards] = useState<PromptCard[]>([]);
+  const [doc, setDoc] = useState<PromptDoc | null>(null);
   const [tab, setTab] = useState<"context" | "tools" | "specials">("context");
   const [problem, setProblem] = useState("");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    void api.listAgents().then(setCards);
+    void api.listPrompts().then(setCards);
   }, []);
 
   useEffect(() => {
     setDoc(null);
     setProblem("");
-    void api.getAgent(picked).then(setDoc);
+    void api.getPrompt(picked).then(setDoc);
   }, [picked]);
 
   // **草稿改在本地，保存才落盘。** 一边拖顺序一边每步都写盘的话，中途那些不
@@ -55,9 +69,9 @@ export function AgentsPage(): JSX.Element {
     if (!doc) return;
     setProblem("");
     try {
-      setDoc(await api.putAgent(doc.name, doc.data));
+      setDoc(await api.putPrompt(doc.name, doc.data));
       setSaved(true);
-      setCards(await api.listAgents());
+      setCards(await api.listPrompts());
     } catch (err) {
       setProblem((err as Error).message);
     }
@@ -65,40 +79,31 @@ export function AgentsPage(): JSX.Element {
 
   return (
     <div className="flex min-h-0 flex-1">
+      {/* **这一栏只列这一类**（S147）——分组是靠两个并列的入口做的，不是靠这里
+          的一个小标题。`group` 由后端给，前端不按名字猜：加一份 YAML 就要同时
+          改两处的话，漏改的症状是它悄悄出现在错误的那一类里。 */}
       <nav className="w-40 shrink-0 border-r border-line p-2">
-        {(["agent", "helper"] as const).map((group) => {
-          const inGroup = cards.filter((c) => c.group === group);
-          if (!inGroup.length) return null;
-          return (
-            <div key={group} className="mb-2">
-              {/* **agent 与「其他调用」分开**（S147）：agent 会推演、会产出剧情、
-                  有自己的工具面；helper 是机械的辅助调用，输入固定输出固定、
-                  不参与剧情。并排列成一组会让人以为它们和 director 是同一类东西。 */}
-              <div className="mb-1 px-2 text-[10px] uppercase tracking-wide text-dim/60">
-                {group === "agent" ? "agent" : "其他调用"}
-              </div>
-              {inGroup.map((card) => (
-          <button
-            key={card.name}
-            onClick={() => go({ kind: "agents", open: card.name })}
-            className={`mb-0.5 block w-full rounded px-2 py-1.5 text-left transition-colors ${
-              card.name === picked ? "bg-ink-600" : "hover:bg-ink-700"
-            }`}
-          >
-            <span
-              className={`block truncate text-xs ${card.name === picked ? "text-fg" : "text-dim"}`}
+        {cards
+          .filter((c) => c.group === group)
+          .map((card) => (
+            <button
+              key={card.name}
+              onClick={() => go(pageOf(group, card.name))}
+              className={`mb-0.5 block w-full rounded px-2 py-1.5 text-left transition-colors ${
+                card.name === picked ? "bg-ink-600" : "hover:bg-ink-700"
+              }`}
             >
-              {LABEL[card.name] ?? card.name}
-            </span>
-            <span className="block text-[10px] text-dim/70">
-              {card.sections} 段 · {card.tools} 工具
-              {!card.enabled && " · 已关"}
-            </span>
-          </button>
-              ))}
-            </div>
-          );
-        })}
+              <span
+                className={`block truncate text-xs ${card.name === picked ? "text-fg" : "text-dim"}`}
+              >
+                {LABEL[card.name] ?? card.name}
+              </span>
+              <span className="block text-[10px] text-dim/70">
+                {card.sections} 段 · {card.tools} 工具
+                {!card.enabled && " · 已关"}
+              </span>
+            </button>
+          ))}
       </nav>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -106,7 +111,7 @@ export function AgentsPage(): JSX.Element {
           <span className="text-sm text-fg">{LABEL[picked] ?? picked}</span>
           <span className="font-mono text-[11px] text-dim">{picked}</span>
           {"enabled" in data && (
-            <span className="flex items-center gap-1.5" title="关掉这个 agent，它这一路整个不跑">
+            <span className="flex items-center gap-1.5" title="关掉它，这一路整个不跑">
               <span className="text-[11px] text-dim">启用</span>
               <YesNo
                 value={data.enabled !== false}
@@ -164,7 +169,7 @@ const LABEL: Record<string, string> = {
   writer: "成文",
   state_manager: "状态",
   goal_manager: "目标",
-  summarizer: "摘要",
+  summarize: "摘要",
   rerank: "资料排序",
 };
 
@@ -317,7 +322,7 @@ function Tools({
   doc,
   onChange,
 }: {
-  doc: AgentDoc;
+  doc: PromptDoc;
   onChange: (next: Record<string, unknown>) => void;
 }): JSX.Element {
   const tools = (doc.data.tools ?? {}) as Record<string, Record<string, unknown>>;
@@ -327,7 +332,7 @@ function Tools({
   }
 
   if (!Object.keys(tools).length) {
-    return <p className="text-sm text-dim">这个 agent 没有工具——它是一次干净的调用。</p>;
+    return <p className="text-sm text-dim">它没有工具——这是一次干净的调用。</p>;
   }
 
   return (
@@ -379,7 +384,7 @@ function Tools({
   );
 }
 
-function params(doc: AgentDoc, tool: string): string {
+function params(doc: PromptDoc, tool: string): string {
   const props = doc.params[tool]?.properties ?? {};
   const names = Object.keys(props);
   if (!names.length) return "无";
@@ -407,7 +412,7 @@ function Specials({
   }
 
   if (!Object.keys(specials).length && !Object.keys(rendering).length) {
-    return <p className="text-sm text-dim">这个 agent 没有附属提示词，运行时不会往它那儿追加东西。</p>;
+    return <p className="text-sm text-dim">它没有附属提示词，运行时不会往它那儿追加东西。</p>;
   }
 
   return (

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { apply, load, watchSystem } from "./appearance";
-import { AgentsPage } from "./components/AgentsPage";
+import { PromptsPage } from "./components/PromptsPage";
 import { Composer } from "./components/Composer";
 import { DeveloperPanel } from "./components/DeveloperPanel";
 import { GoalBar } from "./components/GoalBar";
@@ -46,7 +46,8 @@ export function App(): JSX.Element {
       <main className="relative flex min-w-0 flex-1 flex-col">
         {page.kind === "story" ? <Story /> : null}
         {page.kind === "worldbooks" ? <WorldbookLibrary /> : null}
-        {page.kind === "agents" ? <AgentsPage /> : null}
+        {page.kind === "agents" ? <PromptsPage group="agent" /> : null}
+        {page.kind === "calls" ? <PromptsPage group="call" /> : null}
         {page.kind === "settings" ? <SettingsPage /> : null}
       </main>
 

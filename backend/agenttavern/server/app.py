@@ -31,7 +31,7 @@ from ..models import (
 from ..orchestration import close_segment
 from ..storage import SessionRepository, Store, WorldbookRepository
 from ..tracing import Tracer
-from .agents import router as agents_router
+from .prompts import router as prompts_router
 from .protocol import (
     Answer,
     Branches,
@@ -57,7 +57,7 @@ class SessionPatch(BaseModel):
     """**session 上只剩内容，没有配置**（S80）。
 
     `control` 与 `capabilities` 已经删掉：控制维度与能力开关整体上调到了提示词层，
-    改它们走 `/agents`。这里只剩标题、目标（`meta`）和触发源（`modes`）。
+    改它们走 `/prompts`。这里只剩标题、目标（`meta`）和触发源（`modes`）。
     """
 
     meta: SessionMeta | None = None
@@ -103,10 +103,10 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
 
     app = FastAPI(title="AgentTavern", lifespan=lifespan)
 
-    # agent 管理：提示词、工具描述、附属提示词、渲染文案（R31）。
+    # 提示词管理：正文、工具描述、附属提示词、渲染文案（R31）。
     # **单独一个模块**——它和 session / worldbook 不共享任何状态，读写的是
-    # `prompting/` 底下那几份 YAML。
-    app.include_router(agents_router())
+    # `prompting/` 底下那几份 YAML（agent 与单次调用两类，S147）。
+    app.include_router(prompts_router())
 
     # **旧数据在这里搬家**（S63）：worldbook 以前躺在 session 目录里。
     # 跑一次就是空操作，所以放在这里比放一条命令可靠——没人会记得去跑那条命令。
@@ -127,7 +127,7 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
         模式在启动服务时就定了，不是运行时开关——所以这里只读，没有对应的写接口。
         """
         # `options`（有哪些文风 / 视角档）**已删除**（R31）：档位和当前取值都
-        # 住在 agent 的 YAML 里，前端要看就去 `/agents/{name}`——这里再给一份
+        # 住在 agent 的 YAML 里，前端要看就去 `/prompts/{name}`——这里再给一份
         # 就是同一件事的第二个入口。
         return {
             "developer": resolved.developer,

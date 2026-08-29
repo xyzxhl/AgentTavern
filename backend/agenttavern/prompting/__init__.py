@@ -1,6 +1,6 @@
 """提示词组装器：**每轮第一次给模型的输入，由这里装配。**
 
-一个独立组件，四个 agent 共用。分两层：
+一个独立组件，四个 agent 加两次单次调用共用（`AGENTS` / `CALLS`，S147）。分两层：
 
 - `assembler.py` —— 装配机器本身，**不认识 director 和 writer**。
 - `prompts.py`   —— 谁收到什么，也就是 S3 的那把刀。
@@ -12,7 +12,7 @@
 
 from .assembler import (
     AGENTS,
-    HELPERS,
+    CALLS,
     PROMPT_FILES,
     Prompt,
     assemble,
@@ -49,7 +49,7 @@ from .prompts import (
 
 __all__ = [
     "AGENTS",
-    "HELPERS",
+    "CALLS",
     "PROMPT_FILES",
     "PromptSetup",
     "STATE_INLINE_LIMIT",

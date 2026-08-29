@@ -155,7 +155,7 @@
 末节点寻址是为了分支安全：父指针唯一，从末节点上溯 span−1 步的链是确定的，
 **任何经过末节点的路径都得到同一段**。
 
-**验收** `test_segment_closes_when_the_director_says_it_closed` · `test_open_segment_waits_another_run` · `test_every_segment_goes_through_the_summarizer` · `test_a_summary_says_how_many_runs_it_replaced_and_how_to_get_them_back`
+**验收** `test_segment_closes_when_the_director_says_it_closed` · `test_open_segment_waits_another_run` · `test_every_segment_goes_through_summarize` · `test_a_summary_says_how_many_runs_it_replaced_and_how_to_get_them_back`
 
 ### S58 · 判定在生成时，压缩在需要时
 
@@ -199,7 +199,7 @@
 那不是精度低一点，而是**位置偏置**——开头原样保留、结尾完全消失，
 而它还顶着「总结」的名字。**会误导模型的回退不能当作安全默认值。**
 
-**验收** `test_every_segment_goes_through_the_summarizer` · `test_summary_falls_back_to_head_in_index`
+**验收** `test_every_segment_goes_through_summarize` · `test_summary_falls_back_to_head_in_index`
 
 ### S60 · director 的对话跨轮持续，压缩越界一次、全部替换
 

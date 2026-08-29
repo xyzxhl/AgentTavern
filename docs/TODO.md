@@ -118,7 +118,7 @@ S133 外观归本地 · S134 选取值只有一种交互形态。
 | test_director.py | 4 |
 | test_repository.py · test_schema.py | 各 3 |
 | test_runner_lifecycle.py · test_tools.py | 各 2 |
-| test_agents_api.py | 1 |
+| test_prompts_api.py | 1 |
 
 ## test → spec 的反向链接没做
 

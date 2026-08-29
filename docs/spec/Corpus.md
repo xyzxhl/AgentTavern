@@ -208,7 +208,7 @@ BM25 那一路**不依赖任何外部模型**，所以它是**降级路径**：
 1. **独立调用。** 不接在 director 的对话后面，不进它的 tool loop——
    它是一次干净的、只看 [query + 候选段落] 的调用。
 2. **独立的缓存空间。** 不传 session 的 id，用它自己的。
-3. **提示词归「其他调用」**，不归任何 agent（见 [S147](#s147)）。
+3. **提示词归「单次调用」那一类**，不归任何 agent（见 [S147](#s147)）。
 
 排序而不是逐段打分：给它全部候选让它**排个序**，不问「这一段几分」。
 
@@ -338,26 +338,34 @@ rerank 前后的次序都要记：**它到底有没有起作用，是这条链�
 
 <a id="s147"></a>
 
-### S147 · 提示词分两组：agent 与「其他调用」
+### S147 · 提示词分两类：agent 与单次调用，并列不主从
 
 **服务** [R31](../req/调教提示词.md)
 
-**规格** 提示词管理页分两组：
+**规格** 三条：
 
-| | |
-|---|---|
-| **agent** | director · writer · state_manager · goal_manager |
-| **其他调用** | summarizer · rerank |
+| | 是什么 | 怎么命名 | 有哪几份 |
+|---|---|---|---|
+| **agent** | 一个**角色**——会推演、会产出剧情、有自己的上下文与工具面，跨轮次一直在那儿 | **名词** | director · writer · state_manager · goal_manager |
+| **单次调用** | 一次**动作**——输入固定、输出固定、不参与剧情，做完就没了 | **动词** | summarize · rerank |
 
-两组都可编辑（[R31](../req/调教提示词.md) 管的是「模型会读到的字」，不分是谁在读）。
+1. **命名按词性分。** agent 用名词，单次调用用动词。
+2. **管理界面上各占一个入口**，不是一页里的两个小标题。
+3. **读写走同一套接口，路径是 `/prompts`**——两类的编辑方式完全相同，
+   而挂在 `/agents` 底下会让 `summarize` 看起来是 agent 的附属。
 
-**不做** 把 rerank 塞进 director 的附属提示词；不做继续把 summarizer 当成第五个 agent。
+两类都可编辑（[R31](../req/调教提示词.md) 管的是「模型会读到的字」，不分是谁在读）。
 
-**为什么** agent 会推演、会产出剧情、有自己的上下文与工具面。
-summarizer 和 rerank 都是**机械的辅助调用**：输入固定、输出固定、不参与剧情。
-把它们并排列成"agent"会让人以为它们和 director 是同一类东西。
+**不做** 把 rerank 塞进 director 的附属提示词；不做把单次调用列在 agent 页的一个
+小标题底下；不做给它们起名词名字。
 
-**验收** `test_the_prompt_page_separates_agents_from_helpers` · `test_a_helper_is_still_editable`
+**为什么** `summarize` 曾经叫 `summarizer`，列在 agent 名单的第五位——于是它
+一直被当成第五个 agent。**那个误解会影响判断**：比如以为该给它工具面、以为它该读
+世界设定。名字和入口是这条分界线唯一看得见的地方，两处都摆对，误解才不会重新长出来。
+
+**验收** `test_an_agent_is_a_noun_and_a_single_call_is_a_verb` ·
+`test_a_single_call_is_still_editable` ·
+`test_the_prompt_page_separates_agents_from_single_calls`
 
 ---
 

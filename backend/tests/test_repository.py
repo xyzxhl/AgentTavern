@@ -147,7 +147,7 @@ def test_config_yaml_covers_every_knob() -> None:
     漏掉一个的症状是改了配置没反应，而那是最难查的一类。
     """
     import agenttavern
-    from agenttavern.agents import director, goal_manager, replay, state_manager, summarizer
+    from agenttavern.agents import director, goal_manager, replay, state_manager, summarize
     from agenttavern.config import LIMITS, Limits, load_limits
     from agenttavern.models import Goal
     from agenttavern.orchestration import checks
@@ -164,8 +164,8 @@ def test_config_yaml_covers_every_knob() -> None:
             prompts.STATE_INLINE_LIMIT,
         ),
         "context.tool_read_chars": (LIMITS.context.tool_read_chars, builtin.MAX_READ_CHARS),
-        "segment.max_runs": (LIMITS.segment.max_runs, summarizer.MAX_SEGMENT_RUNS),
-        "segment.min_runs": (LIMITS.segment.min_runs, summarizer.MIN_SEGMENT_RUNS),
+        "segment.max_runs": (LIMITS.segment.max_runs, summarize.MAX_SEGMENT_RUNS),
+        "segment.min_runs": (LIMITS.segment.min_runs, summarize.MIN_SEGMENT_RUNS),
         "sampling.expansion_min_ratio": (
             LIMITS.sampling.expansion_min_ratio,
             checks.EXPANSION_MIN_RATIO,

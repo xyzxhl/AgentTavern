@@ -72,19 +72,23 @@ from ..llm import Message, Role
 _DIR = Path(__file__).parent
 
 AGENTS = ("director", "writer", "state_manager", "goal_manager")
-"""**真正的 agent**：会推演、会产出剧情、有自己的上下文与工具面（S147）。"""
+"""**agent：名词命名**，因为它是一个角色（S147）。
 
-HELPERS = ("summarizer", "rerank")
-"""**机械的辅助调用**：输入固定、输出固定、不参与剧情（S147）。
-
-`summarizer` 一直被算作「第五个 agent」，而它和 rerank 一样只是一次工具性的
-调用。并排列成 agent 会让人以为它们和 director 是同一类东西——
-而那个误解会影响判断：比如以为该给它们工具面，或者以为它们该读世界设定。
-
-**两组都可编辑**——R31 管的是「模型会读到的字」，不分是谁在读。
+会推演、会产出剧情、有自己的上下文与工具面，跨轮次一直在那儿。
 """
 
-PROMPT_FILES = (*AGENTS, *HELPERS)
+CALLS = ("summarize", "rerank")
+"""**单次调用：动词命名**，因为它是一次动作（S147）。
+
+输入固定、输出固定、不参与剧情——`summarize` 就是"压一段"，`rerank` 就是
+"排个序"，做完就没了，没有"它是谁"这回事。
+
+**这不是 agent 的附属，是并列的另一类。** 名字是分界线落地的地方：叫
+`summarizer` 的那阵子它一直被算作「第五个 agent」，而那个误解会影响判断——
+比如以为该给它工具面、以为它该读世界设定。
+"""
+
+PROMPT_FILES = (*AGENTS, *CALLS)
 """`prompting/` 底下有哪几份 YAML。**列表在这里，不在前端**——
 加一份就是加一个名字加一个文件。"""
 
@@ -130,7 +134,7 @@ def path_of(name: str) -> Path:
 
 
 def save(name: str, data: Mapping[str, Any]) -> None:
-    """写回一份提示词文件。**调用方必须先试装配**（见 `server/agents.py`）。
+    """写回一份提示词文件。**调用方必须先试装配**（见 `server/prompts.py`）。
 
     这里只管落盘和清缓存：`load` 有 `functools.cache`，不清的话新内容要等
     进程重启才生效——而那正是"改了没反应"这类问题里最难想到的一种。

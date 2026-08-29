@@ -132,7 +132,7 @@
 最坏 779 字 / 3.9 倍，且超出幅度随输入长度增长。**一个说了不算的数比没有更糟**——
 它让"压缩到 200 字"看起来是既成事实，于是整套预算账全是虚的。
 
-**验收** `test_summarize_caches_and_reuses` · `test_summary_falls_back_to_head_in_index` · `test_summarize_rejects_bad_source` · `test_every_segment_goes_through_the_summarizer`
+**验收** `test_summarize_caches_and_reuses` · `test_summary_falls_back_to_head_in_index` · `test_summarize_rejects_bad_source` · `test_every_segment_goes_through_summarize`
 
 ### S26 · 真截断必须出声，隐藏不算截断
 

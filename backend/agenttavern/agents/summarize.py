@@ -1,4 +1,8 @@
-"""summarizer：摘要生成（S25）。
+"""summarize：把一段剧情压缩（S25）。
+
+**它不是 agent，是一次单次调用**（S147）——所以名字是个动词。输入固定、输出
+固定、不参与剧情：做完就没了，没有"它是谁"这回事。它住在 `agents/` 下面只是
+因为调用点在这一层，别把它当第五个 agent 看。
 
 **摘要由系统维护，不由 director 顺手做。**
 
@@ -59,7 +63,7 @@ async def summarize_text(
     写摘要的那一刻，无从知道台账上那行日期以后会成为关键（S56 的交集盲区）。
     而具体项占的字数很少、丢了不可再生；概括项占字数多、随时能从事实里重新读出来。
 
-    判据本身写在 `summarizer.yaml` 里，这里只装配（S10）。**选哪一档也在那儿**
+    判据本身写在 `summarize.yaml` 里，这里只装配（S10）。**选哪一档也在那儿**
     （R31：`selected` 住在条目上）——`off` 那一档是空串，整条不发。留这个档位
     是为了能从外部关掉，不是推荐这么做。
 
@@ -68,7 +72,7 @@ async def summarize_text(
     """
     if not enabled:
         return ""
-    prompt = assemble("summarizer", contexts={"content": content})
+    prompt = assemble("summarize", contexts={"content": content})
     response = await gateway.complete(prompt.messages, user_id=user_id)
     # 开发者模式下这一次往返也要留下原文（S113）。摘要是**不可逆**的——一段压完
     # 原细纲就不再进上下文了，压坏了事后只能从这里看出是压的时候丢的还是本来就没有。

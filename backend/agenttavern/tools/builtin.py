@@ -377,7 +377,7 @@ async def _llm_summarize(ctx: RunContext, content: str) -> str:
     # **函数内 import 是有意的**：模块级会成环（tools → agents → director → tools）。
     # 环一直在，只是恰好没人单独 import 过 `agenttavern.tools`——测试全跑时
     # 别的模块先把 agents 装好了，环就看不见。
-    from ..agents.summarizer import summarize_text
+    from ..agents.summarize import summarize_text
 
     return await summarize_text(ctx.gateway, content)
 

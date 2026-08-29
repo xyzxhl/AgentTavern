@@ -1,4 +1,8 @@
-"""agent 管理的读写接口（R31）。
+"""提示词管理的读写接口（R31）。
+
+**路径是 `/prompts`，不是 `/agents`**（S147）：这里管的是每一份 YAML，而它们
+分两类——agent（名词，一个角色）和单次调用（动词，一次动作）。挂在 `/agents`
+底下会让 `summarize` 看起来是 agent 的附属，而它是并列的另一类。
 
 判据是：**所有被输入模型的内容，用户都能审查和修改。** 那不只是 `sections`——
 它同时管**工具描述**、**运行时另外追加的整条消息**、以及嵌在渲染里的那些短句。
@@ -21,8 +25,8 @@ from ..prompting import AGENTS, PROMPT_FILES, assemble, load, save
 from ..tools import build_state_tools, build_tools, goal_tools
 
 
-class AgentDoc(BaseModel):
-    """一份 agent 配置的完整内容。**原样进原样出**——它就是那份 YAML。"""
+class PromptDoc(BaseModel):
+    """一份提示词配置的完整内容。**原样进原样出**——它就是那份 YAML。"""
 
     data: dict[str, Any]
 
@@ -102,15 +106,15 @@ def _render_samples(name: str, data: dict[str, Any]) -> None:
 def router() -> APIRouter:
     api = APIRouter()
 
-    @api.get("/agents")
-    def list_agents() -> list[dict[str, Any]]:
+    @api.get("/prompts")
+    def list_prompts() -> list[dict[str, Any]]:
         """有哪几份提示词。**列表来自后端，不在前端写死**——加一份就是加一个名字
         加一个文件。
 
-        **分两组**（S147）：`agent` 会推演、会产出剧情、有自己的工具面；
-        `helper` 是机械的辅助调用（摘要、rerank），输入固定、输出固定、不参与剧情。
-        并排列成 agent 会让人以为它们和 director 是同一类东西。
-        **两组都可编辑**——R31 管的是「模型会读到的字」，不分是谁在读。
+        **分两类，并列，不是主从**（S147）：`agent` 会推演、会产出剧情、有自己的
+        工具面，名字是名词；`call` 是一次单次调用（`summarize`、`rerank`），
+        输入固定、输出固定、不参与剧情，名字是动词。
+        **两类都可编辑**——R31 管的是「模型会读到的字」，不分是谁在读。
         """
         out: list[dict[str, Any]] = []
         for name in PROMPT_FILES:
@@ -118,7 +122,7 @@ def router() -> APIRouter:
             out.append(
                 {
                     "name": name,
-                    "group": "agent" if name in AGENTS else "helper",
+                    "group": "agent" if name in AGENTS else "call",
                     "enabled": bool(data.get("enabled", True)),
                     "sections": len(data.get("sections") or []),
                     "tools": len(data.get("tools") or {}),
@@ -127,11 +131,11 @@ def router() -> APIRouter:
             )
         return out
 
-    @api.get("/agents/{name}")
-    def read_agent(name: str) -> dict[str, Any]:
+    @api.get("/prompts/{name}")
+    def read_prompt(name: str) -> dict[str, Any]:
         if name not in PROMPT_FILES:
-            raise HTTPException(404, f"没有名为 {name} 的 agent")
-        # **参数 schema 只给这个 agent 手上那几个**，不是全部——页面上它挨着
+            raise HTTPException(404, f"没有名为 {name} 的提示词")
+        # **参数 schema 只给这一份手上那几个**，不是全部——页面上它挨着
         # 描述显示，多给的那些没有位置可放。
         tools = load(name).get("tools") or {}
         schemas = _params()
@@ -141,8 +145,8 @@ def router() -> APIRouter:
             "params": {t: schemas[t] for t in tools if t in schemas},
         }
 
-    @api.put("/agents/{name}")
-    def write_agent(name: str, doc: AgentDoc) -> dict[str, Any]:
+    @api.put("/prompts/{name}")
+    def write_prompt(name: str, doc: PromptDoc) -> dict[str, Any]:
         """**先试装配再写盘**（R31）。
 
         装配器对未知的 context、缺值的 `{{var}}`、没写 `role`、`selected` 不在
@@ -151,7 +155,7 @@ def router() -> APIRouter:
         而错误信息离原因很远。
         """
         if name not in PROMPT_FILES:
-            raise HTTPException(404, f"没有名为 {name} 的 agent")
+            raise HTTPException(404, f"没有名为 {name} 的提示词")
         try:
             _render_samples(name, doc.data)
             _dry_run(name, doc.data)

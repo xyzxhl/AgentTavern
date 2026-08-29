@@ -41,9 +41,18 @@ export function SessionList(): JSX.Element {
             部署方就是用户自己**，而调提示词是这个项目里最日常的动作。
             开发者模式管的是另一件事：**能不能看到每次模型往返的完整输入输出**。 */}
         <Entry
-          label="提示词管理"
+          label="agent 提示词"
           active={page.kind === "agents"}
           page={{ kind: "agents" }}
+          go={go}
+        />
+        {/* **单次调用自己一个入口**（S147）：`summarize` / `rerank` 是一次动作，
+            不是一个角色。挂在 agent 那一页的小标题底下，读起来就是「agent，
+            以及一些附属的东西」——而那个误解会影响判断，比如以为该给它们工具面。 */}
+        <Entry
+          label="单次调用"
+          active={page.kind === "calls"}
+          page={{ kind: "calls" }}
           go={go}
         />
         <Entry

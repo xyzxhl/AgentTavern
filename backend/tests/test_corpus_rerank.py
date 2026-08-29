@@ -1,6 +1,6 @@
 """rerank：复用 chat 模型，但它是一次**独立调用**（S141 / S147）。
 
-三条缺一不可：独立调用、独立缓存空间、提示词归「其他调用」。
+三条缺一不可：独立调用、独立缓存空间、提示词归「单次调用」那一类。
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import pytest
 
 from agenttavern.corpus.rerank import RERANK_CACHE_SPACE, rerank_passages
 from agenttavern.corpus.search import Hit
-from agenttavern.prompting import AGENTS, HELPERS, PROMPT_FILES
+from agenttavern.prompting import AGENTS, CALLS, PROMPT_FILES
 
 # -- 替身 ---------------------------------------------------------------------
 
@@ -129,25 +129,31 @@ async def test_it_never_returns_more_than_asked() -> None:
     assert len(out) == 2
 
 
-# -- S147 提示词分两组 ---------------------------------------------------------
+# -- S147 提示词分两类：agent 与单次调用 ---------------------------------------
 
 
-def test_the_prompt_page_separates_agents_from_helpers() -> None:
-    """**agent 与「其他调用」分开**（S147）。
+def test_an_agent_is_a_noun_and_a_single_call_is_a_verb() -> None:
+    """**名字就是分界线**（S147）。
 
-    agent 会推演、会产出剧情、有自己的上下文与工具面；summarizer 和 rerank 都是
-    机械的辅助调用：输入固定、输出固定、不参与剧情。并排列成"agent"会让人
-    以为它们和 director 是同一类东西。
+    agent 是一个角色——会推演、会产出剧情、有自己的上下文与工具面，跨轮次一直
+    在那儿，所以用名词。单次调用是一次动作——输入固定、输出固定、不参与剧情，
+    做完就没了，所以用动词。
+
+    `summarize` 曾经叫 `summarizer`，于是一直被算作「第五个 agent」。**那个误解
+    会影响判断**：比如以为该给它工具面、以为它该读世界设定。
+
+    这条断言钉死两份名单，是**故意的路障**：加一份 YAML 时它会红，读到这里
+    才知道该用哪种词性、该进哪一类。
     """
     assert set(AGENTS) == {"director", "writer", "state_manager", "goal_manager"}
-    assert set(HELPERS) == {"summarizer", "rerank"}
-    assert not set(AGENTS) & set(HELPERS)
-    assert (*AGENTS, *HELPERS) == PROMPT_FILES
+    assert set(CALLS) == {"summarize", "rerank"}
+    assert not set(AGENTS) & set(CALLS)
+    assert (*AGENTS, *CALLS) == PROMPT_FILES
 
 
-def test_a_helper_is_still_editable() -> None:
-    """两组都可编辑——R31 管的是「模型会读到的字」，不分是谁在读。"""
+def test_a_single_call_is_still_editable() -> None:
+    """两类都可编辑——R31 管的是「模型会读到的字」，不分是谁在读。"""
     from agenttavern.prompting import load
 
-    for name in HELPERS:
+    for name in CALLS:
         assert load(name).get("sections"), f"{name} 应当有可编辑的 sections"

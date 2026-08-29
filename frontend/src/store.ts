@@ -21,7 +21,10 @@ export type RunPhase = "idle" | "running" | "asking";
 export type Page =
   | { kind: "story" }
   | { kind: "worldbooks"; open?: string }
+  // 提示词分两类，**各占一个入口**（S147）：agent 是一个角色，单次调用是一次
+  // 动作。塞进同一页的一个小标题底下，读起来就是「agent，以及一些附属的东西」。
   | { kind: "agents"; open?: string }
+  | { kind: "calls"; open?: string }
   | { kind: "settings" };
 
 /** 某个 agent 连续说的一段过程（思考段，或它推演途中的自言自语）。 */

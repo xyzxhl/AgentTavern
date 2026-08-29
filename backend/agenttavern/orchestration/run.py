@@ -17,7 +17,7 @@ from ..agents.director import DirectorFailed, DirectorResult, run_director
 from ..agents.postrun import ask_segment_cut
 from ..agents.replay import without_reasoning
 from ..agents.state_manager import run_state_manager
-from ..agents.summarizer import MAX_SEGMENT_RUNS, summarize_text
+from ..agents.summarize import MAX_SEGMENT_RUNS, summarize_text
 from ..agents.writer import run_writer
 from ..llm import LLMGateway, Message, Usage
 from ..models import (

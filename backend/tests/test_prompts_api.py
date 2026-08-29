@@ -1,4 +1,4 @@
-"""agent 管理的读写接口（R31）。
+"""提示词管理的读写接口（R31）。
 
 判据是：**所有被输入模型的内容，用户都能审查和修改。** 这份文件钉的是那条判据
 的三个落点——工具描述、附属提示词、渲染文案——以及写盘前那道**试装配**。
@@ -11,7 +11,7 @@ from conftest import ScriptedLLM
 from fastapi.testclient import TestClient
 
 from agenttavern.config import Settings
-from agenttavern.prompting import AGENTS, HELPERS, PROMPT_FILES, assembler
+from agenttavern.prompting import AGENTS, CALLS, PROMPT_FILES, assembler
 from agenttavern.server import create_app
 
 
@@ -37,20 +37,20 @@ def sandbox(tmp_path: Path):
 
 def test_the_list_comes_from_the_yaml_files(client) -> None:
     """有哪几份提示词**不在前端写死**——加一份就是加一个名字加一个文件。"""
-    names = [a["name"] for a in client.get("/agents").json()]
+    names = [a["name"] for a in client.get("/prompts").json()]
     assert names == list(PROMPT_FILES)
 
 
-def test_the_prompt_page_separates_agents_from_helpers(client) -> None:
-    """**接口自己带分组**（S147），不让前端按名字猜。
+def test_the_prompt_page_separates_agents_from_single_calls(client) -> None:
+    """**接口自己带分类**（S147），不让前端按名字猜。
 
-    agent 会推演、会产出剧情、有自己的工具面；helper 是机械的辅助调用
-    （摘要、rerank），输入固定、输出固定、不参与剧情。前端按名字硬编码分组的话，
-    加一份 YAML 就要同时改两处——而漏改的症状是它悄悄出现在错误的那一组里。
+    agent 会推演、会产出剧情、有自己的工具面；单次调用输入固定、输出固定、
+    不参与剧情。前端按名字硬编码分类的话，加一份 YAML 就要同时改两处——
+    而漏改的症状是它悄悄出现在错误的那一类里。
     """
-    groups = {a["name"]: a["group"] for a in client.get("/agents").json()}
+    groups = {a["name"]: a["group"] for a in client.get("/prompts").json()}
     assert {n for n, g in groups.items() if g == "agent"} == set(AGENTS)
-    assert {n for n, g in groups.items() if g == "helper"} == set(HELPERS)
+    assert {n for n, g in groups.items() if g == "call"} == set(CALLS)
 
 
 def test_a_tool_carries_its_description_and_its_schema(client) -> None:
@@ -60,7 +60,7 @@ def test_a_tool_carries_its_description_and_its_schema(client) -> None:
     那个风险是真的，所以参数 schema 仍由 Python 生成，在页面上与描述**并排显示**
     ——漂移摆在人眼前，而不是藏在两个文件里。
     """
-    doc = client.get("/agents/director").json()
+    doc = client.get("/prompts/director").json()
 
     assert "提交本轮细纲" in doc["data"]["tools"]["submit_outline"]["body"]
     # `ask_question` 的描述本身是一个 `choice`：控制权三档讲的正是「这个工具该
@@ -79,7 +79,7 @@ def test_the_specials_and_the_rendering_strings_are_reachable(client) -> None:
     ref 展开。` 是一句**明确的操作指令**，改了工具名却忘了改它，模型会去调一个
     不存在的工具。
     """
-    data = client.get("/agents/director").json()["data"]
+    data = client.get("/prompts/director").json()["data"]
 
     assert "断在第几条之后" in data["specials"]["segment"]["sections"][0]["body"]
     assert data["rendering"]["worldinfo_expand"] == "用 worldinfo_read 按 ref 展开。"
@@ -92,15 +92,15 @@ def test_saving_runs_a_dry_assembly_first(client) -> None:
     里一律报错（S75 刻意如此）。不先跑一遍的话，用户改坏一个字，下一轮生成直接
     500，而错误信息离原因很远。
     """
-    doc = client.get("/agents/writer").json()["data"]
+    doc = client.get("/prompts/writer").json()["data"]
     doc["sections"].append({"type": "context", "role": "user", "source": "根本没有这个"})
 
-    res = client.put("/agents/writer", json={"data": doc})
+    res = client.put("/prompts/writer", json={"data": doc})
     assert res.status_code == 422
     assert "根本没有这个" in res.json()["detail"]
 
     # 没写盘：读回来还是原来那份。
-    assert client.get("/agents/writer").json()["data"]["sections"][-1]["source"] == "outline"
+    assert client.get("/prompts/writer").json()["data"]["sections"][-1]["source"] == "outline"
 
 
 def test_a_missing_rendering_string_is_refused(client) -> None:
@@ -109,10 +109,10 @@ def test_a_missing_rendering_string_is_refused(client) -> None:
     删掉一条不会有任何静态检查拦住，直到某一轮真的走到那一句——所以在写盘那一刻
     就拦下来（同 P29：没生效的东西不该悄悄没生效）。
     """
-    doc = client.get("/agents/director").json()["data"]
+    doc = client.get("/prompts/director").json()["data"]
     doc["rendering"].pop("state_empty")
 
-    res = client.put("/agents/director", json={"data": doc})
+    res = client.put("/prompts/director", json={"data": doc})
     assert res.status_code == 422
     assert "state_empty" in res.json()["detail"]
 
@@ -122,10 +122,10 @@ def test_a_good_edit_lands_and_takes_effect_at_once(client, sandbox) -> None:
 
     那是"改了没反应"这类问题里最难想到的一种。
     """
-    doc = client.get("/agents/writer").json()["data"]
+    doc = client.get("/prompts/writer").json()["data"]
     doc["sections"][1]["body"] = "改过的开场白。"
 
-    assert client.put("/agents/writer", json={"data": doc}).status_code == 200
+    assert client.put("/prompts/writer", json={"data": doc}).status_code == 200
 
     from agenttavern.prompting import writer_prompt
 
@@ -133,6 +133,6 @@ def test_a_good_edit_lands_and_takes_effect_at_once(client, sandbox) -> None:
     assert "改过的开场白。" in (sandbox / "writer.yaml").read_text(encoding="utf-8")
 
 
-def test_an_unknown_agent_is_a_404(client) -> None:
-    assert client.get("/agents/nope").status_code == 404
-    assert client.put("/agents/nope", json={"data": {}}).status_code == 404
+def test_an_unknown_prompt_is_a_404(client) -> None:
+    assert client.get("/prompts/nope").status_code == 404
+    assert client.put("/prompts/nope", json={"data": {}}).status_code == 404

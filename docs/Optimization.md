@@ -12,7 +12,7 @@
 | 类别 | 具体 |
 |---|---|
 | **上下文装配** | 注入什么、多少、什么顺序；两个滑动窗口（`upstream_runs` / `state_recent_runs`）、`state_inline_limit`、默认包范围 |
-| **提示词** | 四个 agent（director / writer / state_manager / goal_manager）+ summarizer 的提示词，全在 `prompting/*.yaml` |
+| **提示词** | 四个 agent（director / writer / state_manager / goal_manager）+ 两次单次调用（summarize / rerank）的提示词，全在 `prompting/*.yaml` |
 | **工具面** | 各工具的名称、描述、参数描述；能力开关的默认值。**描述只说「作用 + 参数格式」**，判据归 YAML（S27） |
 | **措辞映射** | 控制维度枚举值 → 提示词片段（输入处理三档、展开密度、控制权） |
 | **参数** | 全在 `config.yaml`（S86）：各 agent 的轮数上限、`budget_chars`、归段跨度、采样标记阈值、goal 预算 |

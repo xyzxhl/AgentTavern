@@ -37,27 +37,30 @@ export interface ServerMeta {
   stream: boolean;
 }
 
-/** agent 列表里的一条。数字只为让列表有点信息量，编辑要进详情。 */
-export interface AgentCard {
+/** 提示词列表里的一条。数字只为让列表有点信息量，编辑要进详情。 */
+export interface PromptCard {
   name: string;
-  /** `agent`（会推演、产出剧情、有工具面）还是 `helper`（机械的辅助调用）——S147。
+  /** `agent`（一个角色，名词命名）还是 `call`（一次单次调用，动词命名）——S147。
    *
-   * **由后端给，不在前端按名字猜**：加一份 YAML 就要同时改两处的话，
-   * 漏改的症状是它悄悄出现在错误的那一组里。
+   * **两类并列，不是主从。** 由后端给，不在前端按名字猜：加一份 YAML 就要
+   * 同时改两处的话，漏改的症状是它悄悄出现在错误的那一类里。
    */
-  group: "agent" | "helper";
+  group: PromptGroup;
   enabled: boolean;
   sections: number;
   tools: number;
   specials: number;
 }
 
-/** 一份 agent 配置，加上**由 Python 生成的参数 schema**（只读）。
+/** 提示词分两类（S147）：agent 是**一个角色**，call 是**一次动作**。 */
+export type PromptGroup = "agent" | "call";
+
+/** 一份提示词配置，加上**由 Python 生成的参数 schema**（只读）。
  *
  * 参数不搬进 YAML 是 S10 那条担忧的落地方式：「描述跟参数是同一件事，拆开
  * 必然对不上」——那个风险是真的，所以让它们**并排显示**，漂移摆在人眼前。
  */
-export interface AgentDoc {
+export interface PromptDoc {
   name: string;
   data: Record<string, unknown>;
   params: Record<string, { properties?: Record<string, { description?: string; type?: string }> }>;
@@ -160,18 +163,21 @@ export const api = {
       { method: "POST" },
     ),
 
-  // -- agent 管理（R31）----------------------------------------------------
+  // -- 提示词管理（R31）----------------------------------------------------
   //
-  // **一份配置 = 一个 agent 收到的全部文字**：`sections`（消息串）、`tools`
+  // **一份配置 = 一个接收方收到的全部文字**：`sections`（消息串）、`tools`
   // （工具描述）、`specials`（运行时另外追加的整条消息）、`rendering`（嵌在
-  // 渲染里的短句）、`enabled`（这个 agent 跑不跑）。
+  // 渲染里的短句）、`enabled`（这一路跑不跑）。
+  //
+  // 接收方分两类（S147）：agent 与单次调用，**并列，走同一套读写接口**——
+  // 所以路径是 `/prompts` 而不是 `/agents`。
   //
   // 原样进原样出——前端不认识里面的结构，只按三类条目画界面。
-  listAgents: () => json<AgentCard[]>("/agents"),
-  getAgent: (name: string) => json<AgentDoc>(`/agents/${name}`),
+  listPrompts: () => json<PromptCard[]>("/prompts"),
+  getPrompt: (name: string) => json<PromptDoc>(`/prompts/${name}`),
   /** 保存。**服务端先试装配再写盘**——装不出来回 422，正文里说是哪一节坏了。 */
-  putAgent: (name: string, data: Record<string, unknown>) =>
-    json<AgentDoc>(`/agents/${name}`, { method: "PUT", body: JSON.stringify({ data }) }),
+  putPrompt: (name: string, data: Record<string, unknown>) =>
+    json<PromptDoc>(`/prompts/${name}`, { method: "PUT", body: JSON.stringify({ data }) }),
 
   /** 回看某一轮落盘的 trace（S115）。开发者面板靠它看当前连接之前的轮次。 */
   readTrace: (id: string, runId: string) => json<TraceEvent[]>(`/sessions/${id}/trace/${runId}`),
