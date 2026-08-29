@@ -22,7 +22,6 @@ from pydantic import BaseModel, Field
 from .bm25 import BM25Index
 from .vectors import VectorIndex
 
-
 K = TypeVar("K")
 """RRF 只按名次融合，键是什么类型它不关心——块序号、ref、都行。"""
 
