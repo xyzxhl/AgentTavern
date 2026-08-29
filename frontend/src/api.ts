@@ -40,6 +40,12 @@ export interface ServerMeta {
 /** agent 列表里的一条。数字只为让列表有点信息量，编辑要进详情。 */
 export interface AgentCard {
   name: string;
+  /** `agent`（会推演、产出剧情、有工具面）还是 `helper`（机械的辅助调用）——S147。
+   *
+   * **由后端给，不在前端按名字猜**：加一份 YAML 就要同时改两处的话，
+   * 漏改的症状是它悄悄出现在错误的那一组里。
+   */
+  group: "agent" | "helper";
   enabled: boolean;
   sections: number;
   tools: number;

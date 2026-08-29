@@ -11,7 +11,7 @@ from conftest import ScriptedLLM
 from fastapi.testclient import TestClient
 
 from agenttavern.config import Settings
-from agenttavern.prompting import AGENTS, assembler
+from agenttavern.prompting import AGENTS, HELPERS, PROMPT_FILES, assembler
 from agenttavern.server import create_app
 
 
@@ -36,9 +36,21 @@ def sandbox(tmp_path: Path):
 
 
 def test_the_list_comes_from_the_yaml_files(client) -> None:
-    """有哪几个 agent **不在前端写死**——加一个就是加一份 YAML 加一个名字。"""
+    """有哪几份提示词**不在前端写死**——加一份就是加一个名字加一个文件。"""
     names = [a["name"] for a in client.get("/agents").json()]
-    assert names == list(AGENTS)
+    assert names == list(PROMPT_FILES)
+
+
+def test_the_prompt_page_separates_agents_from_helpers(client) -> None:
+    """**接口自己带分组**（S147），不让前端按名字猜。
+
+    agent 会推演、会产出剧情、有自己的工具面；helper 是机械的辅助调用
+    （摘要、rerank），输入固定、输出固定、不参与剧情。前端按名字硬编码分组的话，
+    加一份 YAML 就要同时改两处——而漏改的症状是它悄悄出现在错误的那一组里。
+    """
+    groups = {a["name"]: a["group"] for a in client.get("/agents").json()}
+    assert {n for n, g in groups.items() if g == "agent"} == set(AGENTS)
+    assert {n for n, g in groups.items() if g == "helper"} == set(HELPERS)
 
 
 def test_a_tool_carries_its_description_and_its_schema(client) -> None:

@@ -71,8 +71,22 @@ from ..llm import Message, Role
 
 _DIR = Path(__file__).parent
 
-AGENTS = ("director", "writer", "state_manager", "goal_manager", "summarizer")
-"""有哪几个 agent。**列表在这里，不在前端**——加一个 agent 就是加一份 YAML。"""
+AGENTS = ("director", "writer", "state_manager", "goal_manager")
+"""**真正的 agent**：会推演、会产出剧情、有自己的上下文与工具面（S147）。"""
+
+HELPERS = ("summarizer", "rerank")
+"""**机械的辅助调用**：输入固定、输出固定、不参与剧情（S147）。
+
+`summarizer` 一直被算作「第五个 agent」，而它和 rerank 一样只是一次工具性的
+调用。并排列成 agent 会让人以为它们和 director 是同一类东西——
+而那个误解会影响判断：比如以为该给它们工具面，或者以为它们该读世界设定。
+
+**两组都可编辑**——R31 管的是「模型会读到的字」，不分是谁在读。
+"""
+
+PROMPT_FILES = (*AGENTS, *HELPERS)
+"""`prompting/` 底下有哪几份 YAML。**列表在这里，不在前端**——
+加一份就是加一个名字加一个文件。"""
 
 _root: Path | None = None
 

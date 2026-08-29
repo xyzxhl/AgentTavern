@@ -12,6 +12,8 @@
 
 from .assembler import (
     AGENTS,
+    HELPERS,
+    PROMPT_FILES,
     Prompt,
     assemble,
     enabled,
@@ -47,6 +49,8 @@ from .prompts import (
 
 __all__ = [
     "AGENTS",
+    "HELPERS",
+    "PROMPT_FILES",
     "PromptSetup",
     "STATE_INLINE_LIMIT",
     "Prompt",

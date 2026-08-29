@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..llm import Message, Role
-from ..prompting import AGENTS, assemble, load, save
+from ..prompting import AGENTS, PROMPT_FILES, assemble, load, save
 from ..tools import build_state_tools, build_tools, goal_tools
 
 
@@ -104,15 +104,21 @@ def router() -> APIRouter:
 
     @api.get("/agents")
     def list_agents() -> list[dict[str, Any]]:
-        """有哪几个 agent。**列表来自 `AGENTS`，不在前端写死**——加一个 agent
-        就是加一份 YAML 加一个名字。
+        """有哪几份提示词。**列表来自后端，不在前端写死**——加一份就是加一个名字
+        加一个文件。
+
+        **分两组**（S147）：`agent` 会推演、会产出剧情、有自己的工具面；
+        `helper` 是机械的辅助调用（摘要、rerank），输入固定、输出固定、不参与剧情。
+        并排列成 agent 会让人以为它们和 director 是同一类东西。
+        **两组都可编辑**——R31 管的是「模型会读到的字」，不分是谁在读。
         """
         out: list[dict[str, Any]] = []
-        for name in AGENTS:
+        for name in PROMPT_FILES:
             data = load(name)
             out.append(
                 {
                     "name": name,
+                    "group": "agent" if name in AGENTS else "helper",
                     "enabled": bool(data.get("enabled", True)),
                     "sections": len(data.get("sections") or []),
                     "tools": len(data.get("tools") or {}),
@@ -123,7 +129,7 @@ def router() -> APIRouter:
 
     @api.get("/agents/{name}")
     def read_agent(name: str) -> dict[str, Any]:
-        if name not in AGENTS:
+        if name not in PROMPT_FILES:
             raise HTTPException(404, f"没有名为 {name} 的 agent")
         # **参数 schema 只给这个 agent 手上那几个**，不是全部——页面上它挨着
         # 描述显示，多给的那些没有位置可放。
@@ -144,7 +150,7 @@ def router() -> APIRouter:
         并把是哪一节坏了报回去——否则用户改坏一个字，下一轮生成直接 500，
         而错误信息离原因很远。
         """
-        if name not in AGENTS:
+        if name not in PROMPT_FILES:
             raise HTTPException(404, f"没有名为 {name} 的 agent")
         try:
             _render_samples(name, doc.data)

@@ -66,7 +66,18 @@ export function AgentsPage(): JSX.Element {
   return (
     <div className="flex min-h-0 flex-1">
       <nav className="w-40 shrink-0 border-r border-line p-2">
-        {cards.map((card) => (
+        {(["agent", "helper"] as const).map((group) => {
+          const inGroup = cards.filter((c) => c.group === group);
+          if (!inGroup.length) return null;
+          return (
+            <div key={group} className="mb-2">
+              {/* **agent 与「其他调用」分开**（S147）：agent 会推演、会产出剧情、
+                  有自己的工具面；helper 是机械的辅助调用，输入固定输出固定、
+                  不参与剧情。并排列成一组会让人以为它们和 director 是同一类东西。 */}
+              <div className="mb-1 px-2 text-[10px] uppercase tracking-wide text-dim/60">
+                {group === "agent" ? "agent" : "其他调用"}
+              </div>
+              {inGroup.map((card) => (
           <button
             key={card.name}
             onClick={() => go({ kind: "agents", open: card.name })}
@@ -84,7 +95,10 @@ export function AgentsPage(): JSX.Element {
               {!card.enabled && " · 已关"}
             </span>
           </button>
-        ))}
+              ))}
+            </div>
+          );
+        })}
       </nav>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -151,6 +165,7 @@ const LABEL: Record<string, string> = {
   state_manager: "状态",
   goal_manager: "目标",
   summarizer: "摘要",
+  rerank: "资料排序",
 };
 
 const TAB = { context: "上下文", tools: "工具", specials: "特殊" };
