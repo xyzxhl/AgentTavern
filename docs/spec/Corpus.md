@@ -5,9 +5,8 @@
 > **不回答**：状态与设定的检索（见 [Retrieval.md](Retrieval.md)——那两条的准入标准
 > 和这一条**根本不同**，见下）、工具面全貌（见 [Tools.md](Tools.md)）。
 
-> ⚠ **这一篇写在代码前面。** 模型这一侧已经落地（切块、检索、rerank、工具、回执、
-> trace）；**人这一侧还没有**——资料的增删改查接口、后台建索引、前端管理页都还缺，
-> 那几条的「验收」点的仍是不存在的测试。进度见 [TODO.md](../TODO.md)。
+> ⚠ **这一篇写在代码前面。** 后端已经全部落地（切块、检索、rerank、工具、回执、
+> trace、REST、后台建索引）；**还差前端的资料管理页**。进度见 [TODO.md](../TODO.md)。
 
 ## 全貌
 
@@ -62,7 +61,7 @@ director 调 corpus_search(query)
 **得为它开特例**——而 [S65](Worldbook.md) 刚说过「用户扮演的角色不是第四类 kind」
 正是为了避免特例。
 
-**验收** `test_a_corpus_can_be_attached_to_several_sessions` · `test_deleting_a_corpus_in_use_is_refused` · `test_a_dangling_corpus_id_does_not_break_the_run`
+**验收** `test_a_corpus_can_be_attached_to_several_sessions` · `test_a_session_can_hold_several_corpora` · `test_deleting_a_corpus_in_use_is_refused` · `test_detaching_leaves_the_corpus_itself_alone` · `test_attaching_a_corpus_that_does_not_exist_is_refused` · `test_a_dangling_corpus_id_does_not_break_the_run`
 
 ### S137 · 检索工具只给 director，writer 一个工具都没有
 
@@ -340,7 +339,7 @@ BM25 那一路尤其吃亏：一个专名被劈成两半，两边都命中不了
 
 返回空列表会被读成「资料里没有」——**和 [S139](#s139) 是同一条罪**。
 
-**验收** `test_import_returns_before_the_index_is_built` · `test_searching_an_unbuilt_corpus_says_so_instead_of_returning_nothing` · `test_an_unbuilt_corpus_alone_is_not_reported_as_a_miss` · `test_a_failed_build_is_visible_not_silent`
+**验收** `test_import_returns_before_the_index_is_built` · `test_progress_is_visible_while_building` · `test_searching_an_unbuilt_corpus_says_so_instead_of_returning_nothing` · `test_an_unbuilt_corpus_alone_is_not_reported_as_a_miss` · `test_a_failed_build_is_visible_not_silent` · `test_a_build_orphaned_by_a_restart_is_marked_failed` · `test_embeddings_failing_still_leaves_a_searchable_corpus`
 
 ### S145 · 关掉时工具不注册
 

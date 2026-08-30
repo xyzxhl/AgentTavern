@@ -222,6 +222,35 @@ class SessionRepository:
         sources = (store.repo(c.corpus_id).source() for c in self.corpora())
         return [s for s in sources if s is not None]
 
+    def attach_corpus(self, corpus_id: str) -> Session:
+        """把一份资料挂到这局故事上。**重复挂是空操作**，不报错。
+
+        **挂一份不存在的当场拒绝**：留下一条悬空 id 的话，`corpora()` 会宽容地
+        跳过它（同 S72），于是用户看到"挂上了"而检索永远查不到它——
+        **一个没生效的操作不该悄悄没生效**（P29）。
+        """
+        if not CorpusStore(self.root).repo(corpus_id).exists():
+            raise KeyError(f"资料不存在：{corpus_id}")
+        session = self.load_session()
+        if corpus_id in session.corpus_ids:
+            return session
+        updated = session.model_copy(update={"corpus_ids": [*session.corpus_ids, corpus_id]})
+        self.save_session(updated)
+        return updated
+
+    def detach_corpus(self, corpus_id: str) -> Session:
+        """摘下来。**资料本身不动**——它是一级资产，别的故事可能还在用（S136）。
+
+        没挂过也是空操作：摘一个本来就不在的东西，结果和期望一致。
+        """
+        session = self.load_session()
+        remaining = [c for c in session.corpus_ids if c != corpus_id]
+        if remaining == session.corpus_ids:
+            return session
+        updated = session.model_copy(update={"corpus_ids": remaining})
+        self.save_session(updated)
+        return updated
+
     # `world_meta()` **已删除**（S64）：worldbook 上没有字段了，题材与尺度都是
     # `WORLD` 条目，跟着 `worldbook()` 一起来。
 
@@ -303,6 +332,36 @@ class Store:
         if users or not repo.exists():
             return users
         shutil.rmtree(repo.dir, ignore_errors=True)
+        return []
+
+    # -- 外部资料（S136） ----------------------------------------------------
+
+    def corpora(self) -> CorpusStore:
+        return CorpusStore(self.root)
+
+    def sessions_using(self, corpus_id: str) -> list[str]:
+        """哪些故事挂着这份资料。**删之前必须问这个**，同 `sessions_of`。
+
+        和设定那条不同的是这里是**多对多**：一局故事挂零到多份资料，
+        所以查的是"在不在那个列表里"，不是"等不等于那个 id"。
+        """
+        return [
+            sid
+            for sid in self.list_sessions()
+            if corpus_id in self.session(sid).load_session().corpus_ids
+        ]
+
+    def delete_corpus(self, corpus_id: str) -> list[str]:
+        """删掉一份资料。**返回挡住它的那几局故事**——空列表表示删掉了。
+
+        判断和执行放在一起，同 `delete_worldbook`：让调用方先查一遍再删，
+        就是两处判断，而两处判断迟早对不上。
+        """
+        store = self.corpora()
+        users = self.sessions_using(corpus_id)
+        if users or not store.repo(corpus_id).exists():
+            return users
+        store.delete(corpus_id)
         return []
 
     # -- 旧数据 -------------------------------------------------------------

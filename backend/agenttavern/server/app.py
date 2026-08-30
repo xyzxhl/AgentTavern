@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, ValidationError, model_validator
 
 from ..config import Settings, load_settings
+from ..corpus.build import sweep_stale
 from ..corpus.embed import Embedder
 from ..llm import LLMGateway
 from ..models import (
@@ -32,6 +33,8 @@ from ..models import (
 from ..orchestration import close_segment
 from ..storage import SessionRepository, Store, WorldbookRepository
 from ..tracing import Tracer
+from .corpora import router as corpora_router
+from .corpora import session_router as corpora_session_router
 from .prompts import router as prompts_router
 from .protocol import (
     Answer,
@@ -104,6 +107,9 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
     @asynccontextmanager
     async def lifespan(_: FastAPI):  # type: ignore[no-untyped-def]
         yield
+        # **先等建索引收尾再关客户端**：反过来的话，正在跑的那次 embed
+        # 会拿到一个已经关掉的连接，于是一份本来能建成的资料被记成失败。
+        await builder.drain()
         if owned:
             await active.aclose()
         if embedder is not None:
@@ -116,9 +122,19 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
     # `prompting/` 底下那几份 YAML（agent 与单次调用两类，S147）。
     app.include_router(prompts_router())
 
+    # 外部资料：导入、建索引、挂载（S136/S144）。同样单独一个模块。
+    corpora_api, builder = corpora_router(store, embedder)
+    app.include_router(corpora_api)
+    app.include_router(corpora_session_router(store))
+
     # **旧数据在这里搬家**（S63）：worldbook 以前躺在 session 目录里。
     # 跑一次就是空操作，所以放在这里比放一条命令可靠——没人会记得去跑那条命令。
     store.migrate()
+
+    # **上次没建完的索引在这里认账**（S144）：进程被杀时状态停在 `building`，
+    # 而那比失败更糟——用户会一直等一个不会好的东西。启动时扫一遍标成失败，
+    # 界面上就有一个「重建」按钮可按。
+    sweep_stale(store.corpora())
 
     def repo_of(session_id: str) -> SessionRepository:
         repo = store.session(session_id)

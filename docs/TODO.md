@@ -15,21 +15,15 @@
 
 ## spec 有，代码没有
 
-### 外部资料检索：还差 REST 与前端（S136 / S143 / S144）
+### 外部资料检索：只差前端那一页（S136–S148）
 
-[`spec/Corpus.md`](spec/Corpus.md) **整篇写在代码前面**（S136–S148）。已经落地的
-是**模型这一侧的全部**：切块、BM25、向量与混合、rerank、工具接入 director、
-回执、trace。还没有的是**人这一侧**——
+[`spec/Corpus.md`](spec/Corpus.md) **整篇写在代码前面**。**后端全部落地**：
+REST、后台建索引、挂载摘除、进度与失败可见、落盘往返。
+**只差前端那一页**——资料库的列表、导入、进度、挂到哪局故事上。
 
-| 还差什么 | 谁在等它 |
-|---|---|
-| 资料的增删改查接口、导入原文 | S136 的 `test_a_corpus_can_be_attached_to_several_sessions` · `test_deleting_a_corpus_in_use_is_refused` |
-| 后台建索引，进度可见、失败可见 | S144 的 `test_import_returns_before_the_index_is_built` · `test_a_failed_build_is_visible_not_silent` |
-| 索引整体的落盘往返 | S143 的 `test_the_index_survives_a_round_trip_through_disk` · `test_files_are_human_readable` |
-| 前端资料管理页、挂载与摘除 | 无（前端零断言，见下） |
-
-**后果是这条链路现在只能靠测试喂进去，用户还导不了资料。** `Session.corpus_ids`
-已经在，但没有任何接口能往里写。
+在那之前用户仍然导不了资料：接口在，但界面上够不着。这正是
+[UI.md](spec/UI.md) 末尾那条判据说的第六次——**一条决策落地与否，
+看的是它从用户那一侧够不够得着**。
 
 **`corpus` 那一组参数里，只有 `min_similarity` 量过一次**
 （`min_coverage: 0.5` / `rrf_k: 60` / `top_k: 5` 仍是常规取值，没有数据）。
@@ -71,6 +65,25 @@
 
 答得上的 4/4 取对了首位；分界落在 **0.1594 – 0.2833** 之间。
 这正是相似度做不到的那件事，所以 [S141](spec/Corpus.md) 改成首选专业 reranker。
+
+### 量到的：问句会让 BM25 那一路整个失效
+
+`min_coverage: 0.5` 要求 query 切出来的词有一半落在块里，而**问句里大半是疑问词**
+（谁、哪、什么），资料里根本不会出现：
+
+| query | 切出来的词 | 覆盖率 |
+|---|---|---|
+| `谁能驳回诏书？` | 谁/能/驳回/诏书 | 0.25 ✗ |
+| `封驳 涂归` | 封驳/涂归 | 1.00 ✓ |
+
+真实规模跑一遍（20824 字 / 68 块）确认：三个问句形式的 query，**BM25 一条候选
+都没出**，全靠向量那一路。
+
+**所以 `director.yaml` 里 `corpus_search` 描述的那句「用资料里会出现的说法，
+不要问句」不是文风建议，是 BM25 能不能用上的开关。** 改软了那句话，BM25 会
+静默地不再贡献候选，链路退化成纯向量——而没有任何地方会报错。这个耦合已经写进
+`config.yaml` 的注释，但**没有测试钉住**：要钉得先能断言"模型实际发出的 query
+长什么样"，而那要等真跑起来采样。
 
 ### 还差：把接口接进 `lookup.py`
 

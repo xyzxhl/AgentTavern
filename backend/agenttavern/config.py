@@ -160,6 +160,7 @@ class _Windows(BaseModel):
 class _Corpus(BaseModel):
     chunk_chars: int = 400
     chunk_overlap: int = 80
+    embed_batch: int = 10
     candidates: int = 20
     top_k: int = 5
     min_coverage: float = 0.5

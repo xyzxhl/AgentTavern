@@ -57,7 +57,8 @@ SSE 三条都不满足。不用 socket.io——不需要它的房间与 fallback
 
 ### 目录布局
 
-**两类一级资产，各占一棵目录树**（S63）：设定不属于任何 session，一份能开出好几局故事。
+**三类一级资产，各占一棵目录树**（S63/S136）：设定与外部资料都不属于任何 session，
+一份能被好几局故事用。资料那一棵是**多对多**——session 上存的是一个 id 列表。
 
 ```
 data/worldbooks/<worldbook_id>/
@@ -65,8 +66,14 @@ data/worldbooks/<worldbook_id>/
   entries/<entry_id>.json   一条设定一个文件（世界 / 角色 / 初始状态）
                             题材与基调、剧情尺度也是 world 条目
 
+data/corpora/<corpus_id>/
+  corpus.json               名字、备注、字数、建索引的状态与进度（S136/S144）
+  text.txt                  原文，**纯文本**——几十万字塞进 JSON 就既打不开也改不动
+  chunks.json               切块表，每块记着它在原文里的字符区间
+  bm25.json / vectors.npy   两路索引。向量那份不可读没关系：它能从原文重新生成
+
 data/sessions/<session_id>/
-  session.json              worldbook_id、标题、goal、time_driven、冻结的初始状态
+  session.json              worldbook_id、corpus_ids、标题、goal、time_driven、冻结的初始状态
                             **没有配置**——控制维度与能力开关都在提示词里（S80）
   nodes/<node_id>.json      一个 run 一个节点：细纲、正文、state_delta、偏离报告、parent
   trace/<run_id>.jsonl      append-only，每 run 一个文件（匹配归因分析的粒度）
@@ -105,7 +112,7 @@ backend/agenttavern/
   agents/         director / writer / state_manager / goal_manager
                   + summarize（摘要）/ postrun（归段追问）/ replay（上下文重建）
                   summarize 不是 agent，是一次单次调用（S147）
-  corpus/         外部资料检索：切块、BM25、向量、混合、rerank
+  corpus/         外部资料检索：切块、BM25、向量、混合、rerank、建索引
                   rerankers.py 是四家 reranker 端点的统一接口（S141）
   prompting/      提示词 YAML + 装配器。约定见 prompting/README.md
   orchestration/  一个 run 的时序、归段、eval 采样标记
