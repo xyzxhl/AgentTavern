@@ -233,6 +233,29 @@ def scripted():
     return ScriptedLLM
 
 
+# -- 测试不许读开发者的 .env --------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _no_dotenv(monkeypatch):
+    """`Settings()` 在测试里**只看显式传进去的那几个字段**。
+
+    `SettingsConfigDict(env_file=".env")` 是 **CWD 相对**的，而 pytest 就在
+    `backend/` 跑——于是 `Settings(llm_model="m")` 会把开发者 `.env` 里那一整套
+    端点、key、模型全吸进来。
+
+    **后果是测试的成败取决于这台机器配了什么。** 实测撞过：往 `.env` 里填了
+    `RERANK_PROVIDER=qwen` 之后，`test_no_provider_configured_means_no_reranker`
+    当场变红——而 CI 上没有 `.env`，它在那边一直是绿的。
+    **本地红、CI 绿**比反过来更难查：没人会去怀疑一条 CI 通过的测试。
+
+    环境变量也一并清掉：它和 `.env` 是同一个入口的两半，只堵一半等于没堵。
+    """
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
+    for name in Settings.model_fields:
+        monkeypatch.delenv(name.upper(), raising=False)
+
+
 # -- 提示词配置：**取值住在 YAML 里**（R31/S80）-------------------------------
 #
 # `Capabilities` / `ControlDimensions` 都没了，所以测试要换一档、开关一个工具，

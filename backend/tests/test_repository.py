@@ -222,6 +222,46 @@ def test_config_yaml_covers_every_knob() -> None:
     )
 
 
+def test_api_keys_stay_out_of_the_repr() -> None:
+    """**三把 key 都不进 `repr`。**
+
+    pytest 的断言自省会把整个 `Settings` 打出来，于是任何一次涉及它的失败都把
+    key 写进日志——而 CI 的日志是留档的。**踩过一次**：往 `.env` 里填了
+    `RERANK_*` 之后一条测试失败，三把 key 就在输出里。
+
+    **`repr=False` 只挡打印，不挡取值**，所以下面还要确认它照样读得出来——
+    挡住了取值的话，症状是拿着空字符串去鉴权，回 401。
+    """
+    from agenttavern.config import Settings
+
+    s = Settings(llm_api_key="sk-llm", embed_api_key="sk-embed", rerank_api_key="sk-rr")
+
+    assert "sk-llm" not in repr(s)
+    assert "sk-embed" not in repr(s)
+    assert "sk-rr" not in repr(s)
+
+    assert (s.llm_api_key, s.embed_api_key, s.rerank_api_key) == ("sk-llm", "sk-embed", "sk-rr")
+
+    # **`model_dump()` 仍然带着它们**，而且必须带——序列化要用。
+    # 所以这条挡的是 `repr`，不是"Settings 可以随便进日志"。
+    assert "sk-rr" in str(s.model_dump())
+
+
+def test_settings_in_tests_do_not_read_the_developers_dotenv() -> None:
+    """`Settings()` 在测试里**只看显式传进去的那几个字段**（见 conftest 的 `_no_dotenv`）。
+
+    `env_file=".env"` 是 CWD 相对的，而 pytest 就在 `backend/` 跑——不隔离的话
+    测试的成败取决于这台机器配了什么。**本地红、CI 绿**比反过来更难查：
+    没人会去怀疑一条 CI 通过的测试。
+    """
+    from agenttavern.config import Settings
+
+    bare = Settings()
+    assert bare.llm_api_key == ""
+    assert bare.rerank_provider == "", "读到了 .env 里的 RERANK_PROVIDER"
+    assert bare.embed_model == "", "读到了 .env 里的 EMBED_MODEL"
+
+
 def test_a_missing_config_file_falls_back_instead_of_crashing(tmp_path: Path) -> None:
     """文件缺了要能起来。**在 import 阶段炸掉是最糟的失败方式**——
     什么都跑不了，而错误看起来跟配置无关。

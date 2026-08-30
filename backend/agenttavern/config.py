@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,12 +29,18 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # **三把 key 都 `repr=False`**：pytest 的断言自省会把整个 `Settings` 打出来，
+    # 于是任何一次涉及它的失败都把 key 写进日志——CI 的日志是留档的。
+    # 踩过一次：加完 RERANK_* 之后一条测试失败，key 就在输出里。
+    # 用 `repr=False` 而不是 `SecretStr`，是为了不动任何一处调用点（`.get_secret_value()`
+    # 会散到十几个地方，而漏改一处的症状是把字面量 `**********` 发去做鉴权）。
+
     llm_base_url: str = "https://api.openai.com/v1"
     """OpenAI 兼容端点。任何实现该格式的服务都能接——OpenRouter、DeepSeek、
     本地 llama.cpp / vLLM 等。不含 ``/chat/completions`` 后缀。
     """
 
-    llm_api_key: str = ""
+    llm_api_key: str = Field(default="", repr=False)
     llm_model: str = ""
 
     llm_timeout_seconds: float = 300.0
@@ -48,7 +54,7 @@ class Settings(BaseSettings):
     未必在同一家。留空则回落到 `llm_base_url`。
     """
 
-    embed_api_key: str = ""
+    embed_api_key: str = Field(default="", repr=False)
     embed_model: str = ""
     """**留空 = 不启用向量那一路**，整条链路走纯 BM25（S140）。
 
@@ -69,7 +75,7 @@ class Settings(BaseSettings):
     rerank_base_url: str = ""
     """留空则用那一家的官方地址。自建或代理才需要填。"""
 
-    rerank_api_key: str = ""
+    rerank_api_key: str = Field(default="", repr=False)
     rerank_model: str = ""
     """**留空同样是不启用**——不去拿别处的模型名猜一个。"""
 
