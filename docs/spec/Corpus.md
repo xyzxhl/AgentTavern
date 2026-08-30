@@ -45,9 +45,20 @@ director 调 corpus_search(query)
 
 **规格** 存在 `data/corpora/<id>/`，不在任何 session 目录里。
 一局故事可以挂零到多份；一份资料可以被很多局故事挂。
-删一份还有人用的资料**当场拒绝**，同设定库。
 
-**不做** 做成 worldbook 的第四类条目。
+删一份还有人用的资料**只提示，不拦**：先说清是哪几局故事挂着它，删掉之后
+**把这个 id 从那几局的 `corpus_ids` 里一并摘掉**——留着悬空 id 的话，
+列表会宽容地跳过它，那就成了静默的缺失。
+
+**不做** 做成 worldbook 的第四类条目；**不做**像设定库那样拒绝删除。
+
+**为什么删除不拦（和设定库不对称，这是有意的）** 设定是**故事的地基**——
+删掉它，那几局的角色、初始状态、世界全都没了，故事当场失忆；资料是**可选的增援**，
+删掉只是少一条检索路，故事照跑。**代价的量级差着一档，闸门的松紧就该不一样。**
+
+更硬的一条理由：资料的删除**多数是从文件夹那一侧发起的**（[S149](#s149)）——
+用户已经把源文件删了，再来问他一次"真的要删吗"是在替他做决定。
+需要的是**把后果告诉他**，不是拦住他。
 
 **为什么** 它和 worldbook 在**谁写、多大、什么时候进上下文**三点上全都不同：
 
@@ -61,7 +72,7 @@ director 调 corpus_search(query)
 **得为它开特例**——而 [S65](Worldbook.md) 刚说过「用户扮演的角色不是第四类 kind」
 正是为了避免特例。
 
-**验收** `test_a_corpus_can_be_attached_to_several_sessions` · `test_a_session_can_hold_several_corpora` · `test_deleting_a_corpus_in_use_is_refused` · `test_detaching_leaves_the_corpus_itself_alone` · `test_attaching_a_corpus_that_does_not_exist_is_refused` · `test_a_dangling_corpus_id_does_not_break_the_run`
+**验收** `test_a_corpus_can_be_attached_to_several_sessions` · `test_a_session_can_hold_several_corpora` · `test_deleting_a_corpus_in_use_says_who_is_affected_and_proceeds` · `test_deleting_a_corpus_detaches_it_from_every_session` · `test_detaching_leaves_the_corpus_itself_alone` · `test_attaching_a_corpus_that_does_not_exist_is_refused` · `test_a_dangling_corpus_id_does_not_break_the_run`
 
 ### S137 · 检索工具只给 director，writer 一个工具都没有
 
@@ -397,6 +408,176 @@ rerank 前后的次序都要记：**它到底有没有起作用，是这条链�
 **验收** `test_an_agent_is_a_noun_and_a_single_call_is_a_verb` ·
 `test_a_single_call_is_still_editable` ·
 `test_the_prompt_page_separates_agents_from_single_calls`
+
+<a id="s149"></a>
+
+### S149 · 源文件夹是暂存区，知识库是快照，两层
+
+**服务** [R46](../req/资料检索.md) [R47](../req/资料检索.md)
+
+**规格** 两个位置，职责不同：
+
+| | 谁写 | 是什么 |
+|---|---|---|
+| `data/corpus_files/` | **用户**，随便增删改 | 源文件。**位置固定，不给配** |
+| `data/corpora/<id>/` | 系统 | 处理后的：快照 `text.txt` + 块表 + 两路索引 |
+
+`corpus.json` 记着这份资料是从哪个源文件、哪一次内容处理来的：
+`source_name` · `source_hash` · `encoding` · `processed_at`。
+
+**块的区间指向快照，不指向活文件**（[S142](#s142) 那条"记着它在原文里的位置"，
+"原文"就是这份快照）。
+
+**不做** 让用户指定源文件夹的位置；**不做**让检索跟着活文件走。
+
+**为什么分两层** [S143](#s143) 写着「用户可直接编辑是这个项目的取向」，而
+[S142](#s142) 要求每块记住它在原文里的字符区间——**这两条本来是拧着的**：
+用户改一个字，之前所有区间就整体错位，而**检索照跑，引文静默地指错位置**。
+
+快照把它们解开：**它是一致性装置，不是归档**。区间永远指得准，
+而用户那一侧仍然是几个可以随便动的普通文件。
+
+**为什么位置不给配** 多一个可配的路径就多一类「我明明放了它怎么没看见」，
+而这个功能的全部卖点就是"丢进去就行"。
+
+**验收** `test_the_snapshot_not_the_live_file_backs_the_offsets` · `test_the_source_folder_is_created_on_startup` · `test_a_chunk_still_resolves_after_the_source_file_changes`
+
+<a id="s150"></a>
+
+### S150 · 状态靠指纹对账，不靠文件系统事件
+
+**服务** [R47](../req/资料检索.md)
+
+**规格** 不装文件监视器。差异是**每次要用之前算出来的**：
+列出源文件夹，对每个文件比 `(mtime, size)`，变了才算 hash，与
+`corpus.json` 里记的 `source_hash` 比对。
+
+**不做** 引入 `watchdog` 之类的文件系统监视；**不做**用 mtime 单独下结论。
+
+**为什么** **事件会丢，指纹不会。** 进程没跑的时候用户改了文件，事件就永远
+没有了——而丢了事件的后果不是"晚一点更新"，是索引**永久地**对应着一份
+已经不存在的文本，且没有任何地方会报错。
+
+这和 [S144](#s144) 的 `sweep_stale` 是同一条思路：**启动时对账，不靠通知**。
+差异是个**可验证的不变量**，不是一个要靠事件流维持的状态。
+
+mtime 只做初筛：某些同步盘与容器里它不可靠，而同一秒内的两次修改可能
+mtime 与 size 都不变。**结论一律由 hash 下。**
+
+**验收** `test_a_change_made_while_the_server_was_down_is_still_noticed` · `test_mtime_only_filters_it_does_not_decide` · `test_no_filesystem_watcher_is_installed`
+
+<a id="s151"></a>
+
+### S151 · 四种差异各有各的说法，更新由用户按下才发生
+
+**服务** [R47](../req/资料检索.md)
+
+**规格** 对账的结果是四种状态之一，**界面各标各的**：
+
+| | 源文件 | hash | 按「更新」之后 |
+|---|---|---|---|
+| **同步** | 在 | 一致 | — |
+| **新文件** | 在 | 没有对应条目 | 建一份新的，处理 |
+| **已修改** | 在 | 不一致 | 重新处理（快照、块表、两路索引全换） |
+| **源已删除** | 不在 | — | **删掉这份资料**，并从每一局的 `corpus_ids` 里摘掉 |
+
+**系统自己不动手。**
+
+**不做** 自动同步；**不做**发现「已修改」就拒绝检索。
+
+**为什么不自动** 处理一份大资料要花时间也要花钱（实测 68 块 4.8 秒，
+外推一本三十万字的小说约 45 秒），而**编辑器的每一次保存都会改 mtime**——
+自动同步等于让保存动作触发重建。
+
+**为什么「已修改」时旧索引仍然可用** 它对应的快照还在，区间仍然指得准，
+**它只是旧，不是错**。拒绝检索等于因为用户在文件夹里改了个错别字，
+就让这局故事当场少一条检索路。
+
+**「源已删除」更新之后必须真的查不到**（[P36](../Principles.md)）：
+索引是源的缓存，不是归档。这也是**唯一一处删除不需要用户在资料库里再点一次**——
+他删文件那一下就是他的意思，界面要做的是把「哪几局故事挂着它」摆出来，
+不是拦住他（见 [S136](#s136)）。
+
+**验收** `test_a_new_file_shows_up_as_pending_not_as_a_corpus` · `test_an_edited_file_is_flagged_but_the_old_index_still_serves` · `test_applying_a_deletion_removes_it_from_every_session` · `test_nothing_is_processed_until_the_user_asks`
+
+<a id="s152"></a>
+
+### S152 · 处理后的文件假定没人动；对不上就报错，不将就
+
+**服务** —（数据完整性）
+
+**规格** `data/corpora/<id>/` 底下的东西**假定用户不改**。发现改了就
+**当场报错、要求重新处理**，不试图修复、不静默降级。
+
+判据是**数量对账**，不是逐个文件算 hash：
+
+```
+len(chunks) == bm25.total == vectors.count（有向量时）
+```
+
+**不做** 尝试从被改坏的索引里抢救；**不做**在检索路径上给这几份文件算 hash。
+
+**为什么用数量对账** 它**免费**——这三个数在加载 `Source` 时已经在手上，
+而检索路径上多算一次 600KB 的 hash 是每次都要付的钱。
+
+而且它恰好抓得住最危险的那种不一致：**块表和向量对不上时，
+向量那一路给出的 `chunk_index` 会索引到不相干的段落，而且不会报错**——
+检索结果只是"变得莫名其妙"。
+
+**为什么报错而不是修** 这一层是**可以从源文件完全重建的派生物**。
+花力气去猜"用户想保留哪一半"，不如让他按一下重新处理。
+
+**验收** `test_a_tampered_index_is_refused_not_repaired` · `test_the_counts_must_agree_across_chunks_bm25_and_vectors` · `test_verifying_costs_nothing_on_the_search_path`
+
+<a id="s153"></a>
+
+### S153 · 编码探测：UTF-8 → GBK，用了哪种记下来并显示
+
+**服务** [R46](../req/资料检索.md)
+
+**规格** 按 UTF-8 读；解不开就按 GBK（`gb18030`）读。
+**用了哪一种写进 `corpus.json` 的 `encoding`，界面上显示。**
+两种都解不开：标成失败，说清是编码问题。
+
+**不做** 猜完不说；**不做**用 `errors="replace"` 把解不开的字节替换掉。
+
+**为什么** 中文用户的旧 txt 有相当概率是 GBK。而**乱码是不抛异常的**：
+`errors="replace"` 会安静地产出一串 `�`，然后它被切块、被 embed、进索引——
+**全程没有任何地方报错**，症状只是"这份资料怎么查都查不到"，
+和"资料里确实没有"看起来一模一样（同 [S139](#s139) 那条罪）。
+
+**用 `gb18030` 不用 `gbk`**：前者是后者的超集，能多认一批生僻字，而代价为零。
+
+**验收** `test_a_gbk_file_is_read_and_the_encoding_is_recorded` · `test_an_undecodable_file_fails_loudly` · `test_no_replacement_characters_are_ever_indexed`
+
+<a id="s154"></a>
+
+### S154 · Word 与 PDF 解析后处理；抽不出字当场失败
+
+**服务** [R48](../req/资料检索.md)
+
+**规格** 纯文本一族（`.txt` `.md` `.json` `.yaml` `.csv`）直接读；
+`.docx` 与 `.pdf` **解析成纯文本再走同一条路**——解析结果就是那份快照，
+**检索报的位置指的是它**。
+
+**抽出来的字太少就标成失败**，并说清"这看起来是扫描件，没有文字层"。
+认不得的后缀标成「不支持」，不当二进制切块。
+
+**不做** OCR；**不做**在解析文本里插页码标记。
+
+**为什么扫描件要当场失败** 一份扫描的 PDF 没有文字层，抽出来是空的或者
+几行页码。不拦住的话它会变成一份**"建好了但怎么查都查不到"**的资料——
+而那和"这资料里确实没有"看起来完全一样。**这是乱码那条的同一种病。**
+
+**为什么位置指解析后的文本，不插页码** 页码标记会**混进被检索的正文**：
+它们会被切块、被分词、被 embed，成为噪声，而 BM25 那一路对这种高频短串
+尤其敏感。代价是用户不能按页回查——补法是**界面上直接给他看解析后的那份文字**，
+位置对着它数得到。
+
+**为什么不做 OCR** 它是另一个量级的依赖（模型、二进制、平台差异），
+而这条链路连基线质量都还没量过（[P27](../Principles.md)）。
+
+**验收** `test_a_docx_becomes_plain_text` · `test_a_pdf_without_a_text_layer_fails_loudly` · `test_an_unsupported_extension_is_reported_not_indexed` · `test_no_page_markers_leak_into_the_indexed_text`
 
 ---
 
