@@ -149,7 +149,7 @@ def test_config_yaml_covers_every_knob() -> None:
     import agenttavern
     from agenttavern.agents import director, goal_manager, replay, state_manager, summarize
     from agenttavern.config import LIMITS, Limits, load_limits
-    from agenttavern.corpus import lookup
+    from agenttavern.corpus import build, lookup, sources
     from agenttavern.models import Goal
     from agenttavern.orchestration import checks
     from agenttavern.prompting import prompts, state_recent_runs, upstream_runs
@@ -190,6 +190,11 @@ def test_config_yaml_covers_every_knob() -> None:
         "corpus.min_coverage": (LIMITS.corpus.min_coverage, lookup.MIN_COVERAGE),
         "corpus.min_similarity": (LIMITS.corpus.min_similarity, lookup.MIN_SIMILARITY),
         "corpus.rrf_k": (LIMITS.corpus.rrf_k, lookup.RRF_K),
+        "corpus.min_chars_per_page": (
+            LIMITS.corpus.min_chars_per_page,
+            sources.MIN_CHARS_PER_PAGE,
+        ),
+        "corpus.embed_batch": (LIMITS.corpus.embed_batch, build.EMBED_BATCH),
     }
     assert {k for k, (a, b) in wired.items() if a != b} == set()
 

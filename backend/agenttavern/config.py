@@ -158,6 +158,7 @@ class _Windows(BaseModel):
 
 
 class _Corpus(BaseModel):
+    min_chars_per_page: int = 20
     chunk_chars: int = 400
     chunk_overlap: int = 80
     embed_batch: int = 10

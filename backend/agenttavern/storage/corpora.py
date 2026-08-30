@@ -114,14 +114,33 @@ class CorpusRepository:
         index = self.bm25()
         if index is None:
             return None
+        chunks = self.chunks()
+        # **状态说没建向量就不读那个文件。** 换过 embedding 模型的话盘上
+        # 可能还躺着一份维度对不上的旧向量，读进来只会在检索时报维度错。
+        vectors = self.vectors() if corpus.build.embedded else None
+
+        # **数量对账**（S152）：处理后的文件假定没人动，对不上就报错、不将就。
+        # 判据用数量不用哈希，因为这三个数**已经在手上了**——检索路径上多算
+        # 一次 600KB 的哈希是每次都要付的钱。
+        #
+        # 而它恰好抓得住最危险的那种不一致：块表和向量对不上时，向量那一路
+        # 给出的 `chunk_index` 会索引到**不相干的段落，而且不会报错**。
+        counts = {"块表": len(chunks), "BM25": index.total}
+        if vectors is not None:
+            counts["向量"] = vectors.count
+        if len(set(counts.values())) > 1:
+            raise ValueError(
+                f"「{corpus.name}」的索引对不上（"
+                + "、".join(f"{k} {v}" for k, v in counts.items())
+                + "）。这几份文件是派生的，**重新处理一次**即可。"
+            )
+
         return Source(
             corpus_id=corpus.corpus_id,
             name=corpus.name,
-            chunks=self.chunks(),
+            chunks=chunks,
             bm25=index,
-            # **状态说没建向量就不读那个文件。** 换过 embedding 模型的话盘上
-            # 可能还躺着一份维度对不上的旧向量，读进来只会在检索时报维度错。
-            vectors=self.vectors() if corpus.build.embedded else None,
+            vectors=vectors,
         )
 
 
@@ -130,6 +149,20 @@ class CorpusStore:
 
     def __init__(self, root: Path) -> None:
         self.root = root
+
+    @property
+    def files_dir(self) -> Path:
+        """**用户那一侧的文件夹**（S149）：`data/corpus_files/`。
+
+        位置固定，不给配——多一个可配的路径就多一类「我明明放了它怎么没看见」，
+        而这个功能的全部卖点就是"丢进去就行"。
+        """
+        return self.root / "corpus_files"
+
+    def ensure_files_dir(self) -> Path:
+        """建出来。**启动时叫一次**——一个不存在的文件夹没法往里丢东西。"""
+        self.files_dir.mkdir(parents=True, exist_ok=True)
+        return self.files_dir
 
     def repo(self, corpus_id: str) -> CorpusRepository:
         return CorpusRepository(self.root, corpus_id)

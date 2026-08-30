@@ -25,9 +25,14 @@ from pydantic import BaseModel, Field
 
 from ..corpus.build import build_index, sweep_stale
 from ..corpus.search import EmbedderLike
-from ..models.corpus import BuildState, Corpus
+from ..corpus.sources import SourceError, read_source, source_hash
+from ..corpus.sync import reconcile
+from ..models.corpus import BuildState, BuildStatus, Corpus
 from ..storage import SessionRepository, Store
 from ..storage.corpora import CorpusRepository
+
+_SOURCE_FIELDS = {"name", "source_name", "source_hash", "encoding"}
+"""从源文件读出来、`CorpusStore.create` 不会填的那几个字段。"""
 
 
 class NewCorpus(BaseModel):
@@ -98,15 +103,36 @@ def router(store: Store, embedder: EmbedderLike | None = None) -> tuple[APIRoute
         好的、也点得出坏的。坏的要**报出来而不是跳过**——悄悄少一份比 500 更糟，
         用户根本不知道自己丢了什么。
         """
-        good, broken = store.corpora().survey()
+        corpora = store.corpora()
+        good, broken = corpora.survey()
         return {
             "corpora": [{"corpus": c, "sessions": store.sessions_using(c.corpus_id)} for c in good],
+            # **对账在这里做**（S150/S151）：文件夹和知识库对不上的地方全列出来，
+            # 但一个字节都不写——动手要用户按下才发生。
+            #
+            # 「源已删除」带上是哪几局故事挂着它：**用户按下之前就要看到后果**，
+            # 因为删除不拦（S136），拦不住就更得说清楚。
+            "pending": [
+                {
+                    "kind": p.kind.value,
+                    "source_name": p.source_name,
+                    "corpus_id": p.corpus_id,
+                    "reason": p.reason,
+                    "sessions": store.sessions_using(p.corpus_id) if p.corpus_id else [],
+                }
+                for p in reconcile(corpora.files_dir, good)
+            ],
+            "folder": str(corpora.files_dir),
             "broken": broken,
         }
 
     @api.post("/corpora")
     async def create_corpus(new: NewCorpus) -> Corpus:
-        """导入。**立刻返回，索引在后台建**（S144）。
+        """直接给正文建一份。**立刻返回，索引在后台建**（S144）。
+
+        **用户那一侧的入口是文件夹**（S149/`/corpora/import`），这一条是给
+        程序用的：它建出来的资料 `source_name` 为空，因此**不参与文件夹对账**
+        ——文件夹里本来就没有它对应的文件。
 
         返回的 `build.state` 是 `pending`——**不是骗人的 `ready`**：
         这一刻它确实还查不了，而界面要照着这个状态显示进度。
@@ -140,24 +166,100 @@ def router(store: Store, embedder: EmbedderLike | None = None) -> tuple[APIRoute
         repo.save(corpus)
         return corpus
 
+    def _adopt(source_name: str, corpus: Corpus | None) -> Corpus:
+        """把源文件读进快照。**`corpus` 为 `None` 就是新建一份。**
+
+        读不出来（乱码、扫描件、空文件）当场 400 并把那句话原样递回去——
+        它是写给人看的，界面直接显示（S153/S154）。
+        """
+        path = store.corpora().files_dir / source_name
+        if not path.is_file():
+            raise HTTPException(404, f"源文件不在：{source_name}")
+        try:
+            extracted = read_source(path)
+        except SourceError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+        # 文件名就是资料的名字（R46）——不用再填一次表。
+        # **状态清回 PENDING**：旧的进度是上一次的，留着会让界面显示一个
+        # 已经不成立的百分比。
+        base = corpus or Corpus()
+        updated = base.model_copy(
+            update={
+                "name": path.stem,
+                "source_name": source_name,
+                "source_hash": source_hash(path),
+                "encoding": extracted.encoding,
+                "chars": len(extracted.text),
+                "build": BuildStatus(),
+            }
+        )
+        repo = store.corpora().repo(updated.corpus_id)
+        if corpus is None:
+            store.corpora().create(updated, text=extracted.text)
+            # `create` 会把 `build` 重置并按正文算 `chars`，所以再写一次那几个字段。
+            repo.save(repo.load().model_copy(update=updated.model_dump(include=_SOURCE_FIELDS)))
+        else:
+            repo.text_path.write_text(extracted.text, encoding="utf-8")
+            repo.save(updated)
+        return repo.load()
+
+    @api.post("/corpora/import")
+    async def import_source(body: dict[str, str]) -> Corpus:
+        """把源文件夹里的一个文件收进知识库并开始处理（S151 的「新文件」）。
+
+        **这是用户那一侧唯一的导入入口**（R46）。上面那条 `POST /corpora`
+        直接吃正文，是给程序用的——它建出来的资料没有源文件，因此不参与对账。
+        """
+        corpus = _adopt(body.get("source_name", ""), None)
+        builder.start(corpus.corpus_id)
+        return corpus
+
+    @api.post("/corpora/{corpus_id}/rename")
+    def apply_rename(corpus_id: str, body: dict[str, str]) -> Corpus:
+        """源文件改名了：**只更新记录，不重建**（S151）。
+
+        内容没变，索引就还是对的——重建一遍纯属浪费那几十秒和那笔钱。
+        """
+        repo = repo_of(corpus_id)
+        name = body.get("source_name", "")
+        path = store.corpora().files_dir / name
+        if not path.is_file():
+            raise HTTPException(404, f"源文件不在：{name}")
+        corpus = repo.load()
+        if source_hash(path) != corpus.source_hash:
+            # **内容也变了就不是改名**，让调用方走重新处理那条路。
+            raise HTTPException(409, "这个文件的内容也变了，要重新处理，不是改名。")
+        repo.save(corpus.model_copy(update={"source_name": name, "name": path.stem}))
+        return repo.load()
+
     @api.post("/corpora/{corpus_id}/rebuild")
     async def rebuild_corpus(corpus_id: str) -> Corpus:
-        """重建索引。**建失败之后唯一的出路**，也用于换了 embedding 模型之后。
+        """重新处理。**S151 的「已修改」走这一条**，建失败与换 embedding 模型也走它。
+
+        有源文件的**先把它重新读进快照**——那正是"应用这次修改"的全部含义。
+        没有源文件的（用接口直接导入的）只重建索引。
 
         换模型不重建的话，盘上的向量维度和新模型对不上——那个错要等到下一次
         检索才炸（`VectorIndex` 会拒绝维度不符的查询）。
         """
         repo = repo_of(corpus_id)
+        corpus = repo.load()
+        if corpus.source_name and (store.corpora().files_dir / corpus.source_name).is_file():
+            corpus = _adopt(corpus.source_name, corpus)
         builder.start(corpus_id)
-        return repo.load()
+        return corpus
 
     @api.delete("/corpora/{corpus_id}")
     def delete_corpus(corpus_id: str) -> dict[str, Any]:
-        """**有故事挂着就不让删**，先说清是哪几局（S136）。"""
+        """删掉。**有故事挂着也照删，只把受影响的报回去**（S136）。
+
+        不拦的理由有两条：资料是可选的增援不是地基（删了只少一条检索路）；
+        而且删除多半是从文件夹那一侧发起的——用户已经把源文件删了，
+        再问一次是替他做决定。**界面负责在按下之前把这几局摆出来。**
+        """
         repo_of(corpus_id)
-        if users := store.delete_corpus(corpus_id):
-            raise HTTPException(409, f"还有 {len(users)} 局故事挂着这份资料。")
-        return {"deleted": corpus_id}
+        return {"deleted": corpus_id, "affected_sessions": store.delete_corpus(corpus_id)}
 
     return api, builder
 

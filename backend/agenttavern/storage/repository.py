@@ -352,17 +352,24 @@ class Store:
         ]
 
     def delete_corpus(self, corpus_id: str) -> list[str]:
-        """删掉一份资料。**返回挡住它的那几局故事**——空列表表示删掉了。
+        """删掉一份资料。**返回受影响的那几局故事**——删除照做，不拦（S136）。
 
-        判断和执行放在一起，同 `delete_worldbook`：让调用方先查一遍再删，
-        就是两处判断，而两处判断迟早对不上。
+        **和设定库不对称，这是有意的**：设定是故事的地基（删了角色、初始状态、
+        世界全没，故事当场失忆），资料只是可选的增援（删了少一条检索路，
+        故事照跑）。代价差着一档，闸门的松紧就该不一样。
+
+        **顺手把这个 id 从每一局的 `corpus_ids` 里摘掉。** 留着悬空 id 的话，
+        列表会宽容地跳过它（同 S72），那就成了静默的缺失——用户看不出自己
+        少了一条检索路。
+
+        返回值给调用方渲染「这 N 局故事受影响」，不是给它当拦截的依据。
         """
         store = self.corpora()
         users = self.sessions_using(corpus_id)
-        if users or not store.repo(corpus_id).exists():
-            return users
+        for session_id in users:
+            self.session(session_id).detach_corpus(corpus_id)
         store.delete(corpus_id)
-        return []
+        return users
 
     # -- 旧数据 -------------------------------------------------------------
 

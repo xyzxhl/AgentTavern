@@ -5,8 +5,9 @@
 > **不回答**：状态与设定的检索（见 [Retrieval.md](Retrieval.md)——那两条的准入标准
 > 和这一条**根本不同**，见下）、工具面全貌（见 [Tools.md](Tools.md)）。
 
-> ⚠ **这一篇写在代码前面。** 后端已经全部落地（切块、检索、rerank、工具、回执、
-> trace、REST、后台建索引）；**还差前端的资料管理页**。进度见 [TODO.md](../TODO.md)。
+> ⚠ **后端已经全部落地**（切块、检索、rerank、工具、回执、trace、REST、
+> 后台建索引、源文件夹对账）。**只差前端的资料管理页**——在那之前用户仍然
+> 够不着这个功能。进度见 [TODO.md](../TODO.md)。
 
 ## 全貌
 
@@ -440,7 +441,7 @@ rerank 前后的次序都要记：**它到底有没有起作用，是这条链�
 **为什么位置不给配** 多一个可配的路径就多一类「我明明放了它怎么没看见」，
 而这个功能的全部卖点就是"丢进去就行"。
 
-**验收** `test_the_snapshot_not_the_live_file_backs_the_offsets` · `test_the_source_folder_is_created_on_startup` · `test_a_chunk_still_resolves_after_the_source_file_changes`
+**验收** `test_the_source_folder_is_created_on_startup` · `test_an_edited_file_is_flagged_but_the_old_index_still_serves` · `test_rebuilding_pulls_the_edited_file_into_the_snapshot`
 
 <a id="s150"></a>
 
@@ -448,9 +449,8 @@ rerank 前后的次序都要记：**它到底有没有起作用，是这条链�
 
 **服务** [R47](../req/资料检索.md)
 
-**规格** 不装文件监视器。差异是**每次要用之前算出来的**：
-列出源文件夹，对每个文件比 `(mtime, size)`，变了才算 hash，与
-`corpus.json` 里记的 `source_hash` 比对。
+**规格** 不装文件监视器。差异是**每次对账时算出来的**：列出源文件夹，
+**对每个文件算一遍 sha256**，与 `corpus.json` 里记的 `source_hash` 比对。
 
 **不做** 引入 `watchdog` 之类的文件系统监视；**不做**用 mtime 单独下结论。
 
@@ -461,10 +461,12 @@ rerank 前后的次序都要记：**它到底有没有起作用，是这条链�
 这和 [S144](#s144) 的 `sweep_stale` 是同一条思路：**启动时对账，不靠通知**。
 差异是个**可验证的不变量**，不是一个要靠事件流维持的状态。
 
-mtime 只做初筛：某些同步盘与容器里它不可靠，而同一秒内的两次修改可能
-mtime 与 size 都不变。**结论一律由 hash 下。**
+**mtime 连初筛都不做。** 某些同步盘与容器里它不可靠，而同一秒内的两次同长度
+修改会让 mtime 与 size 都不变——那时抄近路就是漏报。代价是每次对账把源文件
+读一遍：一本一兆的小说约 5 毫秒。**真慢了再按 `(size, mtime)` 加一层进程内
+缓存**（[P27](../Principles.md)：先量再改）。
 
-**验收** `test_a_change_made_while_the_server_was_down_is_still_noticed` · `test_mtime_only_filters_it_does_not_decide` · `test_no_filesystem_watcher_is_installed`
+**验收** `test_a_change_made_while_the_server_was_down_is_still_noticed` · `test_the_verdict_comes_from_the_hash_not_from_mtime` · `test_no_filesystem_watcher_is_installed` · `test_the_hash_follows_the_bytes_not_the_name`
 
 <a id="s151"></a>
 
@@ -498,7 +500,7 @@ mtime 与 size 都不变。**结论一律由 hash 下。**
 他删文件那一下就是他的意思，界面要做的是把「哪几局故事挂着它」摆出来，
 不是拦住他（见 [S136](#s136)）。
 
-**验收** `test_a_new_file_shows_up_as_pending_not_as_a_corpus` · `test_an_edited_file_is_flagged_but_the_old_index_still_serves` · `test_applying_a_deletion_removes_it_from_every_session` · `test_nothing_is_processed_until_the_user_asks`
+**验收** `test_a_new_file_shows_up_as_pending_not_as_a_corpus` · `test_an_edited_file_is_flagged_but_the_old_index_still_serves` · `test_applying_a_deletion_removes_it_from_every_session` · `test_nothing_is_processed_until_the_user_asks` · `test_a_renamed_file_only_updates_the_record` · `test_renaming_refuses_when_the_content_changed_too` · `test_renamed_and_edited_at_once_reads_as_delete_plus_add`
 
 <a id="s152"></a>
 
@@ -527,7 +529,7 @@ len(chunks) == bm25.total == vectors.count（有向量时）
 **为什么报错而不是修** 这一层是**可以从源文件完全重建的派生物**。
 花力气去猜"用户想保留哪一半"，不如让他按一下重新处理。
 
-**验收** `test_a_tampered_index_is_refused_not_repaired` · `test_the_counts_must_agree_across_chunks_bm25_and_vectors` · `test_verifying_costs_nothing_on_the_search_path`
+**验收** `test_a_tampered_index_is_refused_not_repaired` · `test_the_counts_must_agree_across_chunks_bm25_and_vectors`
 
 <a id="s153"></a>
 
@@ -548,7 +550,7 @@ len(chunks) == bm25.total == vectors.count（有向量时）
 
 **用 `gb18030` 不用 `gbk`**：前者是后者的超集，能多认一批生僻字，而代价为零。
 
-**验收** `test_a_gbk_file_is_read_and_the_encoding_is_recorded` · `test_an_undecodable_file_fails_loudly` · `test_no_replacement_characters_are_ever_indexed`
+**验收** `test_a_gbk_file_is_read_and_the_encoding_is_recorded` · `test_no_replacement_characters_are_ever_indexed` · `test_gb18030_not_gbk_so_rare_characters_survive` · `test_a_gbk_file_is_imported_and_its_encoding_is_shown` · `test_an_unreadable_file_is_refused_with_a_sentence_for_the_user`
 
 <a id="s154"></a>
 
@@ -577,7 +579,7 @@ len(chunks) == bm25.total == vectors.count（有向量时）
 **为什么不做 OCR** 它是另一个量级的依赖（模型、二进制、平台差异），
 而这条链路连基线质量都还没量过（[P27](../Principles.md)）。
 
-**验收** `test_a_docx_becomes_plain_text` · `test_a_pdf_without_a_text_layer_fails_loudly` · `test_an_unsupported_extension_is_reported_not_indexed` · `test_no_page_markers_leak_into_the_indexed_text`
+**验收** `test_a_docx_becomes_plain_text` · `test_a_pdf_without_a_text_layer_fails_loudly` · `test_a_short_but_real_pdf_is_not_mistaken_for_a_scan` · `test_an_unsupported_extension_is_reported_not_indexed` · `test_an_unsupported_file_is_listed_as_such_not_hidden` · `test_no_page_markers_leak_into_the_indexed_text` · `test_an_empty_file_fails_loudly` · `test_plain_text_family_is_read_directly`
 
 ---
 

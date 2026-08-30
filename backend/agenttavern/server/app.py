@@ -136,6 +136,9 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
     # 界面上就有一个「重建」按钮可按。
     sweep_stale(store.corpora())
 
+    # **源文件夹要先存在，用户才能往里丢东西**（S149）。
+    store.corpora().ensure_files_dir()
+
     def repo_of(session_id: str) -> SessionRepository:
         repo = store.session(session_id)
         if not repo.session_path.exists():

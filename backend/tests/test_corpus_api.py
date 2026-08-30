@@ -292,22 +292,46 @@ def test_detaching_leaves_the_corpus_itself_alone(client) -> None:
     assert client.get(f"/corpora/{corpus_id}").json()["sessions"] == [two]
 
 
-def test_deleting_a_corpus_in_use_is_refused(client) -> None:
-    """**有故事挂着就不让删**（S136），同设定库。
+def test_deleting_a_corpus_in_use_says_who_is_affected_and_proceeds(client) -> None:
+    """**有故事挂着也照删，只把受影响的报回去**（S136）。
 
-    删掉之后那几局会静默地少一条检索路——而界面上什么都不会说。
+    和设定库不对称是有意的：设定是故事的地基（删了角色、初始状态、世界全没），
+    资料只是可选的增援（删了少一条检索路，故事照跑）。**代价差着一档，
+    闸门的松紧就该不一样。**
+
+    而且删除多半是从文件夹那一侧发起的——用户已经把源文件删了，
+    再拦一次是替他做决定。**界面负责在按下之前把这几局摆出来。**
     """
     corpus_id = import_corpus(client)
     sid = client.post("/sessions").json()["id"]
     client.put(f"/sessions/{sid}/corpora/{corpus_id}")
 
     res = client.delete(f"/corpora/{corpus_id}")
-    assert res.status_code == 409
-    assert "1 局" in res.json()["detail"], "要说清是几局挡着"
-
-    client.delete(f"/sessions/{sid}/corpora/{corpus_id}")
-    assert client.delete(f"/corpora/{corpus_id}").status_code == 200
+    assert res.status_code == 200
+    assert res.json()["affected_sessions"] == [sid], "要说清影响了哪几局"
     assert client.get(f"/corpora/{corpus_id}").status_code == 404
+
+
+def test_deleting_a_corpus_detaches_it_from_every_session(client) -> None:
+    """删完要把这个 id 从每一局的 `corpus_ids` 里摘掉（S136）。
+
+    留着悬空 id 的话，列表会宽容地跳过它（同 S72）——**那就成了静默的缺失**，
+    用户看不出自己少了一条检索路。
+    """
+    corpus_id = import_corpus(client)
+    one = client.post("/sessions").json()["id"]
+    two = client.post("/sessions").json()["id"]
+    for sid in (one, two):
+        client.put(f"/sessions/{sid}/corpora/{corpus_id}")
+
+    assert set(client.delete(f"/corpora/{corpus_id}").json()["affected_sessions"]) == {one, two}
+
+    # **断言 `corpus_ids` 本身，不是那个列表接口。**
+    # `corpora()` 会宽容地跳过悬空 id（同 S72），于是摘没摘干净它都返回空——
+    # 断言在那层宽容之后，等于什么都没钉住。**这条是变异测试抓出来的。**
+    for sid in (one, two):
+        assert client.get(f"/sessions/{sid}").json()["session"]["corpus_ids"] == []
+        assert client.get(f"/sessions/{sid}/corpora").json() == []
 
 
 # -- 列表的宽容（同 S72） ------------------------------------------------------

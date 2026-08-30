@@ -109,5 +109,23 @@ class Corpus(BaseModel):
     而 S139 定死了回执只有两种形状，多出来的每一句都在跟正事抢注意力（P32）。
     """
 
+    source_name: str = ""
+    """它是从源文件夹里哪个文件来的（S149）。**只是当前的名字，不是身份**——
+    用户随时可以改名，那时靠 `source_hash` 认回来。
+
+    空串是**用过接口直接导入的**（没有源文件），那种资料不参与对账。
+    """
+
+    source_hash: str = ""
+    """处理那一刻源文件的 sha256（S150）。**这是判断"改没改"的唯一依据**——
+    不是 mtime：某些同步盘与容器里它不可靠，而同一秒内的两次同长度修改
+    mtime 与 size 都不变。
+    """
+
+    encoding: str = ""
+    """怎么把字节变成字的：`utf-8` / `gb18030` / `docx` / `pdf`（S153）。
+    **猜了就要说出来**，所以它要显示在界面上。
+    """
+
     build: BuildStatus = Field(default_factory=BuildStatus)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
