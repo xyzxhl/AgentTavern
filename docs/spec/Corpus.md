@@ -200,34 +200,65 @@ BM25 那一路**不依赖任何外部模型**，所以它是**降级路径**：
 
 **验收** `test_rrf_ranks_by_position_not_by_score` · `test_a_chunk_found_by_both_paths_ranks_above_one_found_by_one` · `test_both_paths_contribute_and_duplicates_collapse` · `test_it_falls_back_to_bm25_when_embeddings_are_unavailable` · `test_chinese_terms_survive_tokenisation`
 
-### S141 · rerank 复用 chat 模型，但它是一次**独立调用**
+### S141 · rerank 首选专业 reranker，没配则退回 chat 模型
 
 **服务** [R40](../req/资料检索.md)
 
-**规格** 三条，缺一不可：
+**规格** 两条路，**配了就走上面那条**：
+
+| | 能做什么 | 要什么 |
+|---|---|---|
+| **专业 reranker**（cross-encoder） | 排序**并且**给相关度分——**能否决** | 一个额外端点 |
+| **chat 模型**（`rerank.yaml`） | 只能排序，**不能否决** | 什么都不要 |
+
+四家走同一个接口（`corpus/rerankers.py`）：`cohere` / `jina` / `voyage` / `qwen`。
+它们的结果项形状一致（`index` + `relevance_score`），差别只在 URL、请求体、
+响应外层三处。家数名写错**当场报错**，不猜也不回落（[P29](../Principles.md)）。
+
+**分数不可跨家比较**，所以 `Scored` 带着 `provider`：任何阈值都必须绑着它是谁给的。
+这是 [S148](#s148) 已经吃过一次的亏（BM25 原始分不能当阈值），换个地方又出现——
+Cohere 的 0.5 和 Voyage 的 0.5 不是一回事，而**换一家照抄阈值不会有任何地方报错**。
+
+走 chat 模型那条路时，三条约束不变：
 
 1. **独立调用。** 不接在 director 的对话后面，不进它的 tool loop——
    它是一次干净的、只看 [query + 候选段落] 的调用。
 2. **独立的缓存空间。** 不传 session 的 id，用它自己的。
 3. **提示词归「单次调用」那一类**，不归任何 agent（见 [S147](#s147)）。
+   排序而不是逐段打分：给它全部候选让它**排个序**，不问「这一段几分」。
 
-排序而不是逐段打分：给它全部候选让它**排个序**，不问「这一段几分」。
-
-**不做** 引入 cross-encoder 端点。
+**不做** 把专业 reranker 定成必需；不做在调用方写 `if provider == ...`。
 
 **为什么**
 
+- **为什么改用专业 reranker**：这一条曾经判的是「不引 cross-encoder 端点」，理由是
+  可移植性。**推翻它的是一次实测**——相似度阈值**分不开「答得上」和「同领域但
+  答不上」**（重叠：0.5557–0.7433 对 0.4311–0.5812），而后者正是这条链路最危险的
+  一类：模型拿到几段同领域但答非所问的原文，**会当成答案用**。
+  cross-encoder 在同一批问法上把三档**干净分开**（0.2833 对 0.1594），数据见
+  [TODO.md](../TODO.md)。
+- **可移植性那条顾虑仍然成立，所以留了退路**：没配就退回 chat 模型，不需要任何额外
+  端点。**降级不是拒绝启用**，同 embeddings 那条（[S140](#s140)）。
+- **收下分数不违反 [P10](../Principles.md)**：那一条禁的是**模型的开放判断**——
+  让通用 chat 模型自由打分，分数从哪来无从追究。cross-encoder 的分数是一个专门
+  训练来估相关度的模型的输出，是**测量**，不是它临场的意见。
+  而分数正是排序做不到的那件事：**它让「一条都不合适」成为可能**。
 - **独立调用**：接在 director 对话后面的话，它会读到整轮推演，
   于是"哪一段最相关"变成"哪一段最符合我已经想好的走向"——那是自我确认（同 [P20](../Principles.md)）。
 - **独立缓存**：它的静态前缀（排序指令）跨会话完全相同，独占一个空间能最大化复用；
   而混进 session 的空间只会**污染那边的缓存命中率**——
   这个项目已经栽过一次「所有会话挤在同一个缓存空间里」（[P29](../Principles.md)）。
-- **排序不打分**：打分是开放判断，排序是受约束的选择（[P10](../Principles.md)）。
-- **不引 cross-encoder**：整个项目只用 `chat completions` 一个面，任何兼容端点都能接。
-  rerank 端点是三件里**可移植性最差的**——自建与本地部署常常没有。
-  代价照单收下：慢一些、多花 token。
 
-**验收** `test_rerank_is_its_own_call_not_appended_to_the_director` · `test_rerank_uses_its_own_cache_space` · `test_rerank_orders_rather_than_scores` · `test_rerank_sees_more_candidates_than_it_returns` · `test_candidates_from_several_corpora_are_reranked_together`
+> ⚠ **接口已经落地，但还没有人调它**：`lookup.py` 现在仍然只走 chat 模型那条路。
+> 接上去要先定「多少分算不合适」，而那个阈值**每家一个数**，见 [TODO.md](../TODO.md)。
+
+**验收** `test_every_provider_returns_the_same_shape` ·
+`test_every_provider_stamps_who_scored_it` · `test_voyage_says_top_k_not_top_n` ·
+`test_qwen_nests_input_and_parameters` · `test_an_unknown_provider_is_refused_at_once` ·
+`test_rerank_is_its_own_call_not_appended_to_the_director` ·
+`test_rerank_uses_its_own_cache_space` · `test_rerank_orders_rather_than_scores` ·
+`test_rerank_sees_more_candidates_than_it_returns` ·
+`test_candidates_from_several_corpora_are_reranked_together`
 
 ### S142 · 递归字符切分：先按自然边界，切不动才按字符
 
@@ -375,9 +406,11 @@ rerank 前后的次序都要记：**它到底有没有起作用，是这条链�
 - **要不要做 query 改写 / 扩展。** 检索成不成取决于 query 问得对不对，
   而改写能提高命中——但那是**又一次模型调用、又一层不确定性**。
   **要什么才能定**：先把基线跑通，量出「模型自己写的 query」的命中率有多低。
-- **rerank 到底有没有用。** 复用 chat 模型做排序，慢且费 token。
-  **要什么才能定**：同一批 query 比较「BM25+向量直接取 top-k」与「rerank 之后取 top-k」，
-  按 [P27](../Principles.md) 先量方差。
+- **「多少分算不合适」每家一个数。** 专业 reranker 的分数不可跨家比较，
+  所以否决阈值**不能有一个全局默认值**——那正是 [S148](#s148) 反对拿 BM25 原始分
+  当阈值的同一条罪。qwen/`gte-rerank-v2` 量过一次（分界在 0.16–0.28 之间），
+  另外三家一个数都没有。
+  **要什么才能定**：每接一家，用同一批分三类的问法各量一次。
 - **RRF 的 `k` 该取多少。** 60 是通用值，**这个项目一次都没量过**。
   **要什么才能定**：一批有标准答案的 query，比较不同 `k` 下的命中位次——
   而按 P27，先得量出同一份配置下这个指标自己的抖动有多大。

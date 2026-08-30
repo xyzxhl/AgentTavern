@@ -56,6 +56,23 @@ class Settings(BaseSettings):
     而症状只是"检索总是查不到"。
     """
 
+    rerank_provider: str = ""
+    """哪一家的 reranker：`cohere` / `jina` / `voyage` / `qwen`（S141）。
+
+    **留空 = 用 chat 模型重排**（`corpus/rerank.py`），那一版只能排序、不能否决，
+    但它不需要任何额外端点。同 embeddings 那条：**降级不是拒绝启用**。
+
+    OpenAI SDK 没有 rerank 这个面，各家形状自己定，所以这里要指名道姓；
+    写了不认得的名字**当场报错**，不猜。
+    """
+
+    rerank_base_url: str = ""
+    """留空则用那一家的官方地址。自建或代理才需要填。"""
+
+    rerank_api_key: str = ""
+    rerank_model: str = ""
+    """**留空同样是不启用**——不去拿别处的模型名猜一个。"""
+
     data_dir: Path = Path("data")
 
     stream: bool = True

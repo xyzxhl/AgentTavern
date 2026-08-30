@@ -105,6 +105,8 @@ backend/agenttavern/
   agents/         director / writer / state_manager / goal_manager
                   + summarize（摘要）/ postrun（归段追问）/ replay（上下文重建）
                   summarize 不是 agent，是一次单次调用（S147）
+  corpus/         外部资料检索：切块、BM25、向量、混合、rerank
+                  rerankers.py 是四家 reranker 端点的统一接口（S141）
   prompting/      提示词 YAML + 装配器。约定见 prompting/README.md
   orchestration/  一个 run 的时序、归段、eval 采样标记
   server/         FastAPI 入口、WS 协议、SessionRunner
