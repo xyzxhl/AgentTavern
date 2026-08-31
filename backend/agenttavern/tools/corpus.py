@@ -45,7 +45,13 @@ async def _corpus_search(ctx: RunContext, params: CorpusSearchParams) -> ToolRes
     ready = {s.corpus_id for s in sources}
     waiting = [c.name for c in ctx.repo.corpora() if c.corpus_id not in ready]
 
-    lookup = await look_up(sources, query=params.query, gateway=ctx.gateway, embedder=ctx.embedder)
+    lookup = await look_up(
+        sources,
+        query=params.query,
+        gateway=ctx.gateway,
+        embedder=ctx.embedder,
+        reranker=ctx.reranker,
+    )
     return ToolResult(
         content=_receipt(lookup, waiting),
         label=_label(lookup),

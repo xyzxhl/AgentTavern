@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Literal, cast
 
 from ..agents import GoalStep, advance_goal, sync_conversation
+from ..corpus.rerankers import Reranker
 from ..corpus.search import EmbedderLike
 from ..llm import LLMGateway, Usage
 from ..models import (
@@ -87,10 +88,14 @@ class SessionRunner:
         stream: bool = True,
         persist_trace: bool = False,
         embedder: EmbedderLike | None = None,
+        reranker: Reranker | None = None,
     ) -> None:
         self._repo = repo
         self._gateway = gateway
         self._broadcast = broadcast
+        self._reranker = reranker
+        """专业 reranker（S141）。**`None` 时退回 chat 模型重排**——只能排序，
+        不能否决。配了它，「同领域但答不上」那一档才拦得住。"""
         self._embedder = embedder
         """资料检索里向量那一路的客户端（S140）。**`None` 是常态**：没配
         embeddings 时那条链路退回纯 BM25，不是拒绝启用。
@@ -344,6 +349,7 @@ class SessionRunner:
                 session,
                 self._gateway,
                 embedder=self._embedder,
+                reranker=self._reranker,
                 # 不传 registry：工具面依赖各 agent YAML 里的开关与 worldinfo 模式，
                 # 两者都可能被用户改，必须每轮重新组装。
                 # **来源要标注**（S102）：goal_manager 靠它分辨"剧情偏了是我推错了"

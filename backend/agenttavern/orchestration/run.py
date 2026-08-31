@@ -19,6 +19,7 @@ from ..agents.replay import without_reasoning
 from ..agents.state_manager import run_state_manager
 from ..agents.summarize import MAX_SEGMENT_RUNS, summarize_text
 from ..agents.writer import run_writer
+from ..corpus.rerankers import Reranker
 from ..corpus.search import EmbedderLike
 from ..llm import LLMGateway, Message, Usage
 from ..models import (
@@ -65,6 +66,7 @@ async def execute_run(
     on_delta: RunDelta | None = None,
     run_id: str | None = None,
     embedder: EmbedderLike | None = None,
+    reranker: Reranker | None = None,
 ) -> RunOutcome:
     """``run_id`` 由调用方指定时，**这一轮开始之前发生的事也能挂在它名下**。
 
@@ -112,8 +114,10 @@ async def execute_run(
         ask_user=ask_user,
         inbox=inbox,
         on_delta=on_delta,
-        # 没配 embeddings 时它就是 `None`，资料检索退回纯 BM25（S140）。
+        # 没配 embeddings 时它就是 `None`，资料检索退回纯 BM25（S140）；
+        # 没配 reranker 时退回 chat 模型重排（S141）。**两条都是降级，不是拒绝启用。**
         embedder=embedder,
+        reranker=reranker,
         # state 阶段被打断时，已经写下的那几笔是**已经完成的动作**，不必重来（S48）。
         staged_delta=draft.staged_delta if draft and stage is RunStage.STATE else StateDelta(),
     )

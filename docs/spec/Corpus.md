@@ -260,8 +260,23 @@ Cohere 的 0.5 和 Voyage 的 0.5 不是一回事，而**换一家照抄阈值�
   而混进 session 的空间只会**污染那边的缓存命中率**——
   这个项目已经栽过一次「所有会话挤在同一个缓存空间里」（[P29](../Principles.md)）。
 
-> ⚠ **接口已经落地，但还没有人调它**：`lookup.py` 现在仍然只走 chat 模型那条路。
-> 接上去要先定「多少分算不合适」，而那个阈值**每家一个数**，见 [TODO.md](../TODO.md)。
+**否决阈值 `corpus.min_relevance` 绑死在「哪一家 + 哪个模型」上**，换任何一样
+都要重量。当前值量的是 **qwen / qwen3-rerank**：真实链路上 20 个 query，
+「答得上」0.7561–0.9433、「同领域答不上」0.2561–0.4307，取空档中点 **0.6**。
+**偏高是有意的**——漏掉一条真的，回执是「这次没找到」，模型能换个说法再查；
+放过一条假的，它会当成事实写进剧情，**而且看不见**（[S148](#s148)）。
+
+**「否决」和「出错」是两件事**：
+
+| | 是什么 | 结果 |
+|---|---|---|
+| **否决** | 看过了，都不够相关 | 返回空 → 回执说「这次没找到」（[S139](#s139)） |
+| **出错** | 根本没看成 | **退回融合排序，一条都不丢** |
+
+把出错当成否决，一次网络抖动就会让模型收到一句**假的结论**——同 S139 那条硬线
+（不下没有资格下的断言）。出错时也**不改用 chat reranker 重试**：那要多花一次
+调用，而且更糟的是**一次网络抖动会悄悄换掉产出这份排序的算法**
+（[P28](../Principles.md)），此后任何一次前后对照都不成立。
 
 **验收** `test_every_provider_returns_the_same_shape` ·
 `test_every_provider_stamps_who_scored_it` · `test_voyage_says_top_k_not_top_n` ·
@@ -269,6 +284,13 @@ Cohere 的 0.5 和 Voyage 的 0.5 不是一回事，而**换一家照抄阈值�
 `test_rerank_is_its_own_call_not_appended_to_the_director` ·
 `test_rerank_uses_its_own_cache_space` · `test_rerank_orders_rather_than_scores` ·
 `test_rerank_sees_more_candidates_than_it_returns` ·
+`test_everything_below_the_threshold_is_a_miss` ·
+`test_only_the_ones_above_the_threshold_come_back` ·
+`test_the_threshold_comes_from_config` ·
+`test_the_scores_and_who_gave_them_land_in_the_trace` ·
+`test_a_rerank_failure_degrades_to_the_fusion_order` ·
+`test_a_failure_does_not_fall_back_to_the_chat_reranker` ·
+`test_without_a_reranker_the_chat_path_still_runs` ·
 `test_candidates_from_several_corpora_are_reranked_together`
 
 ### S142 · 递归字符切分：先按自然边界，切不动才按字符

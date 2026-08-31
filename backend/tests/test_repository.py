@@ -190,6 +190,7 @@ def test_config_yaml_covers_every_knob() -> None:
         "corpus.min_coverage": (LIMITS.corpus.min_coverage, lookup.MIN_COVERAGE),
         "corpus.min_similarity": (LIMITS.corpus.min_similarity, lookup.MIN_SIMILARITY),
         "corpus.rrf_k": (LIMITS.corpus.rrf_k, lookup.RRF_K),
+        "corpus.min_relevance": (LIMITS.corpus.min_relevance, lookup.MIN_RELEVANCE),
         "corpus.min_chars_per_page": (
             LIMITS.corpus.min_chars_per_page,
             sources.MIN_CHARS_PER_PAGE,

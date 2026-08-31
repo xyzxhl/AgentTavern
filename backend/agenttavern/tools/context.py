@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from ..corpus.rerankers import Reranker
 from ..corpus.search import EmbedderLike
 from ..llm import LLMGateway, OnDelta
 from ..models import Actor, Session, StateDelta, WorldState
@@ -38,6 +39,14 @@ class RunContext:
 
     parent_id: str | None = None
     """本 run 挂在哪个节点下。历史与状态沿这条路径读取（S42）。"""
+
+    reranker: Reranker | None = None
+    """专业 reranker（S141）。**`None` 时退回 chat 模型重排**——那一版只能排序、
+    不能否决，但它不需要任何额外端点。
+
+    配了它，「同领域但答不上」那一档才拦得住：相似度阈值分不开那一档
+    （量过，两条分布重叠），而 cross-encoder 的分能。
+    """
 
     embedder: EmbedderLike | None = None
     """资料检索里向量那一路的客户端（S140）。
