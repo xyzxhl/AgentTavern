@@ -79,6 +79,16 @@ export function CorpusLibrary(): JSX.Element {
     });
   }
 
+  // **通知会过期，所以它得自己消失。**
+  //
+  // 「收下了 X，正在建索引」在几秒之后就是**一句假话**——那时卡片上已经写着
+  // 「可用」。留着它比不说更糟：屏幕上同时有两个互相矛盾的说法。
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(""), 4000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
   async function remove(id: string, name: string, users: string[]): Promise<void> {
     // **有故事挂着也照删，但按下之前要看到后果**（S136）。
     // 拦不住的事就更得说清楚——资料是可选的增援不是地基，删了只少一条检索路。
@@ -128,7 +138,7 @@ export function CorpusLibrary(): JSX.Element {
                 ——处理一份大资料要花时间也要花钱，而你可能只是在文件夹里临时改了点什么。
               </p>
               <div className="space-y-1.5">
-                {pending.map((change) => (
+                {ordered(pending).map((change) => (
                   <Change
                     key={`${change.kind}:${change.source_name}`}
                     change={change}
@@ -229,6 +239,18 @@ function Folder({ path }: { path: string }): JSX.Element {
       </p>
     </section>
   );
+}
+
+/**
+ * **能动手的排前面，不能动手的沉到底。**
+ *
+ * `unsupported` 是**从这一页永远解决不了**的一条（要去文件夹里把那个文件删掉
+ * 或换个格式），而它按文件名排序时常常压在真正要处理的东西上面——
+ * 于是每次打开这一页，第一眼看到的都是那条帮不上忙的。
+ */
+function ordered(pending: PendingChange[]): PendingChange[] {
+  const rank = (kind: PendingChange["kind"]) => (kind === "unsupported" ? 1 : 0);
+  return [...pending].sort((a, b) => rank(a.kind) - rank(b.kind));
 }
 
 const KIND: Record<PendingChange["kind"], { label: string; hint: string }> = {
@@ -342,6 +364,12 @@ function Card({
             }`}
         {corpus.source_name ? ` · 来自 ${corpus.source_name}` : " · 手工导入（没有源文件）"}
       </p>
+
+      {/* **没有会话时说清为什么挂不了。** 按钮直接消失的话，用户会以为
+          这一页坏了，或者以为资料本来就不能挂到故事上。 */}
+      {!sessionId && (
+        <p className="mt-1 text-[11px] text-dim/70">先在左侧开一局故事，才能把它挂上去。</p>
+      )}
 
       <div className="mt-2.5 flex flex-wrap gap-1.5">
         {sessionId && (

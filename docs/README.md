@@ -55,9 +55,9 @@ state_manager（tool loop，run 末）
 | | |
 |---|---|
 | [Workflow.md](Workflow.md) | **改动怎么落地**：三层怎么保持一致、什么时候停下来问。**动手前先读这份** |
-| [req/](req/) | **45 条需求**（R1–R45），按用户场景分七篇 |
-| [spec/](spec/) | **147 条规格**（S1–S147），按机制对象分十五篇。每条带服务的 R、不做什么、为什么、验收 |
-| [Principles.md](Principles.md) | **35 条判据**（P1–P35）：从 req 推 spec 时用的工具箱 |
+| [req/](req/) | **48 条需求**（R1–R48），按用户场景分八篇 |
+| [spec/](spec/) | **154 条规格**（S1–S154），按机制对象分十五篇。每条带服务的 R、不做什么、为什么、验收 |
+| [Principles.md](Principles.md) | **36 条判据**（P1–P36）：从 req 推 spec 时用的工具箱 |
 | [Glossary.md](Glossary.md) | **术语**。每一条都对应一次实际的澄清 |
 | [Ideas.md](Ideas.md) | **还没成形的想法**。层次在 req 之上，想清楚了就下沉成 req |
 | [TODO.md](TODO.md) | **三层对不齐的地方**。允许存在，但不许藏在正文里 |
@@ -74,7 +74,7 @@ state_manager（tool loop，run 末）
 | [State.md](spec/State.md) | 为何不预设任何维度；记什么、不记什么 |
 | [Branching.md](spec/Branching.md) | 分支树、"状态是路径的函数"、打断与续跑 |
 | [Retrieval.md](spec/Retrieval.md) | 规则检索的准入标准、全量索引 + 按需展开、跨轮上下文 |
-| [Corpus.md](spec/Corpus.md) | 外部资料检索。**尽力而为的一层**，写在代码前面 |
+| [Corpus.md](spec/Corpus.md) | 外部资料检索。**尽力而为的一层**——它是唯一不满足「无损降维」的检索路 |
 | [Worldbook.md](spec/Worldbook.md) | 设定库：条目分类、两路投影、交换格式 |
 | [Prompting.md](spec/Prompting.md) | 提示词层：三类条目、所见即所得、档位取值住哪 |
 | [Prose.md](spec/Prose.md) | 文风落成系统行为的那四条 |
@@ -86,11 +86,11 @@ state_manager（tool loop，run 末）
 
 ## 状态
 
-**后端基本完成**，可独立运行（331 项测试，ruff / mypy strict 全绿）。四个 agent、分支与挂起、三项可选能力（goal / summarize / ask_question）都在真实模型上跑通过。剩余为三类：
+**后端基本完成**，可独立运行（506 项测试，ruff / mypy strict 全绿）。四个 agent、分支与挂起、三项可选能力（goal / summarize / ask_question）都在真实模型上跑通过。剩余为三类：
 
 1. **需要实验数据**的两项——文风的结构层能否留在 writer 侧、细纲的粒度下限。二者是同一张力的两端，须一起测。**后者实测已成问题**：`chapters` 12 轮里 `ratio_avg` 只有 1.21、最低 0.70（正文比细纲还短），细纲里出现了描写。
 2. **仍开放的设计**——实体级检索的"信息需求在推演中才产生"这个鸡生蛋没解决，只是从代码手里交给了模型。
-3. **前端已实现，尚未在浏览器里走过一遍**——会话、分支与回头、设定库、资料库、提示词管理、全局设置都在，验证靠的是 TestClient、真实服务加 curl、`tsc` 与构建，**没有人工点过界面**。
+3. **前端已实现，只有资料库那一页在浏览器里走过**——会话、分支与回头、设定库、提示词管理、全局设置的验证靠的是 TestClient、真实服务加 curl、`tsc` 与构建，**没有人工点过**。资料库点过一遍（明暗两套主题），当场揪出三处只有看得见才发现的问题——**那三处类型检查和接口测试全都发现不了**。
    开发期的 Vite 代理表现在由 `tests/test_dev_proxy.py` 双向对账：漏一条前缀，那一页会拿到 `index.html` **且状态码 200**，而生产构建里一切正常——**所以它能坏很久没人发现**。`/agents` 改名成 `/prompts` 之后就这么坏过好几个提交。
 
 三处**已知未验证**：摘要的"越界后换成摘要"从未被真实模型触发过（12 轮才用掉 `budget_chars` 的 15%）；`ask_question` 在刻意造出的岔路上 9 次只问 3 次；渐进式披露在几百实体下的规模表现。
