@@ -23,6 +23,7 @@ from typing import Any
 from pydantic import TypeAdapter
 
 from ..models import Session, Worldbook, WorldbookBundle, WorldbookEntry
+from ..models.corpus import Corpus
 from .protocol import ClientMessage, ServerMessage
 
 TITLE = "AgentTavern 协议"
@@ -37,7 +38,8 @@ def export_schema() -> dict[str, Any]:
 
     `Session`、`Worldbook` 与 `WorldbookEntry` 走的是 REST 不是 WS，但它们同样是
     前后端契约的一部分——会话列表、元指令编辑、能力开关、设定管理都读它们。
-    **`Worldbook` 是一级资产**（S63），有自己的管理界面，所以它的类型也要生成。
+    **`Worldbook` 与 `Corpus` 都是一级资产**（S63/S136），各有各的管理界面，
+    所以它们的类型也要生成——手写一份对照物只能保证写下来那一刻是对的。
     """
     client = TypeAdapter(ClientMessage).json_schema(ref_template="#/$defs/{model}")
     server = TypeAdapter(ServerMessage).json_schema(ref_template="#/$defs/{model}")
@@ -45,6 +47,7 @@ def export_schema() -> dict[str, Any]:
     worldbook = TypeAdapter(WorldbookEntry).json_schema(ref_template="#/$defs/{model}")
     bundle = TypeAdapter(WorldbookBundle).json_schema(ref_template="#/$defs/{model}")
     book = TypeAdapter(Worldbook).json_schema(ref_template="#/$defs/{model}")
+    corpus = TypeAdapter(Corpus).json_schema(ref_template="#/$defs/{model}")
 
     defs: dict[str, Any] = {}
     defs.update(client.pop("$defs", {}))
@@ -53,10 +56,12 @@ def export_schema() -> dict[str, Any]:
     defs.update(worldbook.pop("$defs", {}))
     defs.update(bundle.pop("$defs", {}))
     defs.update(book.pop("$defs", {}))
+    defs.update(corpus.pop("$defs", {}))
     defs["Session"] = session
     defs["WorldbookEntry"] = worldbook
     defs["WorldbookBundle"] = bundle
     defs["Worldbook"] = book
+    defs["Corpus"] = corpus
 
     # **两个联合本身也进 `$defs`**，根对象只 `$ref` 过去。生成器按 `$defs` 的键
     # 命名类型；写成根的内联属性的话，它们会变成 `Protocol["ClientMessage"]`
@@ -75,6 +80,7 @@ def export_schema() -> dict[str, Any]:
             "WorldbookEntry": {"$ref": "#/$defs/WorldbookEntry"},
             "WorldbookBundle": {"$ref": "#/$defs/WorldbookBundle"},
             "Worldbook": {"$ref": "#/$defs/Worldbook"},
+            "Corpus": {"$ref": "#/$defs/Corpus"},
         },
         "required": [
             "ClientMessage",
@@ -83,6 +89,7 @@ def export_schema() -> dict[str, Any]:
             "WorldbookEntry",
             "WorldbookBundle",
             "Worldbook",
+            "Corpus",
         ],
         "additionalProperties": False,
         "$defs": defs,

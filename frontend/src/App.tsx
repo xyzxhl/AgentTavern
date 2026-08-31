@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 
 import { apply, load, watchSystem } from "./appearance";
-import { PromptsPage } from "./components/PromptsPage";
 import { Composer } from "./components/Composer";
+import { CorpusLibrary } from "./components/CorpusLibrary";
 import { DeveloperPanel } from "./components/DeveloperPanel";
 import { GoalBar } from "./components/GoalBar";
 import { Notice } from "./components/Notice";
+import { PromptsPage } from "./components/PromptsPage";
 import { QuestionPrompt } from "./components/QuestionPrompt";
 import { SessionList } from "./components/SessionList";
 import { SettingsPage } from "./components/SettingsPage";
@@ -46,6 +47,7 @@ export function App(): JSX.Element {
       <main className="relative flex min-w-0 flex-1 flex-col">
         {page.kind === "story" ? <Story /> : null}
         {page.kind === "worldbooks" ? <WorldbookLibrary /> : null}
+        {page.kind === "corpora" ? <CorpusLibrary /> : null}
         {page.kind === "agents" ? <PromptsPage group="agent" /> : null}
         {page.kind === "calls" ? <PromptsPage group="call" /> : null}
         {page.kind === "settings" ? <SettingsPage /> : null}

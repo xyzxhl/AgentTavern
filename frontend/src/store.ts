@@ -21,6 +21,9 @@ export type RunPhase = "idle" | "running" | "asking";
 export type Page =
   | { kind: "story" }
   | { kind: "worldbooks"; open?: string }
+  // 资料库：**和设定库并列的另一类一级资产**（S136）。它有自己的入口，
+  // 因为一份资料能给好几局故事用——那件事只在这一页看得见。
+  | { kind: "corpora" }
   // 提示词分两类，**各占一个入口**（S147）：agent 是一个角色，单次调用是一次
   // 动作。塞进同一页的一个小标题底下，读起来就是「agent，以及一些附属的东西」。
   | { kind: "agents"; open?: string }

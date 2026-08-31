@@ -2,6 +2,7 @@
 
 import type {
   ClientMessage,
+  Corpus,
   Node,
   ServerMessage,
   Session,
@@ -10,6 +11,33 @@ import type {
   WorldbookBundle,
   WorldbookEntry,
 } from "./protocol";
+
+/** 列表里的一份资料：**带上「谁在用」**——删之前必须看得见这件事（S136）。 */
+export interface CorpusCard {
+  corpus: Corpus;
+  sessions: string[];
+}
+
+/** 文件夹和知识库对不上的一处（S151）。**这是待办，不是已经发生的事**——
+ * 更新与否由用户按下才发生。 */
+export interface PendingChange {
+  kind: "new" | "modified" | "renamed" | "deleted" | "unsupported";
+  source_name: string;
+  /** `new` 与 `unsupported` 时为空——那时还没有对应的资料。 */
+  corpus_id: string;
+  /** `unsupported` 时说清为什么。 */
+  reason: string;
+  /** `deleted` 时：哪几局故事挂着它。**按下之前就要看到后果**（S136）。 */
+  sessions: string[];
+}
+
+export interface CorpusLibrary {
+  corpora: CorpusCard[];
+  pending: PendingChange[];
+  /** 源文件夹的绝对路径。**位置固定不给配**（S149），所以这里只是告诉用户它在哪。 */
+  folder: string;
+  broken: string[];
+}
 
 /** 列表里的一份设定：**带上「谁在用」**——删之前必须看得见这件事（S63）。 */
 export interface WorldbookCard {
@@ -150,6 +178,34 @@ export const api = {
   /** 有故事开在上面时服务端返回 409——删掉的话那几局会当场失忆。 */
   deleteWorldbook: (id: string) =>
     json<{ deleted: string }>(`/worldbooks/${id}`, { method: "DELETE" }),
+
+  // -- 外部资料（S136/S149）------------------------------------------------
+  //
+  // **用户那一侧的入口是文件夹**：把文件丢进 `folder`，列表里就会出现一条待办。
+  // 系统自己不动手，更新由这里几个动作触发。
+  listCorpora: () => json<CorpusLibrary>("/corpora"),
+  /** 把文件夹里的一个文件收进知识库并开始处理（待办里的「新文件」）。 */
+  importCorpus: (sourceName: string) =>
+    json<Corpus>("/corpora/import", {
+      method: "POST",
+      body: JSON.stringify({ source_name: sourceName }),
+    }),
+  /** 重新处理：**把源文件重新读进快照再建一遍索引**（待办里的「已修改」）。 */
+  rebuildCorpus: (id: string) => json<Corpus>(`/corpora/${id}/rebuild`, { method: "POST" }),
+  /** 只更新记录，不重建——内容没变，索引就还是对的（待办里的「改名」）。 */
+  renameCorpusSource: (id: string, sourceName: string) =>
+    json<Corpus>(`/corpora/${id}/rename`, {
+      method: "POST",
+      body: JSON.stringify({ source_name: sourceName }),
+    }),
+  /** 删除。**有故事挂着也照删**（S136），受影响的那几局在返回值里。 */
+  deleteCorpus: (id: string) =>
+    json<{ deleted: string; affected_sessions: string[] }>(`/corpora/${id}`, { method: "DELETE" }),
+
+  attachCorpus: (sessionId: string, corpusId: string) =>
+    json<Corpus[]>(`/sessions/${sessionId}/corpora/${corpusId}`, { method: "PUT" }),
+  detachCorpus: (sessionId: string, corpusId: string) =>
+    json<Corpus[]>(`/sessions/${sessionId}/corpora/${corpusId}`, { method: "DELETE" }),
 
   saveEntry: (id: string, entry: WorldbookEntry) =>
     json<WorldbookEntry>(`/worldbooks/${id}/entries`, { method: "PUT", body: JSON.stringify(entry) }),

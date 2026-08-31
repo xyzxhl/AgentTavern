@@ -199,6 +199,25 @@ export type Note = string;
 export type Entries = WorldbookEntry[];
 export type Id4 = string;
 export type Name3 = string;
+export type CorpusId = string;
+export type Name4 = string;
+export type Note1 = string;
+export type Chars = number;
+export type SourceName = string;
+export type SourceHash = string;
+export type Encoding = string;
+/**
+ * 索引建到哪一步了（S144）。
+ *
+ * **三种状态都要能被说出来**：查一份还在建的资料，回执得写「还在建」，
+ * 不能返回空列表——空会被读成「资料里没有」。
+ */
+export type BuildState = "pending" | "building" | "ready" | "failed";
+export type ChunksDone = number;
+export type ChunksTotal = number;
+export type Embedded = boolean;
+export type Error = string;
+export type CreatedAt2 = string;
 
 export interface AgentTavern {
   ClientMessage: ClientMessage;
@@ -207,6 +226,7 @@ export interface AgentTavern {
   WorldbookEntry: WorldbookEntry;
   WorldbookBundle: WorldbookBundle;
   Worldbook: Worldbook;
+  Corpus: Corpus;
 }
 /**
  * 提交一条用户输入，**开新的一轮**（F3a「推进」）。
@@ -714,4 +734,25 @@ export interface WorldbookBundle {
 export interface Worldbook {
   id?: Id4;
   name?: Name3;
+}
+/**
+ * 一份资料的元信息。**正文不在这里**——它单独落一个纯文本文件（S143）。
+ */
+export interface Corpus {
+  corpus_id?: CorpusId;
+  name?: Name4;
+  note?: Note1;
+  chars?: Chars;
+  source_name?: SourceName;
+  source_hash?: SourceHash;
+  encoding?: Encoding;
+  build?: BuildStatus;
+  created_at?: CreatedAt2;
+}
+export interface BuildStatus {
+  state?: BuildState;
+  chunks_done?: ChunksDone;
+  chunks_total?: ChunksTotal;
+  embedded?: Embedded;
+  error?: Error;
 }

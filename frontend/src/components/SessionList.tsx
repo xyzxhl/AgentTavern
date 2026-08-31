@@ -61,6 +61,15 @@ export function SessionList(): JSX.Element {
           page={{ kind: "worldbooks" }}
           go={go}
         />
+        {/* **资料库和设定库并列**（S136）：都是一级资产，都能给好几局故事用。
+            但它们回答的是不同的问题——设定是"这个世界是什么"（可能每轮在场），
+            资料是"别人写的参考"（只在被查到时进上下文）。 */}
+        <Entry
+          label="资料库"
+          active={page.kind === "corpora"}
+          page={{ kind: "corpora" }}
+          go={go}
+        />
         <Entry
           label="全局设置"
           active={page.kind === "settings"}
