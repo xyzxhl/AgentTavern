@@ -174,6 +174,14 @@ const LABEL: Record<string, string> = {
 
 const TAB = { context: "上下文", tools: "工具", specials: "特殊" };
 
+/** 一条消息能以谁的身份发出去。**没有 `tool`**：那个 role 的消息必须配着一次
+ * 真实的工具调用（`tool_call_id`），装配器摆不出来。 */
+const ROLES: [string, string][] = [
+  ["system", "system"],
+  ["user", "user"],
+  ["assistant", "assistant"],
+];
+
 const KIND: Record<Section["type"], string> = {
   text: "text",
   context: "ctx",
@@ -247,11 +255,9 @@ function Sections({
             </span>
             <span className="w-16 shrink-0 font-mono text-[10px] text-dim">{item.role ?? "—"}</span>
             <span className="min-w-0 flex-1 truncate text-xs text-dim">{preview(item)}</span>
-            {item.type !== "context" && (
-              <button className="btn" onClick={() => setOpen(open === at ? null : at)}>
-                ✎
-              </button>
-            )}
+            <button className="btn" onClick={() => setOpen(open === at ? null : at)}>
+              ✎
+            </button>
             <button className="btn" onClick={() => remove(at)} title="删掉这一条">
               ✕
             </button>
@@ -259,6 +265,29 @@ function Sections({
 
           {open === at && (
             <div className="border-t border-line p-2">
+              {/* **role 三种都能选**（R31）：它决定这条消息以谁的身份发出去，
+                  和正文是同一件事的两半。`context` 节的内容由系统生成，
+                  但它的 role 同样是模型收到的东西，所以那一类也能改。
+
+                  **本来就没有 role 的那一节不给选**：前情是一串消息，每条自带
+                  自己的 role，给它写一个装配器会当场拒绝。判据取自数据本身
+                  （这一节有没有 role），不按 source 的名字硬编码——按名字猜的话，
+                  加一种消息式的 context 就要同时改两处，而漏改的症状是一个
+                  选了必炸的选项。 */}
+              {item.role !== undefined ? (
+                <div className="mb-2 flex items-center gap-1.5">
+                  <span className="text-[11px] text-dim">以谁的身份：</span>
+                  <Pick<string>
+                    value={item.role}
+                    options={ROLES}
+                    onChange={(role) => edit(at, { role })}
+                  />
+                </div>
+              ) : (
+                <p className="mb-2 text-[11px] text-dim">
+                  这一节是一串消息，每条自带自己的 role，所以它没有这个设置。
+                </p>
+              )}
               {item.type === "text" && (
                 <Body value={item.body ?? ""} onChange={(body) => edit(at, { body })} />
               )}
@@ -279,7 +308,7 @@ function Sections({
 }
 
 function preview(item: Section): string {
-  if (item.type === "context") return `${item.source}（内容由系统生成，只有位置可调）`;
+  if (item.type === "context") return `${item.source}（内容由系统生成，位置和 role 可调）`;
   if (item.type === "choice") return `${item.name} · 当前：${item.selected}`;
   return (item.body ?? "").replace(/\s+/g, " ").slice(0, 60);
 }
