@@ -440,85 +440,25 @@ async def test_specs_are_valid_json_schema(reg) -> None:
         assert spec.to_wire()["type"] == "function"
 
 
-def test_state_write_says_what_to_record() -> None:
-    """判据在 **state_manager 的提示词**里，不在工具描述里（S27）。
+def test_the_criteria_are_not_in_the_tool_description() -> None:
+    """判据归 **state_manager 的提示词**；工具描述只说「作用 + 参数格式」（S27）。
 
-    它以前整整两千字堆在 `state_write` 的描述里。工具描述该只说「作用 + 参数
-    格式」——判据是提示词，而提示词该在 YAML 里，用户能改。
+    它以前整整两千字堆在 `state_write` 的描述里。搬走的理由是**提示词正文归用户**：
+    YAML 那一份用户随时能改，工具描述里那一份改不到——两份并存时，用户改完以为
+    生效了，实际另一份还在原地顶着。
 
-    **判据本身一个字没变**，下面逐条钉的还是它：
+    ## 这条测试只钉「那边没有第二份副本」
 
-    **state 是 history 的捷径，不是第二份记录**（S36）。这一句定位撑起了整个判据：
-    它是**双条件**的，两条各排掉一类实测出现过的错记——
+    它以前还逐句钉了提示词里写着什么（"约束类""悬置类""兑现了"……）。
+    **那些断言已经删掉**：提示词正文是用户的东西，用户改一次措辞就红一次，
+    而红的不是缺陷——是他行使了那份所有权。
 
-    - 「照片朝向」过不了"约束后面能写什么"；
-    - 「本轮剧情摘要」过不了"值得随时看见"（前情里就是它）。
-
-    单说"这是状态不是事件"两类都拦不住：物件朝向确实是状态。
-    （第三类误解「把设定抄进 state」不靠描述解决，靠 worldbook 种子移除诱因，S68。）
+    代价说在明处：S34/S35 的判据现在**没有任何测试守着**，已记进 TODO。
     """
-    # **顶层命名块没了**（R31）：正文内联进了 section，所以这里从装配出来的
-    # 整串消息里认那一节——认头一句，不钉措辞。
-    from agenttavern.models import WorldState
-    from agenttavern.prompting import state_manager_prompt
-
-    messages = state_manager_prompt(WorldState()).messages
-    desc = next(m.content or "" for m in messages if "**事情本身已经记在细纲" in (m.content or ""))
-
-    # 工具描述那侧只剩一句话——**判据不再有第二个副本**。
     tool_desc = next(t.description for t in build_state_tools() if t.name == "state_write")
     assert len(tool_desc) < 60
     assert "约束类" not in tool_desc
-
-    # 定位：捷径而非记录。删键不丢信息这条推论也要在，否则模型不敢删。
-    assert "不是第二份记录" in desc
-    assert "删了不算丢东西" in desc
-
-    # 门槛
-    assert "不该为它去翻前情" in desc
-
-    # **两类，忘了的后果不同。** 只有约束类时判据是"会不会出逻辑错误"，
-    # 而契诃夫之枪过不了这一关：忘了它不产生任何矛盾，只会烂尾（S34）。
-    assert "约束类" in desc
-    assert "悬置类" in desc
-    assert "最容易漏的一类" in desc
-    # 判据要够窄，否则布景会被当成伏笔全记进来
-    assert "有人特意让它出现，而它还没有下文" in desc
-    assert "没人在意的东西不是伏笔，是布景" in desc
-    # 悬置项兑现即删，否则欠账清单只增不减
-    assert "兑现了" in desc
-
-    # **存续时长不是判据**：冷却只剩两回合，活不过几轮却必须记（S34 的修正，
-    # 由数据化世界暴露）。这条否定必须在描述里，否则"只在这一两轮有意义的不记"
-    # 这类经验会把资源与冷却一起误杀。
-    assert "存在时间长短不是判据" in desc
-    assert "冷却" in desc
-
-    # 鼓励结构化——不设 schema，但要说清形状（S36）
-    assert "能用数字就别用句子" in desc
-    assert "同类的事用同一套键名" in desc
-    assert "一个键只装一件事" in desc
-    assert "值的形状保持不变" in desc
-    assert "不要记「未明」" in desc
-    # state 只增不减会把重要的几条淹掉
-    assert "该删就删" in desc
-
-    # 实测的真 bug：场景跳到夜里，模型新造了 `林昭.位置` 而没动已有的 `时间`，
-    # 于是 state 里同时是"下午，快收摊"和"当天夜里"——**自相矛盾且不会报错**。
-    # 两个症状同源：旧值没跟着改 + 新建了近义键。
-    assert "过期的值比没有值更糟" in desc
-    assert "先看上面有没有已经在说同一件事的键" in desc
-
-    # 写入冗余在两个世界都是最高的一类（各 40%），证据完全一致：模型把
-    # **这一秒的画面**当状态记（"侧扑已至近前，即将落身"、"她刚把照片推过去"）。
-    # 判据里早就点名禁过这类，说明光加禁令没用——换成一个可执行的自检。
-    assert "下一轮开始时，这条还成立吗" in desc
-    assert "画面归正文" in desc
-
-    # 实测：御剑斩冷却从「三回合」直接跳到「一回合」——中间那轮写进了一个裸键
-    # `冷却`，`沈砚.冷却` 没被递减，下一轮再对账就跳了两格。
-    # **倒计时不会自己走，而漏一轮不报错**，只在几轮后变成一个对不上的数。
-    assert "带倒计时的值每一轮都要重算" in desc
+    assert "悬置" not in tool_desc
 
 
 def test_state_entries_become_the_replay_base(tmp_path: Path) -> None:

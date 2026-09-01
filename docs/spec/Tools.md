@@ -169,7 +169,7 @@
 一个人的描述就有 1906 字，`plan`/`check`/`steer` 三个把 `goal_manager.yaml` 里三节
 逐句重写了一遍。收成 4625 → 1090 字。
 
-**验收** `test_a_tool_carries_its_description_and_its_schema` · `test_state_write_says_what_to_record`
+**验收** `test_a_tool_carries_its_description_and_its_schema` · `test_the_criteria_are_not_in_the_tool_description`
 
 ### S28 · 工具调用失败一律可恢复，不抛出
 
