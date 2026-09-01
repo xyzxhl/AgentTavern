@@ -60,7 +60,9 @@ async def _submit_outline(ctx: RunContext, params: SubmitOutlineParams) -> ToolR
 
 class StateQueryParams(BaseModel):
     paths: list[list[str]] = Field(
-        description='要展开的位置，每个是一条路径，一段一个键（如 `["林", "知情"]`）。'
+        # **不举例子。** 参数描述里的示例键名会被当成摆法照抄，而上下文里已经有
+        # 一份真的 state 摆在那里——那才是该照着写的东西。
+        description="要展开的位置，每个是一条路径，一段一个键。"
     )
 
 
@@ -97,7 +99,7 @@ class StateWriteParams(BaseModel):
     set: dict[str, Any] = Field(
         default_factory=dict,
         description="覆盖写，**深合并**：只动你提到的那几个键，同层别的原样留着。"
-        '从属关系用嵌套表达（`{"林": {"性格": "谨慎"}}`）。值为 null 表示删掉该键。',
+        "从属关系用嵌套表达。值为 null 表示删掉该键。",
     )
     append: dict[str, Any] = Field(
         default_factory=dict,
