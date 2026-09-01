@@ -18,17 +18,13 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ..config import LIMITS
-from ..models import Node, StateDelta
+from ..disclosure import expand, keys_of
+from ..models import StateDelta, WorldbookMode
+from ..models.state import Tree, paths_of
 from ..models.state import label_path as _label
-from ..models.state import paths_of
 from ..prompting import tool_description
 from .base import Tool, ToolOutcome, ToolResult, error
 from .context import RunContext
-
-MAX_READ_CHARS = LIMITS.context.tool_read_chars
-"""单次工具返回的体量上限——防止一次调用撑爆上下文。"""
-
 
 # --------------------------------------------------------------------------
 # 产出与终止
@@ -54,45 +50,75 @@ async def _submit_outline(ctx: RunContext, params: SubmitOutlineParams) -> ToolR
 
 
 # --------------------------------------------------------------------------
-# state
+# 展开：三个域，一份实现（S157）
 # --------------------------------------------------------------------------
+#
+# 折叠时留下的占位符和这里接受的地址**必须是同一套 key**，所以折叠那一半
+# （`disclosure.fold`，由 `prompting/prompts.py` 调用）和展开这一半共用一个模块。
+# 三个工具因此长得一模一样：各自把自己那个域摊成一棵 `key → content` 的树，
+# 剩下的（取、报缺、拼回执）走同一个 `_expand`。
+#
+# **不是一个 `expand(域, 路径)` 工具**：工具面按开关增减（S21），历史关掉时
+# 它的展开工具要跟着消失，而一个大工具只能"注册着但有一半用不了"。
 
 
-class StateQueryParams(BaseModel):
+class ExpandParams(BaseModel):
+    """三个展开工具共用的参数形状：**一条路径一个数组，一段一个键**（S31）。
+
+    不用点分字符串：点号在这个项目里刚被取消掉结构含义，再拿它当寻址语法
+    等于把刚拆掉的歧义装回去，而且键里本来就可能有点。
+    """
+
     paths: list[list[str]] = Field(
         # **不举例子。** 参数描述里的示例键名会被当成摆法照抄，而上下文里已经有
-        # 一份真的 state 摆在那里——那才是该照着写的东西。
+        # 一份真的树摆在那里——那才是该照着写的东西。
         description="要展开的位置，每个是一条路径，一段一个键。"
     )
 
 
-async def _state_query(ctx: RunContext, params: StateQueryParams) -> ToolResult:
-    state = ctx.current_state()
-    found: dict[str, Any] = {}
-    missing: list[str] = []
-    for path in params.paths:
-        value = state.at(path)
-        if value is None:
-            missing.append(_label(path))
-        else:
-            found[_label(path)] = value
+async def _expand(
+    tree: Tree,
+    paths: list[list[str]],
+    *,
+    what: str,
+) -> ToolResult:
+    """按 key 取回内容。**三个域共用**（S157）。
 
-    if not found:
-        # 未知路径是模型可恢复的错误——把现有结构回给它，顺便压键名漂移。
-        available = "、".join(_label(p) for p in state.paths()) or "（无）"
+    一条都没命中时**把可用的 key 整个回给模型**：一是让它下一轮改对，二是顺带
+    压键名漂移——它看见"心情"已经存在，就不会再造一个"情绪"。这是模型可恢复的
+    错误，不是系统故障（S28）。
+
+    **不分页、不按体量截断**：展开就是全给。以前这里各有一套预算和「没给全」的
+    话术，那是在这一层猜"多少算多"；真的超了上下文是整轮失败，不是这一层能补救
+    的事，而一个猜出来的预算会让模型在不知情的情况下少看几段（S26）。
+    """
+    got = expand(tree, paths)
+
+    if got.empty:
+        available = "、".join(keys_of(tree)) or "（无）"
         return error(
-            f"没有这些位置：{'、'.join(missing)}。当前有：{available}",
-            label=f"查 {'、'.join(missing)} 未命中",
+            f"没有这些位置：{'、'.join(got.missing)}。当前有：{available}",
+            label=f"展开{what} {'、'.join(got.missing)} 未命中",
         )
 
-    content = json.dumps(found, ensure_ascii=False)
-    if missing:
-        content += f"\n（不存在的位置：{'、'.join(missing)}）"
+    content = json.dumps(got.found, ensure_ascii=False)
+    if got.missing:
+        content += f"\n（不存在的位置：{'、'.join(got.missing)}）"
     return ToolResult(
         content=content,
-        label=f"查了 {'、'.join(found)}",
-        payload={"found": list(found), "missing": missing},
+        label=f"展开了{what} {'、'.join(got.found)}",
+        payload={"found": list(got.found), "missing": got.missing},
     )
+
+
+# -- state ------------------------------------------------------------------
+
+
+async def _state_query(ctx: RunContext, params: ExpandParams) -> ToolResult:
+    """状态那棵树。**读的是 `current_state`**：本轮已经暂存的写入要算进去，
+    否则 state_manager 刚写完一笔、回头一查却查不到。
+    """
+    return await _expand(ctx.current_state().values, params.paths, what="状态")
 
 
 class StateWriteParams(BaseModel):
@@ -132,201 +158,71 @@ async def _state_write(ctx: RunContext, params: StateWriteParams) -> ToolResult:
     )
 
 
-# --------------------------------------------------------------------------
-# history —— 全量索引 + 按需展开（S53）
-# --------------------------------------------------------------------------
+# -- worldinfo：条目名 → 正文 -------------------------------------------------
 
 
-class HistorySearchParams(BaseModel):
-    query: str = Field(
-        default="",
-        description="要找的字眼，会在**各轮细纲全文**里比对（不是只比总结）。留空则只列索引。",
-    )
-    limit: int = Field(default=20, ge=1, le=100)
+async def _worldinfo_read(ctx: RunContext, params: ExpandParams) -> ToolResult:
+    """设定那棵树，**一层：条目名 → 正文**（S157）。
+
+    地址是**名字**，不是 id：名字既是提要也是地址，和状态那棵树一样。
+    重名在写入时就收敛掉了（`WorldbookRepository.save_entry`），所以这里
+    不会有两条同名条目争一个地址。
+    """
+    return await _expand(_worldinfo_tree(ctx), params.paths, what="设定")
 
 
-async def _history_search(ctx: RunContext, params: HistorySearchParams) -> ToolResult:
-    """**命中只做标注，不做筛选**（P13）。
+def _worldinfo_tree(ctx: RunContext) -> Tree:
+    """**只有按需条目在这棵树上**：常驻的那些正文已经在上下文里了。
 
-    此前 ``query`` 是个子串过滤器：查不中就返回空列表，而模型会把"空"读成
-    "没这回事"——这正是 lorebook 关键词触发不合格的那个理由，我们自己却犯了。
-    现在索引永远覆盖全部轮次，命中的那些多一个标记。
+    把它们也放进来，模型会去展开一段它眼前就有的东西——白花一轮往返。
+    """
+    return {
+        entry.name: entry.content
+        for entry in ctx.repo.worldbook()
+        if entry.is_lore and entry.mode is WorldbookMode.ON_DEMAND
+    }
+
+
+# -- history：段落 id → 那几轮的细纲 ------------------------------------------
+
+
+async def _history_read(ctx: RunContext, params: ExpandParams) -> ToolResult:
+    """前情那棵树，**两层：段落 id → 轮次 id → 细纲**（S57/S157）。
+
+    **段落是唯一用 id 当地址的域**——它没有名字，只有一段摘要，而摘要当不了
+    地址（太长、会重、传回来会被改写一两个字）。所以上下文里的占位符是
+    「id + 摘要」：摘要是提要，id 是地址。
+
+    **索引按段折叠，展开也必须按段给回全文**：摘要在上下文里顶替的是**整段**
+    ——那几轮的细纲全被它替掉了。只还回末节点那一轮，等于告诉模型"这段就这么点
+    内容"，比不展开更糟：它会以为自己已经看全了。
+    """
+    return await _expand(_history_tree(ctx), params.paths, what="前情")
+
+
+def _history_tree(ctx: RunContext) -> Tree:
+    """路径上每一段：``{段落 id: {轮次 id: 细纲}}``。
+
+    段落按「末节点 + 跨度」寻址：父指针唯一，所以从末节点上溯 ``span - 1`` 步
+    得到的链是确定的，**任何经过末节点的路径都得到同一段**，分支天然安全（S42）。
     """
     if ctx.parent_id is None:
-        return ToolResult(content="[]", label="历史为空")
+        return {}
 
-    nodes = ctx.repo.path_to(ctx.parent_id)
-    truncated = max(0, len(nodes) - params.limit)
-    shown = nodes[-params.limit :]
-
-    index: list[dict[str, Any]] = []
-    hits = 0
-    for node in shown:
-        entry: dict[str, Any] = {
-            "run_id": node.id,
-            "summary": node.summary_or_head(),
-            "chars": len(node.outline),
-        }
-        if params.query and params.query in node.outline:
-            entry["命中"] = True
-            hits += 1
-        index.append(entry)
-
-    body: dict[str, Any] = {"轮次": index}
-    if truncated:
-        body["更早还有"] = f"{truncated} 轮未列出，调大 limit 可以看到"
-    if params.query:
-        body["说明"] = (
-            f"「{params.query}」在 {hits} 轮里逐字出现。"
-            "**没命中不等于没发生过**——当时可能换了个说法。"
-            "该找的东西没找到时，按总结挑几轮 history_read 看全文。"
-        )
-
-    return ToolResult(
-        content=json.dumps(body, ensure_ascii=False),
-        label=f"检索历史：{params.query or '索引'}（{len(index)} 轮，命中 {hits}）",
-        payload={"query": params.query, "hits": hits, "listed": len(index)},
-    )
-
-
-class HistoryReadParams(BaseModel):
-    run_ids: list[str] = Field(
-        description="要展开的 ref，来自上下文的历史索引。"
-        "索引里一条 ref 可能代表**一整段**（好几轮），展开时会把整段都给出来。"
-    )
-
-
-async def _history_read(ctx: RunContext, params: HistoryReadParams) -> ToolResult:
-    """展开索引里的一条 ref。
-
-    **索引按段给 ref，展开也必须按段给回全文**（S57）。摘要在上下文里
-    顶替的是**整段**——那几轮的细纲、当时查了什么、写了什么，全被它替掉了。
-    只还回末节点那一轮，等于告诉模型"这段就这么点内容"，比不展开更糟：
-    它会以为自己已经看全了。
-    """
-    known = ctx.repo.all_nodes()
-    missing = [rid for rid in params.run_ids if rid not in known]
-    if missing:
-        return error(f"这些 ref 不存在：{', '.join(missing)}", label="展开历史失败")
-
-    out: list[dict[str, Any]] = []
-    budget = MAX_READ_CHARS
-    served: set[str] = set()
-    for rid in params.run_ids:
-        if budget <= 0:
-            break
-        served.add(rid)
-        for node in _segment_of(ctx, known[rid]):
-            if budget <= 0:
-                break
-            outline = node.outline[:budget]
-            budget -= len(outline)
-            entry: dict[str, Any] = {"run_id": node.id, "segment": rid, "outline": outline}
-            if len(outline) < len(node.outline):
-                entry["截断"] = f"这一轮只给了前 {len(outline)} 字，全文共 {len(node.outline)} 字"
-            out.append(entry)
-
-    body: dict[str, Any] = {"轮次": out}
-    # **预算耗尽必须说出来。** 以前这里直接 break，少返回的那几条无声消失——
-    # 模型拿到一份看起来完整的结果，不知道自己丢了什么。那正是 P13 判
-    # lorebook 关键词触发不合格的同一条理由，只不过换成了体量而不是相关性。
-    unserved = [rid for rid in params.run_ids if rid not in served]
-    if unserved or budget <= 0:
-        body["没给全"] = (
-            f"单次上限 {MAX_READ_CHARS} 字已用尽。"
-            + (f"这几条一个字都没返回：{'、'.join(unserved)}。" if unserved else "")
-            + "**分几次读**，一次少给几个 ref。"
-        )
-
-    return ToolResult(
-        content=json.dumps(body, ensure_ascii=False),
-        label=f"展开了 {len(out)} 轮细纲" + (f"，{len(unserved)} 条没给" if unserved else ""),
-        payload={"run_ids": [o["run_id"] for o in out], "unserved": unserved},
-    )
-
-
-def _segment_of(ctx: RunContext, end: Node) -> list[Node]:
-    """由段落末节点上溯，取回整段。
-
-    按「末节点 + 跨度」寻址：父指针唯一，所以上溯 ``span - 1`` 步得到的链是确定的，
-    **任何经过末节点的路径都得到同一段**，分支天然安全（S42）。
-    """
     nodes = ctx.repo.all_nodes()
-    chain = [end]
-    current = end
-    for _ in range(max(1, end.segment_span) - 1):
-        if current.parent_id is None or current.parent_id not in nodes:
-            break
-        current = nodes[current.parent_id]
-        chain.append(current)
-    chain.reverse()
-    return chain
-
-
-# --------------------------------------------------------------------------
-# worldinfo —— 与 history 同一模式
-# --------------------------------------------------------------------------
-
-
-class WorldInfoListParams(BaseModel):
-    pass
-
-
-async def _worldinfo_list(ctx: RunContext, _: WorldInfoListParams) -> ToolResult:
-    entries = ctx.repo.worldbook()
-    index = [
-        {"ref": e.id, "name": e.name, "开头": e.head(), "chars": len(e.content)} for e in entries
-    ]
-    return ToolResult(
-        content=json.dumps(index, ensure_ascii=False),
-        label=f"列出设定索引（{len(index)} 条）",
-        payload={"count": len(index)},
-    )
-
-
-class WorldInfoReadParams(BaseModel):
-    refs: list[str] = Field(description="要展开的条目 ref，来自 worldinfo_list。")
-    start: int = Field(default=0, ge=0, description="起始字符位置，用于分页。")
-    max_chars: int = Field(default=MAX_READ_CHARS, ge=1, le=MAX_READ_CHARS)
-
-
-async def _worldinfo_read(ctx: RunContext, params: WorldInfoReadParams) -> ToolResult:
-    out: list[dict[str, Any]] = []
-    budget = params.max_chars
-    served: set[str] = set()
-    for ref in params.refs:
-        if budget <= 0:
-            break
-        entry = ctx.repo.book().load_entry(ref)
-        if entry is None:
-            return error(f"没有这个设定条目：{ref}", label="展开设定失败")
-        served.add(ref)
-        chunk = entry.content[params.start : params.start + budget]
-        budget -= len(chunk)
-        read_to = params.start + len(chunk)
-        item: dict[str, Any] = {"ref": ref, "name": entry.name, "content": chunk}
-        if read_to < len(entry.content):
-            # 分页是无损的，但**得说清怎么接着读**——只给一个 `truncated: true`
-            # 等于让模型自己去猜下一个 start 是多少。
-            item["还没读完"] = (
-                f"已读到第 {read_to} 字，全文共 {len(entry.content)} 字。"
-                f"接着读就再调一次，start={read_to}。"
-            )
-        out.append(item)
-
-    body: dict[str, Any] = {"条目": out}
-    unserved = [ref for ref in params.refs if ref not in served]
-    if unserved:
-        body["没给全"] = (
-            f"单次上限 {params.max_chars} 字已用尽，这几条一个字都没返回："
-            f"{'、'.join(unserved)}。**分几次读**。"
-        )
-
-    return ToolResult(
-        content=json.dumps(body, ensure_ascii=False),
-        label=f"展开了 {len(out)} 条设定" + (f"，{len(unserved)} 条没给" if unserved else ""),
-        payload={"refs": [o["ref"] for o in out], "unserved": unserved},
-    )
+    tree: Tree = {}
+    for end in ctx.repo.path_to(ctx.parent_id):
+        if not end.outline_summary:
+            # 没归过段的轮次原文还在上下文里，不必也不该从这里再取一次。
+            continue
+        chain, current = [end], end
+        for _ in range(max(1, end.segment_span) - 1):
+            if current.parent_id is None or current.parent_id not in nodes:
+                break
+            current = nodes[current.parent_id]
+            chain.append(current)
+        tree[end.id] = {n.id: n.outline for n in reversed(chain)}
+    return tree
 
 
 # --------------------------------------------------------------------------
@@ -434,7 +330,7 @@ def state_query_tool(agent: str) -> Tool[Any]:
     """读侧。**两个 agent 都可能拿到它**：director 读状态推演，state_manager
     读状态决定该改哪个键。只在按需展开开着时才注册（P13）。
     """
-    return _tool(agent, "state_query", StateQueryParams, _state_query)
+    return _tool(agent, "state_query", ExpandParams, _state_query)
 
 
 def state_write_tool(agent: str = "state_manager") -> Tool[Any]:
@@ -447,18 +343,21 @@ def state_write_tool(agent: str = "state_manager") -> Tool[Any]:
     return _tool(agent, "state_write", StateWriteParams, _state_write)
 
 
-def history_tools(agent: str = "director") -> list[Tool[Any]]:
-    return [
-        _tool(agent, "history_search", HistorySearchParams, _history_search),
-        _tool(agent, "history_read", HistoryReadParams, _history_read),
-    ]
+def history_read_tool(agent: str = "director") -> Tool[Any]:
+    """前情的展开。**`history_search` 没了**（S54 整条撤销）。
+
+    它做的是"在细纲全文里逐字比对，命中的多一个标记"。而索引本来就覆盖全部
+    段落、摘要就在眼前——命中标记能加的信息只有"这几个字逐字出现过"，
+    而伏笔常常换了个说法，逐字查不中是常态。它买到的那点东西不值一个工具位。
+    """
+    return _tool(agent, "history_read", ExpandParams, _history_read)
 
 
-def worldinfo_tools(agent: str = "director") -> list[Tool[Any]]:
-    return [
-        _tool(agent, "worldinfo_list", WorldInfoListParams, _worldinfo_list),
-        _tool(agent, "worldinfo_read", WorldInfoReadParams, _worldinfo_read),
-    ]
+def worldinfo_read_tool(agent: str = "director") -> Tool[Any]:
+    """设定的展开。**`worldinfo_list` 没了**：索引每轮都在上下文里
+    （`render_worldinfo`），再给一个"列出索引"的工具等于让模型花一轮
+    去要一份它眼前就有的东西。"""
+    return _tool(agent, "worldinfo_read", ExpandParams, _worldinfo_read)
 
 
 def close_segment_tool(agent: str = "director") -> Tool[Any]:
@@ -492,9 +391,9 @@ def ask_question_tool(agent: str = "director") -> Tool[Any]:
 __all__ = [
     "ask_question_tool",
     "close_segment_tool",
-    "history_tools",
+    "history_read_tool",
     "state_query_tool",
     "state_write_tool",
     "submit_tool",
-    "worldinfo_tools",
+    "worldinfo_read_tool",
 ]

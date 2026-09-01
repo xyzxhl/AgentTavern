@@ -407,8 +407,10 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
 
     @app.put("/worldbooks/{worldbook_id}/entries")
     def put_entry(worldbook_id: str, entry: WorldbookEntry) -> WorldbookEntry:
-        book_of(worldbook_id).save_entry(entry)
-        return entry
+        """**返回落盘的那一份，不是传进来的那一份**：重名会被收敛（S157），
+        界面得看见收敛后的名字，否则用户以为自己存的是「教团」而盘上是「教团 2」。
+        """
+        return book_of(worldbook_id).save_entry(entry)
 
     @app.delete("/worldbooks/{worldbook_id}/entries/{entry_id}")
     def delete_entry(worldbook_id: str, entry_id: str) -> dict[str, Any]:

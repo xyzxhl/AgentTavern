@@ -27,7 +27,6 @@ from agenttavern.tools import (
     build_tools,
     goal_tools,
 )
-from agenttavern.tools.builtin import MAX_READ_CHARS
 
 
 def fake_gateway(reply: str = "摘要文本") -> LLMGateway:
@@ -59,7 +58,7 @@ async def call(reg: ToolRegistry, ctx: RunContext, name: str, **args: Any):
     return await reg.dispatch(ctx, ToolCall(id="c1", name=name, arguments=args))
 
 
-ALL_ON = {"tools": {"director": {"history_search": True}}}
+ALL_ON = {"tools": {"director": {"history_read": True}}}
 """全部开关打开。**开关住在各 agent 的 YAML 里**（S80），所以"打开"
 现在是换一份提示词副本（`using`），不是往 session 上写一个对象。
 """
@@ -206,35 +205,69 @@ async def test_querying_a_branch_gives_the_whole_subtree(reg, ctx) -> None:
     assert "在场" in result.content and "照片" in result.content
 
 
-# -- history / worldinfo ----------------------------------------------------
+# -- 三个域，一份实现（S157）----------------------------------------------
+#
+# 折叠时留下的占位符和展开工具接受的地址**必须是同一套 key**，所以三个工具
+# 走同一个 `_expand`：取、报缺、拼回执都是一份代码。这一节钉的是三件事——
+# 各自的树摊成什么样、地址是什么、取不到时说什么。
 
 
-async def test_history_search_marks_hits_without_filtering(reg, ctx) -> None:
-    """**命中只做标注，不筛掉任何一轮**（P13）。
+async def test_all_three_expand_the_same_way(reg, ctx) -> None:
+    """**同一套参数形状、同一套回执**（S157）：路径数组进去，JSON 出来。"""
+    await call(reg, ctx, "state_write", set={"林": {"在场": True}})
+    ctx.repo.book().save_entry(
+        WorldbookEntry(name="教团", content="总部在旧城区。", mode=WorldbookMode.ON_DEMAND)
+    )
+    node = Node(outline="她推开门。", outline_summary="她进了店。")
+    ctx.repo.save_node(node)
+    ctx.parent_id = node.id
 
-    此前 `query` 是子串过滤器：查不中就返回空列表，而模型会把"空"读成
-    "没这回事"——这正是 lorebook 关键词触发不合格的那条理由，我们自己却犯了。
-    早前埋的伏笔常常换了个说法，逐字查不中是**常态**，不是例外。
+    got = [
+        await call(reg, ctx, "state_query", paths=[["林"]]),
+        await call(reg, ctx, "worldinfo_read", paths=[["教团"]]),
+        await call(reg, ctx, "history_read", paths=[[node.id]]),
+    ]
+    assert "在场" in got[0].content
+    assert "旧货" not in got[1].content and "总部在旧城区" in got[1].content
+    assert "她推开门" in got[2].content
+    for result in got:
+        assert not result.is_error
+        assert set(result.payload) == {"found", "missing"}
+
+
+async def test_worldinfo_is_addressed_by_name(reg, ctx) -> None:
+    """**地址是条目名，不是 id**（S157「有名字的用名字」）。
+
+    上下文里那一行写的就是名字，模型照着写回来即可——中间不需要一次翻译，
+    也不需要先花一轮把名字换成 id。
     """
-    a = Node(outline="她推开门，屋里没人。")
-    b = Node(parent_id=a.id, outline="陈从阳台走进来。")
-    ctx.repo.save_node(a)
-    ctx.repo.save_node(b)
-    ctx.parent_id = b.id
+    entry = ctx.repo.book().save_entry(
+        WorldbookEntry(name="教团", content="总部在旧城区。", mode=WorldbookMode.ON_DEMAND)
+    )
+    body = await call(reg, ctx, "worldinfo_read", paths=[["教团"]])
+    assert "总部在旧城区" in body.content
 
-    index = await call(reg, ctx, "history_search", query="阳台")
-    assert b.id in index.content
-    assert a.id in index.content, "没命中的轮次仍必须出现在索引里"
-    assert "命中" in index.content
-    # 空结果的含义要写在结果里，不能靠模型自己领会
-    assert "没命中不等于没发生过" in index.content
+    miss = await call(reg, ctx, "worldinfo_read", paths=[[entry.id]])
+    assert miss.is_error, "id 不再是地址"
+    assert "教团" in miss.content, "取不到时要把可用的 key 回给它"
 
-    body = await call(reg, ctx, "history_read", run_ids=[a.id])
-    assert "屋里没人" in body.content
+
+async def test_only_expandable_worldinfo_is_on_the_tree(reg, ctx) -> None:
+    """**常驻条目不在展开树上**：它的正文已经在上下文里了。
+
+    放进来的话，模型会去展开一段它眼前就有的东西——白花一轮往返。
+    """
+    ctx.repo.book().save_entry(WorldbookEntry(name="常驻的", content="每轮都在。"))
+    ctx.repo.book().save_entry(
+        WorldbookEntry(name="按需的", content="要时再看。", mode=WorldbookMode.ON_DEMAND)
+    )
+    result = await call(reg, ctx, "worldinfo_read", paths=[["常驻的"]])
+    assert result.is_error
+    assert "按需的" in result.content
 
 
 async def test_history_read_expands_the_whole_segment(reg, ctx) -> None:
-    """**索引按段给 ref，展开也必须按段给回全文**（S57）。
+    """**索引按段折叠，展开也必须按段给回全文**（S57）。
 
     摘要在上下文里顶替的是**整段**——那几轮的细纲、当时查了什么，全被它替掉了。
     只还回末节点那一轮比不展开更糟：模型会以为自己已经看全了。
@@ -247,23 +280,76 @@ async def test_history_read_expands_the_whole_segment(reg, ctx) -> None:
         ctx.repo.save_node(node)
     ctx.parent_id = c.id
 
-    body = await call(reg, ctx, "history_read", run_ids=[c.id])
+    body = await call(reg, ctx, "history_read", paths=[[c.id]])
 
     assert "她推开门" in body.content
     assert "陈从里屋出来" in body.content
     assert "他把门锁上" in body.content
 
 
-async def test_history_read_rejects_unknown_ids(reg, ctx) -> None:
-    result = await call(reg, ctx, "history_read", run_ids=["run_ghost"])
+async def test_only_folded_history_is_on_the_tree(reg, ctx) -> None:
+    """**没归过段的轮次不在展开树上**：它们的细纲原文还在上下文里。
+
+    段落是三个域里唯一用 id 当地址的——它没有名字，只有一段摘要，
+    而摘要当不了地址（太长、会重、传回来会被改写一两个字）。
+    """
+    open_run = Node(outline="还没归段的一轮。")
+    folded = Node(parent_id=open_run.id, outline="归过段的一轮。", outline_summary="摘要。")
+    for node in (open_run, folded):
+        ctx.repo.save_node(node)
+    ctx.parent_id = folded.id
+
+    result = await call(reg, ctx, "history_read", paths=[[open_run.id]])
     assert result.is_error
+    assert folded.id in result.content
+
+
+async def test_a_miss_hands_back_the_keys_that_do_exist(reg, ctx) -> None:
+    """**一条都没命中 → 把可用的 key 整个回给模型**（S28）。
+
+    两件事：让它下一轮改对，以及顺带压键名漂移——它看见"心情"已经存在，
+    就不会再造一个"情绪"。
+    """
+    await call(reg, ctx, "state_write", set={"林与陈": {"关系": "疏远"}})
+    result = await call(reg, ctx, "state_query", paths=[["心情"]])
+    assert result.is_error
+    assert "林与陈 › 关系" in result.content
+
+
+async def test_a_partial_miss_still_returns_what_it_found(reg, ctx) -> None:
+    """**部分命中照样给**：为了几条不存在的地址把整次调用判成失败，
+    等于让模型多花一轮重来。
+    """
+    await call(reg, ctx, "state_write", set={"地点": "客厅"})
+    result = await call(reg, ctx, "state_query", paths=[["地点"], ["没有这个"]])
+    assert not result.is_error
+    assert "客厅" in result.content
+    assert "不存在的位置" in result.content
+    assert result.payload["missing"] == ["没有这个"]
+
+
+async def test_expanding_gives_everything_no_budget_no_paging(reg, ctx) -> None:
+    """**展开就是全给**（S26/S157）：不分页、不按体量截断、没有「没给全」。
+
+    这里以前每个工具各有一套预算（`tool_read_chars`）和分页（`start` /
+    `max_chars`）——那是在这一层猜"多少算多"。真的超了上下文是**整轮失败**，
+    不是这一层能补救的事，而一个猜出来的预算会让模型在不知情的情况下少看几段。
+    """
+    long_text = "很长的设定。" * 5000
+    ctx.repo.book().save_entry(
+        WorldbookEntry(name="长的", content=long_text, mode=WorldbookMode.ON_DEMAND)
+    )
+    body = await call(reg, ctx, "worldinfo_read", paths=[["长的"]])
+
+    assert long_text in body.content
+    assert "没给全" not in body.content and "截断" not in body.content
 
 
 # -- 截断必须出声 ------------------------------------------------------------
 #
-# **隐藏不是截断。** 长值换成"用 state_query 展开"是无损降维，展开的路还在；
-# 这里几处是真的砍掉了尾巴，砍掉了就必须说清丢了多少、怎么拿回来——否则模型
-# 拿到一份看起来完整的结果，而它不知道自己丢了什么（P13 同一条理由）。
+# **隐藏不是截断。** 长值换成"用 state_query 展开"是无损降维，展开的路还在。
+# 真截断只剩一处了：前情索引里没归过段的那几轮给的是"细纲前 N 字"，
+# 那是真的砍掉了尾巴，砍掉了就得说清丢了多少（P13 同一条理由）。
 
 
 async def test_an_index_entry_says_how_much_it_left_out(reg, ctx) -> None:
@@ -274,53 +360,6 @@ async def test_an_index_entry_says_how_much_it_left_out(reg, ctx) -> None:
 
     short = Node(outline="很短。")
     assert short.summary_or_head(120) == "很短。", "没截断就不要加噪声"
-
-
-async def test_history_read_says_which_refs_it_dropped(reg, ctx) -> None:
-    """预算耗尽时**一个字都没返回的那几条**必须点名。
-
-    以前这里直接 break，少返回的无声消失。这是三处真截断里最糟的一处——
-    别的至少还留了个头，这个是整条不见。
-    """
-    ids = []
-    parent = None
-    for i in range(3):
-        node = Node(parent_id=parent, outline=f"第{i}轮。" + "长" * (MAX_READ_CHARS // 2))
-        ctx.repo.save_node(node)
-        ids.append(node.id)
-        parent = node.id
-    ctx.parent_id = parent
-
-    body = await call(reg, ctx, "history_read", run_ids=ids)
-
-    assert "没给全" in body.content
-    assert ids[2] in body.content, "没返回的那条 ref 要点名"
-    assert body.payload["unserved"] == [ids[2]]
-
-
-async def test_worldinfo_read_says_where_to_resume(reg, ctx) -> None:
-    """分页是无损的，但**得说清下一个 start 是多少**——只给一个布尔量等于让模型猜。"""
-    entry = WorldbookEntry(name="教团", content="设定内容。" * 100)
-    ctx.repo.book().save_entry(entry)
-
-    body = await call(reg, ctx, "worldinfo_read", refs=[entry.id], max_chars=50)
-
-    assert "还没读完" in body.content
-    assert "start=50" in body.content
-
-
-async def test_worldinfo_index_covers_everything(reg, ctx) -> None:
-    """索引必须覆盖**全部**条目，不做预筛选（P13）——筛选子集式的规则不合格，
-    因为漏掉时模型根本不知道条目存在。
-    """
-    for i in range(3):
-        ctx.repo.book().save_entry(
-            WorldbookEntry(name=f"设定{i}", content="内容" * 50, mode=WorldbookMode.ON_DEMAND)
-        )
-
-    index = await call(reg, ctx, "worldinfo_list")
-    assert index.content.count("ref") == 3
-    assert "chars" in index.content
 
 
 # -- close_segment ----------------------------------------------------------
@@ -348,18 +387,24 @@ def test_close_segment_is_in_no_tool_face() -> None:
         assert "summarize" not in face
 
 
-async def test_the_worldinfo_index_shows_the_head_of_the_content(reg, ctx) -> None:
-    """设定索引给的是**正文开头**，不是摘要（S25）。
+def test_the_worldinfo_index_is_name_and_size(reg, ctx) -> None:
+    """设定索引给的是**名字 + 体量**，没有别的（S53/S157）。
 
-    这里以前叫 `test_summary_falls_back_to_head_in_index`——那时条目上有一个
-    `summary` 缓存字段，没生成时才退回开头。**那个字段删了**：条目是
-    title → content，没有摘要这回事，索引里永远是名字 + 体量 + 开头。
+    它以前还给一段"正文开头"，那是 `summary` 字段没生成时的回退，顶着「摘要」
+    的名字——而它其实是位置偏置最重的一种预览：开头原样保留、结尾完全消失。
+    `summary` 字段随 `summarize` 工具一起删了，这个回退也就没有对象了。
+
+    **索引不是工具**：它每轮都在上下文里（`render_worldinfo`），
+    再给一个"列出索引"的工具等于让模型花一轮去要一份它眼前就有的东西。
     """
-    ctx.repo.book().save_entry(
-        WorldbookEntry(name="教团", content="甲乙丙丁" * 100, mode=WorldbookMode.ON_DEMAND)
+    from agenttavern.prompting.prompts import render_worldinfo
+
+    index = render_worldinfo(
+        [WorldbookEntry(name="教团", content="甲乙丙丁" * 100, mode=WorldbookMode.ON_DEMAND)]
     )
-    index = await call(reg, ctx, "worldinfo_list")
-    assert "…" in index.content
+    assert "教团" in index
+    assert "400 字" in index
+    assert "甲乙丙丁" not in index, "折起来就是折起来，不留开头"
 
 
 # -- ask_question -----------------------------------------------------------
@@ -425,19 +470,19 @@ async def test_history_never_leaks_prose(reg, ctx) -> None:
     """S5 的基础：director 从不读 run 的正文。它能覆盖五倍历史跨度正是因为这一点，
     这条一破，整个隔离设计作废。
 
-    行为检查而非字符串检查：history 的两个工具都必须只吐细纲。
+    行为检查而非字符串检查：展开前情只能吐细纲。
     """
     node = Node(outline="细纲：她推开门。", prose="正文：门轴发出一声长长的呻吟，她站在门口。")
     ctx.repo.save_node(node)
     ctx.parent_id = node.id
 
-    index = await call(reg, ctx, "history_search")
-    body = await call(reg, ctx, "history_read", run_ids=[node.id])
+    node.outline_summary = "她进了店。"
+    node.segment_span = 1
+    ctx.repo.save_node(node)
+    body = await call(reg, ctx, "history_read", paths=[[node.id]])
 
-    for result in (index, body):
-        assert "门轴" not in result.content
-        assert "门轴" not in str(result.payload)
-
+    assert "门轴" not in body.content
+    assert "门轴" not in str(body.payload)
     assert "细纲" in body.content
     assert "text.quote" not in reg.names
 
@@ -552,7 +597,7 @@ def test_submit_outline_always_exists() -> None:
     """它是 loop 的唯一终止点（S4），不可关闭。"""
     assert "submit_outline" in names_for(
         agents={"state_manager": False},
-        tools={"director": {"ask_question": False, "history_search": False}},
+        tools={"director": {"ask_question": False, "history_read": False}},
     )
 
 
@@ -561,13 +606,8 @@ def test_each_switch_removes_its_tools() -> None:
     assert "state_query" in names_for(agents={"state_manager": True})
     assert names_for(agents={"state_manager": False}).isdisjoint({"state_query", "state_write"})
 
-    assert names_for(tools={"director": {"history_search": True}}) >= {
-        "history_search",
-        "history_read",
-    }
-    assert names_for(tools={"director": {"history_search": False}}).isdisjoint(
-        {"history_search", "history_read"}
-    )
+    assert "history_read" in names_for(tools={"director": {"history_read": True}})
+    assert "history_read" not in names_for(tools={"director": {"history_read": False}})
 
     assert "ask_question" in names_for(tools={"director": {"ask_question": True}})
     assert "ask_question" not in names_for(tools={"director": {"ask_question": False}})
@@ -578,9 +618,9 @@ def test_worldinfo_tools_only_when_something_is_expandable() -> None:
     always = [WorldbookEntry(name="甲", mode=WorldbookMode.ALWAYS)]
     mixed = [*always, WorldbookEntry(name="乙", mode=WorldbookMode.ON_DEMAND)]
 
-    assert names_for([]).isdisjoint({"worldinfo_list", "worldinfo_read"})
-    assert names_for(always).isdisjoint({"worldinfo_list", "worldinfo_read"})
-    assert names_for(mixed) >= {"worldinfo_list", "worldinfo_read"}
+    assert "worldinfo_read" not in names_for([])
+    assert "worldinfo_read" not in names_for(always)
+    assert "worldinfo_read" in names_for(mixed)
 
 
 def test_the_write_side_belongs_to_the_state_manager_alone(tmp_path: Path) -> None:

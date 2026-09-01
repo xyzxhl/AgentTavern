@@ -113,23 +113,30 @@ def _chars(messages: list[Message]) -> int:
 
 
 def _summary_message(node: Node, *, readable: bool) -> Message:
-    """一段被压缩后留下的替身。
+    """一段被压缩后留下的替身：**折起来的那一段**（S157）。
 
     写清它**顶替了几轮**、以及怎么取回原文——否则模型会把这段读成
     "那几轮只发生了这么点事"，比不压缩更糟。
+
+    **地址是段落 id，提要是那段摘要。** 段落是三个域里唯一没有名字的东西，
+    所以它是唯一用 id 当 key 的——而 id 旁边永远跟着摘要。
+
+    **两句话都在 `director.yaml` 的 `rendering` 里**（R31）：它们是模型读到的字，
+    而且其中一句还是明确的操作指令（「用 history_read 展开 `xxx`」）——
+    改了工具名却忘了改它，模型会去调一个不存在的工具。
+
+    展开那条路关掉时换另一句：**不要广告一个不存在的工具**。原文到此永久隐去，
+    但摘要仍然留着——模型必须知道那几轮存在过，只是精度低了（P13）。
     """
-    span = max(1, node.segment_span)
-    if readable:
-        tail = (
-            f"\n需要那几轮的原文、原话或具体的名字日期，用 `history_read` 按 ref `{node.id}` 展开。"
-        )
-    else:
-        # 检索关掉时**不要广告一个不存在的工具**。原文到此永久隐去——
-        # 但摘要仍然留着：模型必须知道那几轮存在过，只是精度低了（P13）。
-        tail = "\n那几轮的原文已经取不回来了，以这段摘要为准。"
     return Message(
         role=Role.USER,
-        content=f"（前面 {span} 轮已压缩为摘要：{node.outline_summary}{tail}）",
+        content=rendering(
+            "director",
+            "history_folded" if readable else "history_folded_gone",
+            span=max(1, node.segment_span),
+            summary=node.outline_summary or "",
+            key=node.id,
+        ),
     )
 
 

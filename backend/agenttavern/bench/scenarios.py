@@ -368,7 +368,7 @@ DATA = Scenario(
 
 
 # 前 3 轮的细纲全文注入，更早的只以摘要在场（``RECENT_OUTLINES``）。因此**只有
-# 长会话才走得到那条路径**——5 轮的场景里 `history_search` 一次都不会被调用，
+# 长会话才走得到那条路径**——5 轮的场景里 `history_read` 一次都不会被调用，
 # 归段也一次都不会真的压缩，等于这两条路径从未被测过。
 #
 # 探针改了三版，每一版的失效方式都值得记下来——**造一个能真正压到检索层的探针，
@@ -389,9 +389,9 @@ DATA = Scenario(
 # 一个背景细节、一行无关的字、一件没人在意的物件；等到很多轮之后再让它成为关键。
 # 只有这种东西才会既进不了 state（不约束后续）、也留不住在摘要里（不是当时的重点）。
 def _long_session() -> Session:
-    """**必须显式打开 `history_search`。**
+    """**必须显式打开 `history_read`。**
 
-    它默认关闭（P14：能力开关默认关），关闭时 `history_search` / `history_read`
+    它默认关闭（P14：能力开关默认关），关闭时 `history_read`
     根本不注册。第一次跑这个场景时忘了开——于是"12 轮里检索工具一次都没被调用"
     这个观察什么也说明不了：**工具当时不存在**。
 
@@ -406,12 +406,12 @@ LONG = Scenario(
     name="noir_long",
     prompts=PromptSetup(
         choices={"writer": {"prose_style": "jishi", "pov": "third"}},
-        # **必须显式打开检索。** 它默认关着，关着时 `history_search` /
+        # **必须显式打开检索。** 它默认关着，关着时 `history_read` /
         # `history_read` 根本不注册。第一次跑这个场景时忘了开——于是
         # 「12 轮里检索工具一次都没被调用」这个观察什么也说明不了：
         # **工具当时不存在**。这是一类很值钱的错误：测量对象没有被启用，
         # 而结果看起来像是一个发现。
-        tools={"director": {"history_search": True}},
+        tools={"director": {"history_read": True}},
     ),
     make_session=_long_session,
     worldbook=NOIR_WORLDBOOK,
@@ -466,7 +466,7 @@ CHAPTERS = Scenario(
     name="chapters",
     prompts=PromptSetup(
         choices={"writer": {"prose_style": "jishi", "pov": "third"}},
-        tools={"director": {"history_search": True}},
+        tools={"director": {"history_read": True}},
     ),
     make_session=_chapters_session,
     worldbook=NOIR_WORLDBOOK,

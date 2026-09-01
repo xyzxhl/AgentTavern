@@ -35,6 +35,7 @@ from .lab import PromptSetup, prompts_as
 from .prompts import (
     STATE_INLINE_LIMIT,
     director_prompt,
+    fold_depth,
     player_character,
     render_delta,
     render_recent,
@@ -56,6 +57,7 @@ __all__ = [
     "Prompt",
     "assemble",
     "director_prompt",
+    "fold_depth",
     "enabled",
     "fill",
     "load",

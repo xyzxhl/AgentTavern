@@ -104,7 +104,6 @@ export function WorldbookPanel({
       is_player: false,
       mode: "always",
       values: {},
-      depth: 0,
     });
     setValuesText("{}");
     setValuesError(null);
@@ -351,8 +350,8 @@ function Editor(props: EditorProps): JSX.Element {
           label="是否可展开"
           hint={
             isState
-              ? "常驻：整棵树每轮都在眼前。按需：深过下面那个层级的部分只给条数，模型用 state_query 取。"
-              : "常驻：整段每轮进上下文。按需：只进索引，模型用 worldinfo_read 展开。全部条目都常驻时，展开工具根本不注册。"
+              ? "常驻：整棵树每轮都在眼前。按需：深处只给项数，模型用 state_query 取。折到第几层在 agent 提示词那一页设，一处管全部（S67）。"
+              : "常驻：整段每轮进上下文。按需：只给名字和体量，模型用 worldinfo_read 按名字展开。全部条目都常驻时，展开工具根本不注册。"
           }
         >
           <Pick<"always" | "on_demand">
@@ -364,21 +363,6 @@ function Editor(props: EditorProps): JSX.Element {
             onChange={(mode) => setDraft({ ...draft, mode })}
           />
         </Field>
-
-        {isState && draft.mode === "on_demand" && (
-          <Field
-            label="展开层级"
-            hint="给到第几层。0 = 不折叠。深过这一层的子树只显示有几项，模型按需取。"
-          >
-            <input
-              type="number"
-              min={0}
-              value={draft.depth ?? 0}
-              onChange={(e) => setDraft({ ...draft, depth: Number(e.target.value) || 0 })}
-              className="w-24 rounded border border-line bg-ink-800 px-3 py-1.5 text-sm text-fg focus:border-dim focus:outline-none"
-            />
-          </Field>
-        )}
 
         {isCharacter && (
           <Field

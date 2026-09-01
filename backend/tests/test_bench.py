@@ -114,7 +114,7 @@ def test_boundary_score_separates_recall_from_precision() -> None:
 
 
 def test_a_scenario_is_long_enough_to_trigger_progressive_disclosure() -> None:
-    """短场景走不到渐进式披露那条路径，`history_search` 与 `summarize` 就等于没测过。
+    """短场景走不到渐进式披露那条路径，`history_read` 与 `summarize` 就等于没测过。
 
     探针的形状同样要守住：**早埋一个具体的东西，晚了再要它**。
     只是"轮数够多"不够——还得有个东西会滑出全文窗口而后被需要。
@@ -139,11 +139,11 @@ def test_a_scenario_is_long_enough_to_trigger_progressive_disclosure() -> None:
     assert "7月12日" not in probe, "追问不能复述埋下的事实"
     assert "台账" in probe, "追问要靠指代去取"
 
-    # **被测的能力必须真的打开。** `history_search` 默认关闭，关闭时两个工具
+    # **被测的能力必须真的打开。** `history_read` 默认关闭，关闭时那个工具
     # 都不注册——第一次跑这个场景时忘了开，于是"12 轮一次都没调用"
     # 这个观察什么也说明不了：工具当时根本不存在。开关现在在提示词里（S80），
     # 所以场景把它写进自己那份 `PromptSetup`。
-    assert long.prompts.tools["director"]["history_search"] is True
+    assert long.prompts.tools["director"]["history_read"] is True
 
 
 # -- runner ------------------------------------------------------------------
@@ -205,7 +205,7 @@ def test_a_variant_layers_on_top_of_the_scenario() -> None:
     "只有程序能用"的第二取值入口迟早会有第二个调用者。
 
     **场景先定，变体再改**：变体提到的那几档盖掉场景的，没提到的沿用——
-    换 `history_search` 不该顺手把文风也换了。
+    换 `history_read` 不该顺手把文风也换了。
     """
     from agenttavern.prompting import PromptSetup
 

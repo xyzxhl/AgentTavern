@@ -161,6 +161,31 @@ def test_every_route_declares_its_body(client_for) -> None:
     assert [p["name"] for p in patch.get("parameters", [])] == ["worldbook_id"]
 
 
+def test_two_entries_cannot_share_a_name(client_for) -> None:
+    """**名字是地址，所以名字唯一**（S157/S70）。
+
+    条目在上下文里以 `名字 → 正文` 出现，模型按名字展开。两条都叫「教团」时
+    那个地址有歧义，而歧义的表现是**其中一条永远取不到**——没有任何地方会报错。
+
+    **写时收敛，撞名的那一条加序号**，一条都不丢：名字是给人看的标签，两条同名
+    完全可能是两回事，合并才是真的丢东西。改的是刚提交的那一条，用户当场看得见。
+    """
+    client = client_for(happy_llm())
+    book = client.post("/worldbooks").json()["id"]
+
+    def put(name: str) -> str:
+        return client.put(
+            f"/worldbooks/{book}/entries", json={"name": name, "content": "内容"}
+        ).json()["name"]
+
+    assert put("教团") == "教团"
+    assert put("教团") == "教团 2", "**返回落盘的那一份**，否则界面显示的名字是假的"
+    assert put("教团") == "教团 3"
+
+    names = sorted(e["name"] for e in client.get(f"/worldbooks/{book}/entries").json())
+    assert names == ["教团", "教团 2", "教团 3"], "一条都不能丢"
+
+
 def test_a_worldbook_can_open_several_sessions(client_for) -> None:
     """**一份设定开出好几个故事**（S63）。
 
@@ -339,7 +364,6 @@ def test_a_round_trip_keeps_the_kinds_and_the_expansion_settings(client_for) -> 
             "name": "起点",
             "kind": "state",
             "mode": "on_demand",
-            "depth": 2,
             "values": {"陈屿": {"在场": True}},
         },
     ):
@@ -354,7 +378,8 @@ def test_a_round_trip_keeps_the_kinds_and_the_expansion_settings(client_for) -> 
     # 不是第四种条目。语言习惯也要跟着过来。
     assert landed["林昭"]["kind"] == "character" and landed["林昭"]["is_player"] is True
     assert landed["林昭"]["voice"] == "话少，先观察再开口"
-    assert landed["起点"]["kind"] == "state" and landed["起点"]["depth"] == 2
+    assert landed["起点"]["kind"] == "state"
+    assert "depth" not in landed["起点"], "展开层级不再按条目设（S67）"
     # 初始状态跟着过来；开在这份设定上的会话还没开始，所以立刻生效。
     landed_session = client.post("/sessions", json={"worldbook_id": b}).json()["id"]
     assert client.get(f"/sessions/{landed_session}").json()["state"] == {"陈屿": {"在场": True}}

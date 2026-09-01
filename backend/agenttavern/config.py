@@ -142,7 +142,6 @@ class _GoalManager(BaseModel):
 class _Context(BaseModel):
     budget_chars: int = 96_000
     state_inline_limit: int = 200
-    tool_read_chars: int = 8_000
 
 
 class _Segment(BaseModel):

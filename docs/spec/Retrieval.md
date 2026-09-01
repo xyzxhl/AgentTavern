@@ -50,47 +50,65 @@
   场景切换即带错人，而模型不知道有角色信息没被带进来。
 - **关键词触发**：漏命中 → 条目完全缺失 → 模型不知道有这个设定存在。
 
-**验收** `test_history_search_marks_hits_without_filtering` · `test_worldinfo_index_covers_everything`
+**验收** `test_the_worldinfo_index_is_name_and_size` · `test_all_three_expand_the_same_way`
 
 ### S53 · 全量索引 + 按需展开，索引必须带体量
 
 **服务** [R5](../req/开局与设定.md)
 
-**规格** worldinfo 与 history 用**同一个模式**，不是两套：
+**规格** 三个域——设定、前情、状态——用**同一个模式**，不是三套：
 
 ```
-注入：全部条目的索引（标识 + 摘要 + 体量）+ 近期条目的全文
-工具：按标识拉取正文，支持分页
+注入：整棵树折起来（key + 体量）+ 常驻的那部分全文
+工具：按 key 取回内容，**全给**
 ```
 
-索引**必须带体量**，让模型知道拉全文的代价。**索引必须带 ref**——
-拿得到的标识，不是"第 N 轮"这种人话。
+折起来的地方**必须带体量**，让模型知道取全文的代价。**地址必须是 key**——
+拿得到的东西，不是"第 N 轮"这种人话。
 
-**不做** 只索引"已被激活的"条目。那底层仍是筛选子集。
+**key 是人读得懂的名字**：状态的键名是模型自己起的，设定的条目名是用户起的，
+两者都既是提要也是地址。**只有段落例外**——它没有名字，只有一段摘要，
+而摘要当不了地址（太长、会重、传回来会被改写一两个字），所以它用 id，
+**而 id 旁边永远跟着那段摘要**。
 
-**为什么** 索引不带 ref 曾经让整个历史检索层从未被调用：索引写的是「第 N 轮」，
+> 有名字的用名字，没名字的用 id，而 id 旁边跟着提要。
+
+**不做** 只索引"已被激活的"条目（那底层仍是筛选子集）；**不做**分页与按体量
+截断（见 [S157](#s157)）；**不做**在索引里塞正文开头——那是位置偏置最重的
+一种预览，开头原样保留、结尾完全消失，而它还顶着「摘要」的名字。
+
+**为什么** 地址不可用曾经让整个历史检索层从未被调用：索引写的是「第 N 轮」，
 而读取工具要的是 run id——**模型看得见索引，却拿它没办法**，必须先花一轮换 id。
-对比之下 worldinfo 的索引一直带 ref，它的读取就一直被正常调用。**差别就在这一处。**
+对比之下设定那侧的索引一直带得回去，它的读取就一直被正常调用。**差别就在这一处。**
 
-**验收** `test_worldinfo_index_covers_everything` · `test_always_worldinfo_is_injected_on_demand_is_indexed` · `test_history_read_expands_the_whole_segment`
+同一条毛病的第二种形态是**地址和占位符不是同一套**：设定曾经显示 id、
+状态显示键名、前情显示 run id，三处各写一遍，对不上时没有任何地方会报错——
+模型照着占位符里的名字去调工具，工具说"没有这个"。所以现在只有一份实现（S157）。
 
-### S54 · 搜索只标注不筛选，查不中也要说清
+**验收** `test_all_three_expand_the_same_way` · `test_worldinfo_is_addressed_by_name` ·
+`test_the_worldinfo_index_is_name_and_size` · `test_always_worldinfo_is_injected_on_demand_is_indexed` ·
+`test_history_read_expands_the_whole_segment` · `test_what_is_folded_is_addressable`
 
-**服务** —（S52 的直接推论）
+### S54 · **已撤销**：搜索那条路整个删了
 
-**规格** 历史索引**永远覆盖全部轮次**，命中的只多一个标记，
-并在结果里明写"**没命中不等于没发生过**"。
+**服务** —（S52 的直接推论，判据仍然成立）
 
-**不做** 把 query 当子串过滤器返回命中的子集。
+这一条曾经规定：历史索引永远覆盖全部轮次，`history_search` 的 query
+**只标注命中、不筛掉任何一轮**，并在结果里明写"没命中不等于没发生过"。
+它修的是我们自己犯的那个错——查不中就返回空列表，而模型会把"空"读成
+"没这回事"，正是判关键词触发不合格的同一条理由。
 
-**为什么** 查不中就返回空列表，而模型会把"空"读成"没这回事"——
-**这正是判关键词触发不合格的那条理由，我们自己却犯了同一个错。**
-而且伏笔常常换了个说法，逐字查不中是常态不是例外。
+**`history_search` 现在整个删掉了**，所以这条规格没有对象了。判据没有被推翻，
+是被**更彻底地满足**了：连"命中"这个概念都不存在，折起来的树永远覆盖全部段落。
 
-值得单独记：**同一个错误换了个位置就没认出来。** 这条准入标准是我们自己定的，
-批评别人的实现时用得很顺手，写自己的检索工具时却漏掉了。
+删它的理由是它买到的东西太少：命中标记能加的信息只有"这几个字逐字出现过"，
+而**伏笔常常换了个说法，逐字查不中是常态不是例外**——那正是上面那段话自己说的。
+一个每次都要附带一句"没命中不等于没发生过"的功能，不值一个工具位。
 
-**验收** `test_history_search_marks_hits_without_filtering`
+> 仍然值得记：**同一个错误换了个位置就没认出来。** 这条准入标准是我们自己定的，
+> 批评别人的实现时用得很顺手，写自己的检索工具时却漏掉了。
+
+**验收** 无——没有对象了。覆盖全集那一半由 [S53](#s53) 的验收守着。
 
 ### S55 · 关掉按需展开时，三者各自退回全量或永久隐去
 
@@ -101,15 +119,16 @@
 
 | 关掉 | 行为 |
 |---|---|
-| `state_query` | 状态**每轮全量注入**，长值不截断 |
+| `state_query` | 状态**每轮全量注入**，深处不折、长值不折 |
 | `worldinfo_read` | 按需条目**全文进静态前缀**（设定跨轮不变，代价只付一次） |
-| `history_search` | 被压缩的原文**永久隐去**，但**摘要仍留在上下文里** |
+| `history_read` | 被压缩的原文**永久隐去**，但**摘要仍留在上下文里** |
 
-三处都**不再广告没注册的工具**。
+三处都**不再广告没注册的工具**——那句话和工具名是同一件事的两处，
+所以它也在 YAML 的 `rendering` 里（`history_folded_gone` 就是关掉时的那一句）。
 
 **不做** 关掉工具之后仍然截断。也不做"整段抹掉"——模型必须知道那几轮存在过。
 
-**验收** `test_state_is_injected_in_full_when_query_is_off` · `test_on_demand_worldinfo_is_inlined_when_read_is_off` · `test_worldinfo_tools_disappear_when_read_is_off` · `test_compacted_history_is_gone_for_good_when_search_is_off` · `test_state_query_disappears_from_both_sides_but_write_stays`
+**验收** `test_state_is_injected_in_full_when_query_is_off` · `test_on_demand_worldinfo_is_inlined_when_read_is_off` · `test_worldinfo_tools_disappear_when_read_is_off` · `test_compacted_history_is_gone_for_good_when_read_is_off` · `test_state_query_disappears_from_both_sides_but_write_stays`
 
 ### S56 · 检索工具的描述给触发条件，不给机制说明
 
@@ -145,9 +164,15 @@
 **规格** 摘要与细纲是 **n : 1**。编排层攒够最小轮数就问模型"该在第几轮之后断开"，
 回 0 表示这一段还没完、再等一轮，到最大轮数强制断开止损。
 
-段落按**「末节点 + 跨度」寻址**，不记起止 id。
+段落按**「末节点 + 跨度」寻址**，不记起止 id。**那个末节点 id 就是它的 key**
+（[S53](#s53)）：段落是三个域里唯一没有名字的东西，所以它是唯一用 id 当地址的，
+而 id 旁边永远跟着那段摘要——摘要是提要，id 是地址。
 
-**不做** 按轮一一对应。
+**展开必须按段给回全文**：摘要在上下文里顶替的是**整段**，只还回末节点那一轮
+比不展开更糟——模型会以为自己已经看全了。
+
+**不做** 按轮一一对应；**不做**让摘要本身当地址（太长、会重、传回来会被改写
+一两个字）。
 
 **为什么** 一轮**不是语义单位**（一场对峙横跨四轮，一次转场只占半轮），
 而且**条数不收敛**（50 轮就是 50 条索引）。
@@ -155,7 +180,7 @@
 末节点寻址是为了分支安全：父指针唯一，从末节点上溯 span−1 步的链是确定的，
 **任何经过末节点的路径都得到同一段**。
 
-**验收** `test_segment_closes_when_the_director_says_it_closed` · `test_open_segment_waits_another_run` · `test_every_segment_goes_through_summarize` · `test_a_summary_says_how_many_runs_it_replaced_and_how_to_get_them_back`
+**验收** `test_segment_closes_when_the_director_says_it_closed` · `test_open_segment_waits_another_run` · `test_every_segment_goes_through_summarize` · `test_a_summary_says_how_many_runs_it_replaced_and_how_to_get_them_back` · `test_history_read_expands_the_whole_segment` · `test_only_folded_history_is_on_the_tree`
 
 ### S58 · 判定在生成时，压缩在需要时
 
@@ -257,6 +282,49 @@ director 看得见自己查过什么、为什么那么写。
 预算只数正文而不数推理会**系统性低估**，且低估幅度随对话变长而增大。
 
 **验收** `test_reasoning_is_stripped_before_a_node_is_stored` · `test_reasoning_counts_toward_the_context_budget`
+
+### S157 · 折叠与展开是同一件事的两半，只有一份实现
+
+**服务** [R5](../req/开局与设定.md)
+
+**规格** 三个域各提供一棵 `key → content` 的树，**共用一个折叠器、一个展开器、
+一套回执话术**（`agenttavern/disclosure.py`）。
+
+| 域 | key | 提要 | 折叠单位 | 展开 |
+|---|---|---|---|---|
+| 状态 | 键名 | **就是 key 本身** | 深过 `depth` 的子树、长过 `state_inline_limit` 的字符串 | `state_query` |
+| 设定 | 条目名 | 同上 | 按需条目的正文，**不看长度** | `worldinfo_read` |
+| 前情 | 段落 id | **那段摘要** | 已归段的那几轮 | `history_read` |
+
+**折叠留下的 key 必须就是展开接受的地址。** 折起来的地方一律是「key + 体量」，
+只有前情多一句摘要——因为只有它的 key 不是人话。
+
+**工具面上仍是三个**（[S21](Tools.md#s21)）：共用实现在下面一层，不在工具那一层。
+
+**不做** 一个 `expand(域, 路径)`；**不做**分页、按体量截断、"没给全"那套话术
+（[S26](Tools.md#s26)）；**不做**三处各写一遍占位符。
+
+**为什么** 这三样以前是三套寻址（键路径 / 条目 id / run id）、三套截断话术、
+三份"没找到"的写法。**对不上的时候没有任何地方会报错**——模型照着占位符里的
+名字去调工具，工具说"没有这个"，而那一段就此取不回来了。这不是假设：地址不可用
+曾经让整个历史检索层从未被调用过（[S53](#s53)）。
+
+一份实现还顺带把两个原本各自为政的决定统一了：**取不到时把可用的 key 整个回给
+模型**（让它下一轮改对，并压住键名漂移），以及**部分命中照样给**（为了几条不存在
+的地址把整次调用判成失败，等于让模型多花一轮重来）。
+
+**代价写在明处**：设定的名字因此**是地址**，两条同名就有一条永远取不到——
+所以重名在写入时收敛（[S70](Worldbook.md#s70)）。
+
+**验收** `test_it_folds_below_the_given_level` · `test_depth_zero_means_no_folding` ·
+`test_a_list_is_a_value_and_never_folded` · `test_a_long_string_leaf_gives_its_size` ·
+`test_inline_limit_zero_folds_every_string` · `test_a_flat_tree_may_omit_the_deeper_text` ·
+`test_it_takes_a_whole_subtree` · `test_a_partial_miss_keeps_both_halves` ·
+`test_keys_are_human_readable_leaf_paths` · `test_what_is_folded_is_addressable` ·
+`test_all_three_expand_the_same_way` · `test_a_miss_hands_back_the_keys_that_do_exist` ·
+`test_a_partial_miss_still_returns_what_it_found` · `test_expanding_gives_everything_no_budget_no_paging` ·
+`test_only_expandable_worldinfo_is_on_the_tree` · `test_only_folded_history_is_on_the_tree` ·
+`test_two_entries_cannot_share_a_name`
 
 ---
 

@@ -25,6 +25,7 @@ import json
 from collections.abc import Sequence
 
 from ..config import LIMITS
+from ..disclosure import FoldText, fold
 from ..llm import Message
 from ..models import (
     EntryKind,
@@ -35,6 +36,7 @@ from ..models import (
     WorldbookMode,
     WorldState,
 )
+from ..models.state import Tree
 from .assembler import (
     Prompt,
     assemble,
@@ -95,64 +97,39 @@ def state_recent_runs() -> int:
     return param("state_manager", "recent", "runs", LIMITS.windows.state_recent_runs)
 
 
-class _StateText:
-    """渲染 state 时要用到的那几句短话。**它们也是模型读到的字**（R31）。
+def fold_depth(agent: str) -> int:
+    """这个 agent 的状态给到第几层。**一个值，写在那一节 context 上**（S67）。
 
-    **按 agent 各存一份**：director 和 state_manager 都会读到 `render_state` 的
-    产物，于是两份 YAML 的 `rendering` 里各有一份。这不是"一件事两个入口"——
-    它们是发给两个不同 agent 的两条不同消息，本来就该能分别改（director 读 state
-    是为了推演，state_manager 读它是为了比对该记什么）。
+    它以前按**条目**设（`WorldbookEntry.depth`），理由是"同一份设定里深浅差别很大"。
+    那条规格**从来没生效过**：`render_state` 的 `depth` 两个调用点都没传，恒为 0,
+    折叠整个是死代码，而界面上那个「展开层级」输入框用户填了、存了盘、
+    对模型毫无影响。现在它和 `recent` 的 `runs` 同形，改一处就生效。
+
+    默认 2：角色 › 王五 › 底下的东西折起来。再浅一层连人名都看不见，
+    再深一层就等于不折。
     """
-
-    def __init__(self, agent: str) -> None:
-        self.agent = agent
-
-    @property
-    def empty(self) -> str:
-        return rendering(self.agent, "state_empty")
-
-    def long(self, chars: int) -> str:
-        return rendering(self.agent, "state_long", chars=chars)
-
-    def deeper(self, count: int) -> str:
-        return rendering(self.agent, "state_deeper", count=count)
+    return param(agent, "state", "depth", 2)
 
 
-def _hide_long(value: object, texts: _StateText) -> object:
-    """体量大的值只给体量，由模型按需 `state_query` 展开。
+def _fold_text(agent: str, kind: str) -> FoldText:
+    """折起来的地方摆哪句话。**从 YAML 取，一个字都不在代码里拼**（R31）。
 
-    **只对字符串生效。** 清单即使很长也原样给出：顶替掉它会把形状一起顶替成
-    一个字符串，而形状正是这里最要紧的东西（S32）——模型照着写回，清单就塌了。
-    长清单该做的是拆一层嵌套，不是藏起来。
+    `kind` 是 `state` 或 `worldinfo`，对应 `rendering` 里那两组键。
+    **按 agent 各存一份**：director 和 state_manager 都会读到状态那一节，
+    两份 YAML 的 `rendering` 里各有一份。这不是"一件事两个入口"——它们是发给
+    两个不同 agent 的两条不同消息，本来就该能分别改。
     """
-    if isinstance(value, str) and len(value) > STATE_INLINE_LIMIT:
-        return texts.long(len(value))
-    return value
+    return FoldText(
+        long=lambda chars: rendering(agent, f"{kind}_long", chars=chars),
+        # 只有状态是多层的；worldinfo 那棵树是 `条目名 → 正文`，一层到底。
+        deeper=(lambda count: rendering(agent, "state_deeper", count=count))
+        if kind == "state"
+        else None,
+    )
 
 
-def _fold(tree: dict[str, object], depth: int, texts: _StateText) -> dict[str, object]:
-    """按**层级**折叠（S31）：深过 ``depth`` 的子树只给条数。
-
-    这是点分键名换成真嵌套之后才做得成的事——平铺结构里没有"层"，
-    当时只能按字符数藏，而字符数和"这一块要不要给"没有关系。
-
-    ``depth<=0`` 表示不折叠。折叠只发生在**字典**上：清单是一个值，
-    折它等于改形状。
-    """
-    out: dict[str, object] = {}
-    for key, value in tree.items():
-        if isinstance(value, dict) and value:
-            if depth == 1:
-                out[key] = texts.deeper(len(value))
-            else:
-                out[key] = _fold(value, depth - 1, texts)
-        else:
-            out[key] = _hide_long(value, texts)
-    return out
-
-
-def render_state(state: WorldState, *, agent: str, expandable: bool = True, depth: int = 0) -> str:
-    """状态默认包：**JSON**，全量键名 + 体量大的字符串只给体量。
+def render_state(state: WorldState, *, agent: str, expandable: bool = True) -> str:
+    """状态默认包：**JSON**，全量键名 + 深处与长值折起来。
 
     ## 为什么是 JSON
 
@@ -166,8 +143,8 @@ def render_state(state: WorldState, *, agent: str, expandable: bool = True, dept
     自带区分，不需要任何额外标记，而且**和 `state_write` 的参数是同一套写法**——
     模型读到什么形状就写回什么形状，中间没有一次翻译。
 
-    **层次靠嵌套，不靠点分键名**（S31）：`depth` 决定给到第几层，更深的只给条数，
-    模型按需 `state_query` 展开。`depth<=0` 表示全给。
+    **层次靠嵌套，不靠点分键名**（S31）：折到第几层由 `fold_depth` 从 YAML 取，
+    更深的只给项数，模型按需 `state_query` 展开。
 
     **不预设任何维度。** 键由模型自由命名，时间、地点、角色属性的粒度与形态都
     取决于故事，定不了固定 schema（见 models/state.py）。
@@ -175,22 +152,31 @@ def render_state(state: WorldState, *, agent: str, expandable: bool = True, dept
     **这里只渲染键值，一句提示词都不带**——那些话是提示词，`agent` 决定从哪份
     YAML 的 `rendering` 里取（R31）。
     """
-    texts = _StateText(agent)
     if not state.values:
-        return texts.empty
+        return rendering(agent, "state_empty")
 
-    values: dict[str, object] = dict(state.values)
+    values: Tree = dict(state.values)
     if expandable:
-        values = _fold(values, depth, texts)
+        values = fold(
+            values,
+            depth=fold_depth(agent),
+            texts=_fold_text(agent, "state"),
+            inline_limit=STATE_INLINE_LIMIT,
+        )
     return json.dumps(values, ensure_ascii=False, indent=2, sort_keys=True)
 
 
 def render_worldinfo(entries: list[WorldbookEntry], *, expandable: bool = True) -> str:
-    """常驻设定全量注入；按需展开的只给索引（名称 + 摘要 + 体量）。
+    """常驻设定全量注入；按需展开的**只给名字和体量**（S53/S157）。
 
     索引**覆盖全部按需条目**，不做任何预筛选（P13），筛选子集式的规则
     （如 lorebook 的关键词触发）不合格：漏命中时条目完全缺失，
     而模型根本不知道它存在。
+
+    **条目是 `名字 → 正文`**：名字既是提要也是地址，和状态那棵树一样
+    （S157「有名字的用名字」）。索引里因此不再有 id、也不再有正文开头——
+    那个开头曾经顶着「摘要」的名字，而它其实是位置偏置最重的一种预览
+    （开头原样保留、结尾完全消失）。
     """
     # **关闭按需展开时，所有条目一律全文注入**——没有展开的路还只给索引，
     # 就成了模型看得见名字却永远拿不到内容的有损筛选（P13）。
@@ -203,10 +189,16 @@ def render_worldinfo(entries: list[WorldbookEntry], *, expandable: bool = True) 
 
     parts = [f"### {e.name}\n{e.content}" for e in always if e.content]
     if on_demand:
-        index = "\n".join(
-            f"- `{e.ref_hint()}` {e.name}（{len(e.content)} 字）：{e.head()}" for e in on_demand
+        # `inline_limit=0`：**按需条目一律折起来**，不看它有多长。
+        # 它和状态里那个"长过多少字才折"是两条不同的规则，共用同一个折叠器。
+        folded = fold(
+            {e.name: e.content for e in on_demand},
+            depth=0,
+            texts=_fold_text("director", "worldinfo"),
+            inline_limit=0,
         )
-        # 「用 worldinfo_read 按 ref 展开。」是一句**明确的操作指令**，所以它也归
+        index = "\n".join(f"- {name}{mark}" for name, mark in folded.items())
+        # 「用 worldinfo_read 按名字展开。」是一句**明确的操作指令**，所以它也归
         # YAML（R31）——改了工具名却忘了改它，模型会去调一个不存在的工具。
         parts.append(f"### 可展开的条目\n{index}\n\n{rendering('director', 'worldinfo_expand')}")
     return "\n\n".join(parts)

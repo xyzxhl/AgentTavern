@@ -17,3 +17,6 @@ data/
 .DS_Store
 smoke/
 *.tsbuildinfo
+
+# 本地环境：**任何 `.env*` 都不进仓库**——`.env.dep` 这样的变体匹配不到裸 `.env`。
+.env*

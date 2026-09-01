@@ -153,7 +153,6 @@ def test_config_yaml_covers_every_knob() -> None:
     from agenttavern.models import Goal
     from agenttavern.orchestration import checks
     from agenttavern.prompting import prompts, state_recent_runs, upstream_runs
-    from agenttavern.tools import builtin
 
     wired = {
         "director.max_rounds": (LIMITS.director.max_rounds, director.MAX_ROUNDS),
@@ -164,7 +163,6 @@ def test_config_yaml_covers_every_knob() -> None:
             LIMITS.context.state_inline_limit,
             prompts.STATE_INLINE_LIMIT,
         ),
-        "context.tool_read_chars": (LIMITS.context.tool_read_chars, builtin.MAX_READ_CHARS),
         "segment.max_runs": (LIMITS.segment.max_runs, summarize.MAX_SEGMENT_RUNS),
         "segment.min_runs": (LIMITS.segment.min_runs, summarize.MIN_SEGMENT_RUNS),
         "sampling.expansion_min_ratio": (

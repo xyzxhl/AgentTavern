@@ -186,7 +186,7 @@ async def test_an_interrupted_deduction_is_suspended_not_discarded(tmp_path: Pat
     **截断了时机**，已经查过的、已经暂存的都还算数。
     """
     llm = _CancelAfter(
-        tool("history_search", query="门"),
+        tool("history_read", query="门"),
         tool("state_query", keys=["地点"]),
         after=2,
     )

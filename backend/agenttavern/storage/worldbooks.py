@@ -102,8 +102,10 @@ class WorldbookRepository:
                 good += 1
         return good, bad
 
-    def save_entry(self, entry: WorldbookEntry) -> None:
-        """写一条设定。**「用户扮演谁」的唯一性在这里保证**（S134）。
+    def save_entry(self, entry: WorldbookEntry) -> WorldbookEntry:
+        """写一条设定，**返回真正落盘的那一份**（名字可能被收敛过）。
+
+        **「用户扮演谁」和「条目名」两处唯一性都在这里保证**（S134/S157）。
 
         `player_character()` 取的是**第一条**标了 `is_player` 的角色条目，而
         `entries()` 按名字排序——于是标了两个的话，「谁是用户」取决于名字的
@@ -115,9 +117,33 @@ class WorldbookRepository:
         所以在这里收敛就够了——**不必也不该指望界面自觉**：导入一份别人做的包
         同样能塞进两个。
         """
+        entry = self._unique_name(entry)
         write_model(self.entry_path(entry.id), entry)
         if entry.kind is EntryKind.CHARACTER and entry.is_player:
             self._demote_other_players(entry.id)
+        return entry
+
+    def _unique_name(self, entry: WorldbookEntry) -> WorldbookEntry:
+        """**名字是地址，所以名字必须唯一**（S157）。
+
+        条目在上下文里以 `名字 → 正文` 的形状出现，模型按名字展开。两条都叫
+        「教团」时那个地址就有歧义，而歧义的表现是**其中一条永远取不到**——
+        没有任何地方会报错。
+
+        **写时收敛，不在读时挑一个**：读时挑等于让每个读的人各自去猜，而且盘上
+        始终躺着一份自相矛盾的数据。这和 `is_player` 的唯一性走同一条路（S65），
+        理由也一样——**不必也不该指望界面自觉**，导入一份别人做的包同样能塞进重名。
+
+        撞名时给**新来的**加序号（`教团 2`）。改的是用户刚刚提交的那一条，
+        他保存后当场就能看见结果；去改另一条则是在他没看的地方动了东西。
+        """
+        taken = {other.name for other in self.entries() if other.id != entry.id}
+        if entry.name not in taken:
+            return entry
+        n = 2
+        while f"{entry.name} {n}" in taken:
+            n += 1
+        return entry.model_copy(update={"name": f"{entry.name} {n}"})
 
     def _demote_other_players(self, keep: str) -> None:
         for other in self.entries():

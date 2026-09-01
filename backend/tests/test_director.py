@@ -180,7 +180,7 @@ async def test_trace_carries_readable_labels(tmp_path: Path) -> None:
     await run_director(ctx, reg, tracer, UserInput(text="我推开门"))
 
     labels = [e.label for e in ctx.repo.read_trace("run_1")]
-    assert "查了 地点" in labels
+    assert "展开了状态 地点" in labels
     assert "细纲完成" in labels
     assert all(e.label for e in ctx.repo.read_trace("run_1"))
 

@@ -122,7 +122,7 @@ session 上，改一档文风要动两个地方；现在一处定义、一处取
 tools:
   submit_outline:
     body: 提交本轮细纲。**调用即结束这一轮**……
-  history_search:
+  history_read:
     enabled: false          # 关掉 = 根本不注册，模型看不到
     body: ……
   ask_question:             # 描述本身也可以是一个 choice

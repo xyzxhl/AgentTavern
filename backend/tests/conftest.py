@@ -303,7 +303,7 @@ def using(**kwargs: Any) -> Iterator[None]:
         yield
 
 
-HISTORY_ON = {"tools": {"director": {"history_search": True}}}
+HISTORY_ON = {"tools": {"director": {"history_read": True}}}
 """检索**默认关**（P14：能力开关默认关）。要测它就得显式打开——第一次跑长会话
 场景时忘了开，于是"12 轮里检索工具一次都没被调用"这个观察什么也说明不了：
 **工具当时不存在**。"""

@@ -87,8 +87,8 @@ def _compacted(readable: bool) -> str:
     return "\n".join(m.content or "" for m in replay_messages([node, tail], readable=readable))
 
 
-def test_compacted_history_is_gone_for_good_when_search_is_off() -> None:
-    """关闭 `history_search` → 被压缩的原文**永久隐去**。
+def test_compacted_history_is_gone_for_good_when_read_is_off() -> None:
+    """关闭 `history_read` → 被压缩的原文**永久隐去**。
 
     但**摘要仍然留着**：模型必须知道那几轮存在过，只是精度低了（P13）。
     整段抹掉才是不合格的——那会让它不知道自己丢了什么。

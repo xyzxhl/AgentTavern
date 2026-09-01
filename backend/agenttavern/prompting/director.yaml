@@ -148,6 +148,8 @@ sections:
 - type: context
   role: user
   source: state
+  # 状态给到第几层：深过这一层的子树只给项数，模型按需展开（S67）。
+  depth: 2
 - type: choice
   role: user
   name: event_density
@@ -180,25 +182,15 @@ tools:
   state_query:
     enabled: true
     body: 按路径展开世界状态。上下文里已给出结构，深过展开层级的子树与体量大的值只给了个数/字数，这里用来把它们取出来。
-  history_search:
-    enabled: false
-    body: |-
-      在**各轮细纲全文**里找一个字眼，并列出轮次索引（总结与体量）。
-      **命中只做标注，不筛掉任何一轮**——没命中不等于没发生过，当时可能换了说法。
-
-      要原话、要兑现伏笔、要说清先后与因果时才翻——**当前状态和总结共同的盲区，是「当时不要紧、现在才要紧」的细节。**
   history_read:
     enabled: false
     body: |-
-      按 ref 展开某几轮细纲的**全文**。ref 在上下文的历史索引里已经给出，知道是哪几轮就直接读，不必先 history_search。
+      展开前情里被压成摘要的那几轮，给出它们细纲的**全文**。上下文里每一段摘要后面都带着它的 key。
 
-      要原话、要兑现伏笔、要说清先后与因果时才翻——**当前状态和总结共同的盲区，是「当时不要紧、现在才要紧」的细节。**
-  worldinfo_list:
-    enabled: true
-    body: 列出按需展开的设定条目索引（名称、摘要、体量）。常驻设定已直接在上下文里，不在这个索引中。
+      要原话、要兑现伏笔、要说清先后与因果时才翻——**当前状态和摘要共同的盲区，是「当时不要紧、现在才要紧」的细节。**
   worldinfo_read:
     enabled: true
-    body: 展开指定设定条目的全文。
+    body: 按名字展开设定条目的全文。上下文里「可展开的条目」那一节列着有哪些名字，常驻设定已经在眼前，不在那一节里。
   corpus_search:
     enabled: true
     body: |-
@@ -287,7 +279,18 @@ rendering:
   state_empty: （尚无记录）
   state_long: （{{chars}} 字，用 state_query 展开）
   state_deeper: （{{count}} 项，用 state_query 展开）
-  worldinfo_expand: 用 worldinfo_read 按 ref 展开。
+  worldinfo_long: （{{chars}} 字，用 worldinfo_read 展开）
+  worldinfo_expand: 用 worldinfo_read 按名字展开。
+  # 前情里被压成一段的那几轮（S57/S157）。**段落没有名字**，所以地址是一个 id，
+  # 而 id 旁边永远跟着那段摘要——摘要是它的提要，id 是它的地址。
+  history_folded: |-
+    （前面 {{span}} 轮已压缩为摘要：{{summary}}
+    要那几轮的原文、原话或具体的名字日期，用 history_read 展开 `{{key}}`。）
+  # 展开那条路关掉时**不要广告一个不存在的工具**：原文到此永久隐去，
+  # 但摘要仍然留着——模型必须知道那几轮存在过，只是精度低了（P13）。
+  history_folded_gone: |-
+    （前面 {{span}} 轮已压缩为摘要：{{summary}}
+    那几轮的原文已经取不回来了，以这段摘要为准。）
   # corpus_search 的回执（S139）。**只有两种：找到了，或这次没找到。**
   #
   # 不要在这里加「这可能不全，仅供参考」之类的话。那是免责声明不是机制：

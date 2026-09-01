@@ -54,7 +54,7 @@ class Variant:
 
     def over(self, base: PromptSetup) -> PromptSetup:
         """叠在场景自带那份之上。**场景先定，变体再改**——变体提到的那几档
-        盖掉场景的，没提到的沿用（比如换 `history_search` 不该顺手把文风也换了）。
+        盖掉场景的，没提到的沿用（比如换 `history_read` 不该顺手把文风也换了）。
         """
         return PromptSetup(
             choices=_layer(base.choices, self.prompts.choices),

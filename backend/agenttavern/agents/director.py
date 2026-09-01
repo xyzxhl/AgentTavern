@@ -90,7 +90,7 @@ async def run_director(
     session = ctx.session
     history = ctx.repo.path_to(ctx.parent_id) if ctx.parent_id else []
 
-    prior = replay_messages(history, readable=tool_enabled("director", "history_search"))
+    prior = replay_messages(history, readable=tool_enabled("director", "history_read"))
 
     # **打断是挂起**（S48 / S49）：上次被截断处之前的推演原样接回来。
     #

@@ -17,7 +17,7 @@ from .grader import Attribution, Judgement, Verdict
 from .runner import BenchResult
 
 FIX_HINTS = {
-    Attribution.RETRIEVAL: "默认包范围、键名一致性、`history_search` 是否该开",
+    Attribution.RETRIEVAL: "默认包范围、键名一致性、`history_read` 是否该开",
     Attribution.REASONING: "director 提示词、控制维度的措辞映射",
     Attribution.DEVIATION: "writer 提示词、**细纲粒度**（Q21）",
     Attribution.WRITE_MISS: "`state_write` 的工具描述、流程步骤的措辞",

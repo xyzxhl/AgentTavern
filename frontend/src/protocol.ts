@@ -190,8 +190,6 @@ export type Content1 = string;
 export type Voice = string;
 export type IsPlayer = boolean;
 export type WorldbookMode = "always" | "on_demand";
-export type Depth = number;
-export type Summary = string | null;
 export type Format = string;
 export type Version = number;
 export type Name2 = string;
@@ -696,8 +694,6 @@ export interface WorldbookEntry {
   is_player?: IsPlayer;
   values?: Values1;
   mode?: WorldbookMode;
-  depth?: Depth;
-  summary?: Summary;
 }
 export interface Values1 {
   [k: string]: unknown;

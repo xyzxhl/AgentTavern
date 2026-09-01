@@ -50,8 +50,7 @@ session 只存一个 `worldbook_id`。
 **代价**：题材与尺度不再是独立可挪的一节，位置由设定的渲染顺序决定——
 这是"不特殊处理"的定义本身带来的。
 
-**验收** `test_worldinfo_roundtrip` · `test_export_drops_the_id_and_the_cached_summary` ·
-`test_renaming_a_worldbook_actually_renames_it`
+**验收** `test_worldinfo_roundtrip` · `test_export_drops_the_id` · `test_renaming_a_worldbook_actually_renames_it`
 
 ### S65 · 条目分三类，用户扮演的角色不是第四类
 
@@ -63,7 +62,7 @@ session 只存一个 `worldbook_id`。
 |---|---|---|
 | `world` | 一段不受限制的文本：地方、组织、规矩、历史、题材、尺度 | —— |
 | `character` | 正文 + **语言习惯**（只进 writer） | `voice` · `is_player` |
-| `state` | 一棵嵌套的键值树，这局故事第一帧的状态 | `values` · `depth` |
+| `state` | 一棵嵌套的键值树，这局故事第一帧的状态 | `values` |
 
 **用户扮演的角色是 `character` 加一个 `is_player`**，不是独立的一类。
 
@@ -101,17 +100,27 @@ session 只存一个 `worldbook_id`。
 
 **服务** [R5](../req/开局与设定.md)
 
-**规格** 每条设定可设「一直在」或「需要时才展开」。`state` 类还多一个**展开层级**，
-**按条目设而不是全局设**。
+**规格** 每条设定可设「一直在」或「需要时才展开」。
 
-**不做** 让静态设定和初始状态共用一个开关。
+**展开层级不在条目上**：状态折到第几层是**一个值**，写在
+`director.yaml` / `state_manager.yaml` 的 `- type: context, source: state`
+那一节的 `depth` 上，和 `recent` 的 `runs` 同形。默认 **2**。
 
-**为什么** 这两样东西的可见性**天然不同步**：一个角色的背景可能几百字、该按需展开，
-而他「在不在场」必须每轮都在眼前。共用一个开关时只能迁就其中一个。
+**不做** 让静态设定和初始状态共用一个开关；**不做**按条目设展开层级。
 
-同一份设定里深浅差别也很大，所以层级归条目。
+**为什么** 前一半：这两样东西的可见性**天然不同步**——一个角色的背景可能几百字、
+该按需展开，而他「在不在场」必须每轮都在眼前，共用一个开关时只能迁就其中一个。
 
-**验收** `test_always_worldinfo_is_injected_on_demand_is_indexed` · `test_worldinfo_tools_only_when_something_is_expandable`
+后一半是**推翻**：层级曾经是 `WorldbookEntry.depth`，理由写着"同一份设定里深浅
+差别很大"。那个理由站不住——**全部 `state` 条目合成的是同一棵树**
+（`compose_initial_state`），一条条目上的"给到第几层"合并之后根本没有对象。
+
+而且那条规格**从来没生效过**：`render_state` 的 `depth` 两个调用点都没传，
+恒为 0，折叠整个是死代码——**界面上那个「展开层级」输入框，用户填了、存了盘、
+对模型毫无影响**。这是「写在纸上的规格」最完整的一个标本：它读起来和落地了的
+一模一样，还配了一个能动的控件。
+
+**验收** `test_always_worldinfo_is_injected_on_demand_is_indexed` · `test_worldinfo_tools_only_when_something_is_expandable` · `test_the_fold_depth_comes_from_the_yaml_and_really_folds`
 
 ### S68 · 设定的两路投影
 
@@ -135,26 +144,28 @@ session 只存一个 `worldbook_id`。
 
 **验收** `test_state_entries_become_the_replay_base` · `test_deleting_a_state_entry_before_the_story_starts_takes_effect`
 
-### S69 · 交换格式不带 id、不带摘要、不带任何会话配置
+### S69 · 交换格式不带 id、不带任何会话配置
 
 **服务** [R6](../req/开局与设定.md)
 
 **规格** 文件是 `{format, version, name, note, entries}`。导出时**去掉 id**，
 导入时重新分配。
 
-**不做** 带 id、带摘要缓存、带任何"这一局怎么玩"的配置。
+**不做** 带 id、带任何"这一局怎么玩"的配置。
 
 **为什么**
 
 - **id** 是这一份存储里的地址，不是条目的身份。带着它导入会**撞上已有条目就静默
   覆盖**，或者两份文件里的同名 id 指向完全不同的东西。代价是导出再导入拿不回原来的
   id，**所以这个格式不能拿来做备份还原**——备份是另一件事，格式不该同时服务两个目的。
-- **摘要**是懒惰生成的缓存，跟着正文走。正文一旦被人改过旧摘要就是错的，
-  而导入方无从判断改没改。**缓存不该跨机器传播。**
+- **摘要那一条已经没有对象了**：条目上曾经有个 `summary` 缓存字段，导出时要抹掉
+  （缓存跟着正文走，正文改过旧摘要就是错的，而导入方无从判断改没改）。
+  那个字段随 `summarize` 工具一起删了（[S25](Tools.md)）——条目是 title → content，
+  没有摘要这回事。判据仍然成立，只是现在没有第二个可缓存的东西。
 - **会话配置**混进来会让导入变成一件危险的事：用户想要的是几个角色设定，
   却顺带被改掉了文风、视角和能力开关。
 
-**验收** `test_export_drops_the_id_and_the_cached_summary` · `test_import_reassigns_ids_so_nothing_is_silently_overwritten`
+**验收** `test_export_drops_the_id` · `test_import_reassigns_ids_so_nothing_is_silently_overwritten`
 
 ### S70 · 导入有两种，都不改已经冻结的初始状态
 
@@ -172,9 +183,16 @@ session 只存一个 `worldbook_id`。
 **都不改已经冻结的初始状态**：故事一旦开始，起点就定死了。
 故事还没开始时，导入会立刻改变当前状态——那时没有任何一轮依赖它。
 
-重名**不做合并，也不报错**：同名条目可以并存。
+重名**不做合并**，但**名字会在写入时被收敛**：撞名的那一条自动加序号
+（`教团 2`），一条都不丢。
 
-**为什么** 名字是给人看的标签，不是主键；**真要去重该由人看着办，代码替他猜只会猜错。**
+**为什么** 不合并的理由没变：名字是给人看的标签，两条同名的设定完全可能是两回事，
+**真要去重该由人看着办，代码替他猜只会猜错。**
+
+加序号是后来补的：名字现在**是地址**（[S157](Retrieval.md#s157)——模型按名字
+展开条目），两条同名就有一条永远取不到，而**没有任何地方会报错**。
+所以在写入路径上收敛，和「用户扮演谁」走同一条路（[S66](#s66)）：
+读时挑一个等于让每个读的人各自去猜，而盘上始终躺着一份自相矛盾的数据。
 
 **验收** `test_import_can_replace_instead_of_append` · `test_importing_a_file_can_create_a_new_worldbook` · `test_import_reassigns_ids_so_nothing_is_silently_overwritten`
 

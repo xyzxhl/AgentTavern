@@ -21,11 +21,11 @@ from ..prompting import enabled, tool_enabled
 from .base import Tool, ToolResult, error
 from .builtin import (
     ask_question_tool,
-    history_tools,
+    history_read_tool,
     state_query_tool,
     state_write_tool,
     submit_tool,
-    worldinfo_tools,
+    worldinfo_read_tool,
 )
 from .corpus import corpus_tool
 from .goal import goal_tools
@@ -50,15 +50,18 @@ def build_tools(
     if enabled("state_manager") and tool_enabled("director", "state_query"):
         tools.append(state_query_tool("director"))
 
-    if tool_enabled("director", "history_search"):
-        tools += history_tools()
+    # **三个展开工具各自按自己的开关注册**（S21/S157）：共用一份实现，
+    # 但工具面上是三个——历史关掉时它的展开工具要跟着消失，而一个统管三个域的
+    # 大工具只能"注册着但有一半用不了"。
+    if tool_enabled("director", "history_read"):
+        tools.append(history_read_tool())
 
     # 全部条目都是常驻注入、或按需展开被关掉时不注册——
     # 没有任何东西可展开，留着只是白占 prompt 体量。
     if tool_enabled("director", "worldinfo_read") and any(
         e.mode is WorldbookMode.ON_DEMAND and e.is_lore for e in worldinfo or []
     ):
-        tools += worldinfo_tools()
+        tools.append(worldinfo_read_tool())
 
     # **一份资料都没挂就不注册**（S145）：同上一条，注册一个没东西可查的工具
     # 白占提示词体量、还会被试着调一次。还在建索引的那几份**算挂着**——

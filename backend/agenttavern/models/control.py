@@ -11,7 +11,7 @@ session / worldbook / 服务三个层级：
 | `ControlOverride`（单轮覆盖） | **删掉**：没有被覆盖的对象了 |
 | `Capabilities.nudge` / `summarize` | director 的 `specials.nudge` / `.segment` 的 `enabled` |
 | `Capabilities.state` | `state_manager.yaml` 顶上的 `enabled`（这个 agent 跑不跑） |
-| `Capabilities.state_query` / `worldinfo_read` / `history_search` 等 | 各自那个工具的 `enabled` |
+| `Capabilities.state_query` / `worldinfo_read` / `history_read` 等 | 各自那个工具的 `enabled` |
 | `Capabilities.upstream_runs` / `state_recent_runs` | 对应那条 `context` 上的 `runs` |
 | `Capabilities.stream` / `trace` | **`Settings`**（服务级，关于交付与运维，不关于能力） |
 

@@ -100,39 +100,17 @@ class WorldbookEntry(BaseModel):
     **若全部 `LORE` 条目都是 `ALWAYS`，worldinfo 工具不注册**——没有东西可展开，
     留着工具只是白占体量。
 
-    `STATE`：`ALWAYS` 不折叠，`ON_DEMAND` 按 `depth` 折叠、深处由 `state_query` 展开。
-    """
+    `STATE`：`ALWAYS` 不折叠，`ON_DEMAND` 按折叠层级折、深处由 `state_query` 展开。
 
-    depth: int = 0
-    """`STATE` 条目的**展开层级**（S31/S67）：深过这一层的子树只给条数。
-
-    `0` 表示不折叠。只在 `mode` 是 `ON_DEMAND` 时才起作用——常驻的东西没有
-    "按需"可言。
-
-    它按条目设而不是全局设，因为同一份 worldbook 里深浅差别很大：一个角色的属性
-    树值得给到第二层，而一份地理志给到第一层就够。
+    **层级不在这里**（S67）：全部 `STATE` 条目合成的是**同一棵状态树**
+    （`compose_initial_state`），一条条目上的"给到第几层"合并之后根本没有意义。
+    它现在是两份 YAML 上 `- type: context, source: state` 那一节的 `depth`。
     """
 
     @property
     def is_lore(self) -> bool:
         """进 worldinfo 的那两类：世界设定与角色设定。"""
         return self.kind in (EntryKind.WORLD, EntryKind.CHARACTER)
-
-    def ref_hint(self) -> str:
-        return self.id
-
-    def head(self, head_chars: int = 120) -> str:
-        """索引里那一行的正文预览。
-
-        **条目没有"摘要"这回事**：`summary` 字段随 `summarize` 工具一起删掉了
-        （那是唯一写它的地方）。`summary` 这个词现在只指**history 压缩出来的
-        那一段**（`Node.outline_summary`）——一个词指两样东西时，讨论"摘要
-        由谁生成"会一直错位。
-
-        条目是 **title → content**：名字就是它的提要，正文按需展开。
-        """
-        head = self.content[:head_chars]
-        return head + "…" if len(self.content) > head_chars else head
 
 
 class Worldbook(BaseModel):

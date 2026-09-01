@@ -82,7 +82,9 @@ def test_the_specials_and_the_rendering_strings_are_reachable(client) -> None:
     data = client.get("/prompts/director").json()["data"]
 
     assert "断在第几条之后" in data["specials"]["segment"]["sections"][0]["body"]
-    assert data["rendering"]["worldinfo_expand"] == "用 worldinfo_read 按 ref 展开。"
+    assert data["rendering"]["worldinfo_expand"] == "用 worldinfo_read 按名字展开。"
+    # 前情那两句同理：它们是折起来的那一段摆出来的话，其中一句还带着工具名。
+    assert "history_read" in data["rendering"]["history_folded"]
 
 
 def test_saving_runs_a_dry_assembly_first(client) -> None:

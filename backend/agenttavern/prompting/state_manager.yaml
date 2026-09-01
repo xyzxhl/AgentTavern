@@ -94,6 +94,8 @@ sections:
 - type: context
   role: user
   source: state
+  # 状态给到第几层：深过这一层的子树只给项数，模型按需展开（S67）。
+  depth: 2
 - type: context
   role: user
   source: recent
