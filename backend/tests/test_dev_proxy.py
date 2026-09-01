@@ -55,7 +55,7 @@ def backend_prefixes() -> set[str]:
             if nested is not route:
                 walk(getattr(nested, "routes", None))
 
-    walk(create_app(Settings(llm_model="m"), None).routes)
+    walk(create_app(Settings(), None).routes)
     assert out, "一个前缀都没数到——枚举方式又和这一版 FastAPI 对不上了"
     return out
 

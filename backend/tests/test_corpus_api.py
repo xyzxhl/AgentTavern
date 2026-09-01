@@ -47,7 +47,7 @@ class FakeEmbedder:
 
 @pytest.fixture
 def client(tmp_path: Path):
-    settings = Settings(data_dir=tmp_path, llm_model="m")
+    settings = Settings(data_dir=tmp_path)
     with TestClient(create_app(settings, ScriptedLLM().gateway())) as c:
         yield c
 

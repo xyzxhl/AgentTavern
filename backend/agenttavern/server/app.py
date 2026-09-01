@@ -180,11 +180,10 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
         # `options`（有哪些文风 / 视角档）**已删除**（R31）：档位和当前取值都
         # 住在 agent 的 YAML 里，前端要看就去 `/prompts/{name}`——这里再给一份
         # 就是同一件事的第二个入口。
-        return {
-            "developer": resolved.developer,
-            "model": resolved.llm_model,
-            "stream": resolved.stream,
-        }
+        # `model` / `stream` **也删掉了**（S159）：它们按 agent 各设一份，
+        # 住在那份 YAML 顶上。这里再给一份全局的，就是同一件事的第二个入口——
+        # 而四份可能各不相同，那一份必然是在撒谎。
+        return {"developer": resolved.developer}
 
     # -- session ------------------------------------------------------------
 
@@ -481,7 +480,6 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
             active,
             broadcast,
             developer=resolved.developer,
-            stream=resolved.stream,
             persist_trace=resolved.trace,
             embedder=embedder,
             reranker=reranker,

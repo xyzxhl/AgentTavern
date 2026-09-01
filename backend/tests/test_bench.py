@@ -160,7 +160,7 @@ async def test_run_scenario_chains_turns_and_keeps_going_after_a_failure(tmp_pat
         text("我在想"),
         state=dict(set={"地点": "客厅"}),
     )
-    settings = Settings(data_dir=tmp_path, llm_model="test")
+    settings = Settings(data_dir=tmp_path)
     scenario = SCENARIOS["noir"]
 
     result = await run_scenario(scenario, llm.gateway(), settings, limit=2)
@@ -183,7 +183,7 @@ async def test_turns_are_chained_so_state_accumulates(tmp_path: Path) -> None:
         text("她看着他。灯很暗。"),
         state=[dict(set={"地点": "客厅"}), dict(append={"林昭": {"知情": ["陈撒谎了"]}})],
     )
-    settings = Settings(data_dir=tmp_path, llm_model="test")
+    settings = Settings(data_dir=tmp_path)
 
     result = await run_scenario(SCENARIOS["noir"], llm.gateway(), settings, limit=2)
 
@@ -483,7 +483,7 @@ async def test_regrade_rebuilds_the_same_material_from_disk(tmp_path: Path) -> N
         text("她看着他。灯很暗。"),
         state=[dict(set={"地点": "客厅"}), dict(append={"林昭.知情": ["陈撒谎了"]})],
     )
-    settings = Settings(data_dir=tmp_path, llm_model="test")
+    settings = Settings(data_dir=tmp_path)
     original = await run_scenario(SCENARIOS["noir"], llm.gateway(), settings, limit=2)
 
     reloaded = load_result(settings, original.session_id)
@@ -501,7 +501,7 @@ async def test_report_renders_without_grading(tmp_path: Path) -> None:
         text("门开了。"),
         state=dict(set={"地点": "客厅"}),
     )
-    settings = Settings(data_dir=tmp_path, llm_model="test")
+    settings = Settings(data_dir=tmp_path)
     result = await run_scenario(SCENARIOS["noir"], llm.gateway(), settings, limit=1)
 
     markdown = render(result, [], model="m", grader_model="g")
@@ -530,7 +530,7 @@ async def test_a_goal_scenario_is_driven_by_the_goal_manager(tmp_path: Path) -> 
         ),
         text("完了。"),
     )
-    settings = Settings(data_dir=tmp_path, llm_model="test")
+    settings = Settings(data_dir=tmp_path)
 
     result = await run_scenario(SCENARIOS["noir_goal"], llm.gateway(), settings)
 
@@ -557,7 +557,7 @@ async def test_a_goal_scenario_stops_when_the_budget_runs_out(tmp_path: Path) ->
         ),
         text("先推到这里。"),
     )
-    settings = Settings(data_dir=tmp_path, llm_model="test")
+    settings = Settings(data_dir=tmp_path)
     scenario = SCENARIOS["noir_goal"]
     stingy = Variant(name="穷", note="只给一轮预算")
 

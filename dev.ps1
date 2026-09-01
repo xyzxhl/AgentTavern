@@ -77,7 +77,18 @@ if (-not (Test-Path (Join-Path $Frontend 'node_modules'))) {
 }
 if (-not (Test-Path (Join-Path $Backend '.env'))) {
     Fail '缺 backend\.env —— 服务能起来，但一调模型就 401。' `
-         'copy backend\.env.example backend\.env 然后填 LLM_API_KEY 和 LLM_MODEL'
+         'copy backend\.env.example backend\.env 然后填 LLM_API_KEY'
+}
+
+# 模型名按 agent 各设一份（S159），住在那几份 YAML 顶上。**这道检查因此从
+# 「.env 里有没有 LLM_MODEL」挪到了这里**——空的那份会在第一次真调模型时抛，
+# 而那时已经是一轮跑到一半了。
+$blank = Get-ChildItem (Join-Path $Backend 'agenttavern\prompting\*.yaml') | Where-Object {
+    -not ((Get-Content $_.FullName -Encoding utf8) -match '^model:\s*\S')
+}
+if ($blank) {
+    Fail "这几份提示词顶上没写 model：$(($blank.Name) -join ', ')" `
+         '打开那几份 YAML，在顶上写 model: <模型名>'
 }
 
 # 端口被占：uvicorn 自己的报错是一行 WinError 10048，看不出是谁占的。

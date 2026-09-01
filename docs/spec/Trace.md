@@ -56,7 +56,7 @@ trace 是**评估与排查的唯一数据源**，也是界面的数据源：
 
 默认关的理由是**体量**：一次往返动辄几万字，一轮四个 agent 上十万。
 
-**验收** `test_developer_mode_records_every_agents_real_exchange` · `test_meta_no_longer_carries_the_control_options`
+**验收** `test_developer_mode_records_every_agents_real_exchange` · `test_meta_carries_only_what_is_really_service_wide`
 
 ### S114 · 开了就记每个 agent 的完整输入输出，一个都不能少
 
@@ -130,4 +130,8 @@ trace 是**评估与排查的唯一数据源**，也是界面的数据源：
 writer 写的才是正文。**不按来源分开攒，界面就会把「我先把这一轮推演清楚」当成故事的
 第一句**——实跑中攒出 1084 字而节点正文只有 782 字，第一版正是这么错的。
 
-**验收** `test_prose_arrives_in_pieces_while_it_is_written` · `test_the_final_node_is_still_the_authority` · `test_the_agents_after_the_writer_stream_too` · `test_streaming_can_be_switched_off`
+**流不流按 agent 各设一份**（[S159](Prompting.md#s159)）：那份 YAML 顶上的
+`stream`。它曾经是一个服务级开关，于是"正文流着看、状态维护不必流"这种差别
+根本表达不了——而那正是这个旋钮最常见的用法。
+
+**验收** `test_prose_arrives_in_pieces_while_it_is_written` · `test_the_final_node_is_still_the_authority` · `test_the_agents_after_the_writer_stream_too` · `test_streaming_is_per_agent`

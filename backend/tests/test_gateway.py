@@ -10,14 +10,17 @@ import httpx2
 import pytest
 
 from agenttavern.config import Settings
-from agenttavern.llm import LLMError, LLMGateway, Message, Role, ToolSpec
+from agenttavern.llm import Call, LLMError, LLMGateway, Message, Role, ToolSpec
+
+CALL = Call(model="test-model")
+"""这一批测试钉的是**请求形状**，不是旋钮本身——所以统一给一个最简单的。
+旋钮怎么从 YAML 读、怎么按 agent 分，在 `test_prompts_api.py`（S159）。"""
 
 
 def settings(**kw: Any) -> Settings:
     base = {
         "llm_base_url": "https://example.test/v1",
         "llm_api_key": "sk-test",
-        "llm_model": "test-model",
         "llm_max_retries": 2,
     }
     return Settings(**{**base, **kw})
@@ -54,7 +57,7 @@ async def test_hits_the_configured_base_url() -> None:
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     gw = LLMGateway(settings(), http_client=client)
 
-    await gw.complete([Message(role=Role.USER, content="hi")])
+    await gw.complete([Message(role=Role.USER, content="hi")], call=CALL)
     assert str(captured[0].url) == "https://example.test/v1/chat/completions"
     assert captured[0].headers["Authorization"] == "Bearer sk-test"
 
@@ -63,7 +66,7 @@ async def test_blank_api_key_is_accepted() -> None:
     """本地端点（llama.cpp / vLLM）常常不校验 key，但 SDK 要求非空。"""
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(lambda _: ok({"content": "好"})))
     gw = LLMGateway(settings(llm_api_key=""), http_client=client)
-    assert (await gw.complete([Message(role=Role.USER, content="hi")])).content == "好"
+    assert (await gw.complete([Message(role=Role.USER, content="hi")], call=CALL)).content == "好"
 
 
 async def test_request_shape_is_openai_format() -> None:
@@ -75,7 +78,9 @@ async def test_request_shape_is_openai_format() -> None:
         description="点查",
         parameters={"type": "object", "properties": {"dimension": {"type": "string"}}},
     )
-    await gw.complete([Message(role=Role.USER, content="hi")], tools=[tool], temperature=0.8)
+    await gw.complete(
+        [Message(role=Role.USER, content="hi")], call=CALL, tools=[tool], temperature=0.8
+    )
 
     payload = sent[0]
     assert payload["model"] == "test-model"
@@ -105,7 +110,7 @@ async def test_parses_tool_calls() -> None:
         )
     )
 
-    result = await gw.complete([Message(role=Role.USER, content="hi")])
+    result = await gw.complete([Message(role=Role.USER, content="hi")], call=CALL)
     call = result.tool_calls[0]
     assert call.name == "state_write"
     assert call.arguments == {"free": {"心情": "紧绷"}}
@@ -132,7 +137,7 @@ async def test_malformed_tool_arguments_are_captured_not_raised() -> None:
         )
     )
 
-    call = (await gw.complete([Message(role=Role.USER, content="hi")])).tool_calls[0]
+    call = (await gw.complete([Message(role=Role.USER, content="hi")], call=CALL)).tool_calls[0]
     assert call.arguments is None
     assert call.parse_error
     assert call.arguments_raw == "{不是合法JSON"
@@ -147,7 +152,8 @@ async def test_tool_result_message_roundtrip() -> None:
         [
             Message(role=Role.USER, content="hi"),
             Message(role=Role.TOOL, content="厨房", tool_call_id="call_1"),
-        ]
+        ],
+        call=CALL,
     )
     assert sent[0]["messages"][1] == {
         "role": "tool",
@@ -158,7 +164,7 @@ async def test_tool_result_message_roundtrip() -> None:
 
 async def test_retries_transient_then_succeeds() -> None:
     gw = gateway_returning(httpx2.Response(503, text="busy"), ok({"content": "好"}))
-    assert (await gw.complete([Message(role=Role.USER, content="hi")])).content == "好"
+    assert (await gw.complete([Message(role=Role.USER, content="hi")], call=CALL)).content == "好"
 
 
 async def test_does_not_retry_client_error() -> None:
@@ -173,7 +179,7 @@ async def test_does_not_retry_client_error() -> None:
     gw = LLMGateway(settings(), http_client=client)
 
     with pytest.raises(LLMError) as exc:
-        await gw.complete([Message(role=Role.USER, content="hi")])
+        await gw.complete([Message(role=Role.USER, content="hi")], call=CALL)
     assert exc.value.status == 401
     assert calls == 1
 
@@ -182,7 +188,7 @@ async def test_empty_choices_raises() -> None:
     """部分端点在被过滤/拒绝时返回空 choices 而非错误码。"""
     gw = gateway_returning(httpx2.Response(200, json={"choices": []}))
     with pytest.raises(LLMError, match="choices"):
-        await gw.complete([Message(role=Role.USER, content="hi")])
+        await gw.complete([Message(role=Role.USER, content="hi")], call=CALL)
 
 
 # -- reasoning_content（S62） -------------------------------------------------
@@ -207,7 +213,7 @@ def _tool_reply(reasoning: str | None) -> dict[str, Any]:
 async def test_reasoning_content_is_captured() -> None:
     """它**不在 OpenAI 的 schema 里**，SDK 丢进 `model_extra`——不主动去取就没了。"""
     gw = gateway_returning(ok(_tool_reply("先查地点再决定。")))
-    result = await gw.complete([Message(role=Role.USER, content="hi")])
+    result = await gw.complete([Message(role=Role.USER, content="hi")], call=CALL)
     assert result.reasoning_content == "先查地点再决定。"
 
 
@@ -220,13 +226,14 @@ async def test_reasoning_content_rides_along_with_tool_calls() -> None:
     sent: list[dict[str, Any]] = []
     gw = gateway_returning(ok(_tool_reply("先查地点再决定。")), ok({"content": "好"}), capture=sent)
 
-    first = await gw.complete([Message(role=Role.USER, content="hi")])
+    first = await gw.complete([Message(role=Role.USER, content="hi")], call=CALL)
     await gw.complete(
         [
             Message(role=Role.USER, content="hi"),
             first.as_assistant_message(),
             Message(role=Role.TOOL, content="旧货店", tool_call_id="call_1"),
-        ]
+        ],
+        call=CALL,
     )
 
     assistant = sent[1]["messages"][1]
@@ -240,7 +247,7 @@ async def test_reasoning_content_is_dropped_when_there_is_no_tool_call() -> None
     白背一段推理不划算。
     """
     gw = gateway_returning(ok({"content": "我想想", "reasoning_content": "在想。"}))
-    result = await gw.complete([Message(role=Role.USER, content="hi")])
+    result = await gw.complete([Message(role=Role.USER, content="hi")], call=CALL)
 
     assert result.reasoning_content == "在想。"
     assert result.as_assistant_message().reasoning_content is None
@@ -251,8 +258,10 @@ async def test_a_response_without_reasoning_sends_no_such_field() -> None:
     sent: list[dict[str, Any]] = []
     gw = gateway_returning(ok(_tool_reply(None)), ok({"content": "好"}), capture=sent)
 
-    first = await gw.complete([Message(role=Role.USER, content="hi")])
+    first = await gw.complete([Message(role=Role.USER, content="hi")], call=CALL)
     assert first.reasoning_content is None
 
-    await gw.complete([Message(role=Role.USER, content="hi"), first.as_assistant_message()])
+    await gw.complete(
+        [Message(role=Role.USER, content="hi"), first.as_assistant_message()], call=CALL
+    )
     assert "reasoning_content" not in sent[1]["messages"][1]

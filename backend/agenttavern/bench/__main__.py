@@ -16,6 +16,7 @@ from pathlib import Path
 
 from ..config import Settings, load_settings
 from ..llm import LLMGateway
+from ..prompting import call_of
 from .grader import Judgement, grade_turn
 from .report import render
 from .runner import BASELINE, BenchResult, load_result, run_scenario
@@ -83,11 +84,14 @@ def _progress(turn: object) -> None:
 
 async def _main(args: argparse.Namespace) -> int:
     settings: Settings = load_settings()
-    if not settings.llm_model:
-        print("!! .env 里没有 LLM_MODEL", file=sys.stderr)
+    # **模型名按 agent 各设一份**（S159），住在那几份 YAML 顶上。这里报的是
+    # director 那份——它是被判得最多的那一个。
+    model = call_of("director").model
+    if not model:
+        print("!! director.yaml 顶上没写 model", file=sys.stderr)
         return 2
 
-    grader_model = args.grader_model or settings.llm_model
+    grader_model = args.grader_model or model
 
     if args.regrade:
         # 只重判，不重新生成——grader 改动前后必须比在同一批素材上，
@@ -96,10 +100,10 @@ async def _main(args: argparse.Namespace) -> int:
         print(f"重判 {args.regrade}（{len(result.turns)} 轮）  grader {grader_model}")
         async with LLMGateway(settings) as gateway:
             judgements = await _grade_all(gateway, result, grader_model, args.repeat)
-        return _write(args, result, judgements, settings.llm_model, grader_model)
+        return _write(args, result, judgements, model, grader_model)
 
     scenario = SCENARIOS[args.scenario]
-    print(f"场景 {scenario.name}（{len(scenario.inputs)} 轮）  模型 {settings.llm_model}")
+    print(f"场景 {scenario.name}（{len(scenario.inputs)} 轮）  模型 {model}")
 
     async with LLMGateway(settings) as gateway:
         result = await run_scenario(
@@ -115,7 +119,7 @@ async def _main(args: argparse.Namespace) -> int:
             print("归因中……")
             judgements = await _grade_all(gateway, result, grader_model, args.repeat)
 
-    return _write(args, result, judgements, settings.llm_model, grader_model)
+    return _write(args, result, judgements, model, grader_model)
 
 
 def main() -> int:

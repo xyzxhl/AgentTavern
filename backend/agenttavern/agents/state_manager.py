@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from ..config import LIMITS
 from ..llm import Message, Role
 from ..models import Actor, StateDelta, TraceEventType
-from ..prompting import state_manager_prompt, state_recent_runs
+from ..prompting import call_of, state_manager_prompt, state_recent_runs
 from ..tools import RunContext, ToolRegistry
 from ..tracing import Tracer
 
@@ -104,6 +104,7 @@ async def run_state_manager(
         response = await ctx.gateway.complete(
             messages,
             tools=specs,
+            call=call_of("state_manager"),
             user_id=ctx.session.id,
             on_delta=ctx.stream_to(Actor.STATE_MANAGER),
         )

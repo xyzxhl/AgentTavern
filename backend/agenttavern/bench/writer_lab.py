@@ -30,7 +30,7 @@ from ..agents.writer import DEVIATION_MARKER
 from ..config import Settings, load_settings
 from ..llm import LLMGateway, Message
 from ..models import WorldbookEntry
-from ..prompting import upstream_runs, writer_prompt
+from ..prompting import call_of, upstream_runs, writer_prompt
 from ..storage import Store
 
 
@@ -155,7 +155,13 @@ async def render_once(
     if terse:
         messages = _terse(messages)
 
-    response = await gateway.complete(messages, thinking=thinking)
+    # **thinking 走 `extra` 透传**（S159）：各家拼法不同，这里发的是 DeepSeek
+    # 那个形状——writer_lab 是对着一家端点做的实验工具，不必可移植。
+    call = call_of("writer")
+    if thinking is not None:
+        mode = {"type": "enabled" if thinking else "disabled"}
+        call = call.model_copy(update={"extra": {**call.extra, "thinking": mode}})
+    response = await gateway.complete(messages, call=call)
     raw = response.content
     prose, _, report = raw.partition(DEVIATION_MARKER)
     return Rendering(
@@ -211,12 +217,13 @@ def main() -> int:
     args = p.parse_args()
 
     settings = load_settings()
-    if not settings.llm_model:
-        print("!! .env 里没有 LLM_MODEL", file=sys.stderr)
+    model = call_of("writer").model
+    if not model:
+        print("!! writer.yaml 顶上没写 model", file=sys.stderr)
         return 2
 
     thinking = None if args.thinking is None else args.thinking == "on"
-    print(f"细纲取自 {args.session}　模型 {settings.llm_model}　thinking={args.thinking or '默认'}")
+    print(f"细纲取自 {args.session}　模型 {model}　thinking={args.thinking or '默认'}")
     result = asyncio.run(
         run_lab(
             settings,

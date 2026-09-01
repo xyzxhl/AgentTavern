@@ -85,7 +85,6 @@ class SessionRunner:
         broadcast: Broadcast,
         *,
         developer: bool = False,
-        stream: bool = True,
         persist_trace: bool = False,
         embedder: EmbedderLike | None = None,
         reranker: Reranker | None = None,
@@ -103,12 +102,9 @@ class SessionRunner:
         从这里往下传而不是在工具里现建——现建就要在工具深处读一次 `.env`，
         而"每次检索新建一个 HTTP 客户端"是那种不会报错、只会变慢的事。
         """
-        self._stream = stream
-        """**边生成边推**（`Settings.stream`，S118/S80）。**它在服务级**：
-        这组开关里唯一一条**关于交付而不是关于能力**的——开关它不改变模型
-        收到什么、也不改变产出，只改变用户什么时候看到。别的开关全都上调
-        到了提示词层，只有这一条上调到服务。
-        """
+        # **流不流不在这里判**（S159）：编排层永远给出口，那份 YAML 上的
+        # `stream` 决定这个 agent 要不要用它。以前这里有个服务级开关，于是
+        # "正文流着看、状态维护不必流"这种差别根本表达不了。
         self._persist_trace = persist_trace
         self._developer = developer
         """**服务级开发者模式**（S113，`Settings.developer`）：额外记录每次模型
@@ -375,7 +371,7 @@ class SessionRunner:
                 # 分片带上 run_id：前端要把它归到正确的那一轮名下（S118）。
                 # **不流式时干脆不给出口**（S80）：那是服务级的交付开关，
                 # 在这里决定一次，下游不必再各判一遍。
-                on_delta=self._emit_delta if self._stream else None,
+                on_delta=self._emit_delta,
                 run_id=run_id,
             )
         except asyncio.CancelledError:
@@ -515,10 +511,8 @@ class SessionRunner:
             user_id=session.id,
             # **它的思考也要能看见**（S126）。分片和它的 trace 事件挂同一个
             # `run_id`——显式传而不是靠 `self._run_id` 刚好设对了。
-            on_delta=(
-                (lambda kind, text: self._emit_delta(Actor.GOAL_MANAGER.value, kind, text, run_id))
-                if self._stream
-                else None
+            on_delta=lambda kind, text: self._emit_delta(
+                Actor.GOAL_MANAGER.value, kind, text, run_id
             ),
         )
         return step, tracer.usage

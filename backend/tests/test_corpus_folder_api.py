@@ -20,7 +20,7 @@ TANG = "尚书省掌管六部政令，长官为尚书令。中书省负责起草
 
 @pytest.fixture
 def app(tmp_path: Path):
-    settings = Settings(data_dir=tmp_path, llm_model="m")
+    settings = Settings(data_dir=tmp_path)
     with TestClient(create_app(settings, ScriptedLLM().gateway())) as client:
         yield client, tmp_path / "corpus_files"
 

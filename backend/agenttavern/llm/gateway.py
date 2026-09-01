@@ -21,7 +21,7 @@ import httpx2
 from openai import APIError, AsyncOpenAI
 
 from ..config import Settings
-from .types import LLMError, Message, ModelResponse, ToolCall, ToolSpec, Usage
+from .types import Call, LLMError, Message, ModelResponse, ToolCall, ToolSpec, Usage
 
 OnDelta = Callable[[str, str], None]
 """``(kind, text)``——``kind`` 是 ``"content"`` 或 ``"reasoning"``。
@@ -59,25 +59,29 @@ class LLMGateway:
         messages: list[Message],
         *,
         tools: list[ToolSpec] | None = None,
-        model: str | None = None,
+        call: Call,
         temperature: float | None = None,
         max_tokens: int | None = None,
-        thinking: bool | None = None,
         user_id: str | None = None,
         on_delta: OnDelta | None = None,
     ) -> ModelResponse:
-        """一次非流式补全。
+        """一次补全。
 
-        ``model`` 可覆盖默认值——四个 agent 将来可能用不同模型。
+        ``call`` 带着这一次调用的三个旋钮：**用哪个模型、流不流、额外塞什么**
+        （S159）。它是必填的——**没有全局兜底**：以前 `model` 留空就回落到
+        `.env` 里那个，于是某份 YAML 忘了写模型，它照样跑得好好的、用着别人的
+        那个，而没有任何地方会说一声。
 
-        ``thinking`` 显式开关思考模式。**DeepSeek 上它默认开启（effort=high），
-        而开启时 `temperature` / `top_p` / `presence_penalty` / `frequency_penalty`
-        全部被静默忽略**——不报错，就是不生效。实测：默认配置下同一个 prompt 连发
-        三次、`temperature=0`，三次输出都不同；关掉思考后三次完全相同。
+        ``call.extra`` **原样并进 `extra_body`**，一个字都不解释。思考模式那类
+        参数走这里——各家拼法根本不同（`thinking: {type}` / `reasoning_effort`
+        / `budget_tokens`），定一套可移植的三档就要按家数映射，而猜错的症状是
+        **不报错、只是没生效**。
 
-        所以传 `temperature` 而不管思考模式，等于什么都没设。**要确定性就必须
-        同时关掉思考**，而那是个有代价的决定（思考本身在很多任务上是有用的），
-        因此这里只提供开关，不替调用方选。
+        > 关于思考模式有一条实测值得记：**DeepSeek 上它默认开启**，而开启时
+        > `temperature` / `top_p` / `presence_penalty` / `frequency_penalty`
+        > 全部被**静默忽略**——不报错，就是不生效。同一个 prompt 连发三次、
+        > `temperature=0`，三次输出都不同；关掉思考后三次完全相同。
+        > 所以传 `temperature` 而不管思考模式，等于什么都没设。
 
         ``user_id`` **按业务侧身份隔离 KVCache**（DeepSeek 的字段名就是 `user_id`，
         不是 OpenAI 标准的 `user`——传后者会被静默忽略）。实测：同一份前缀，
@@ -88,8 +92,11 @@ class LLMGateway:
         连跑两次会互相命中，于是 `cache_rate` 里混进了跨会话的旧缓存，
         而 S60 要量的是**同一段对话内的前缀复用**。传上会话 id，这个数才是干净的。
         """
+        if not call.model:
+            raise LLMError("这次调用没有模型名——那份 YAML 顶上的 `model` 是空的。")
+
         payload: dict[str, Any] = {
-            "model": model or self._settings.llm_model,
+            "model": call.model,
             "messages": [m.to_wire() for m in messages],
             "stream": False,
         }
@@ -99,18 +106,20 @@ class LLMGateway:
             payload["temperature"] = temperature
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
-        # 两个都不在 OpenAI 的 schema 里，走 extra_body。
-        extra: dict[str, Any] = {}
-        if thinking is not None:
-            extra["thinking"] = {"type": "enabled" if thinking else "disabled"}
+        # 都不在 OpenAI 的 schema 里，走 extra_body。**`user_id` 摆在后面**：
+        # 它是缓存隔离的命脉（见下），不能被 YAML 里随手写的一个同名键盖掉。
+        extra: dict[str, Any] = {**call.extra}
         if user_id is not None:
             extra["user_id"] = user_id
         if extra:
             payload["extra_body"] = extra
 
-        if on_delta is not None:
+        # **两个条件都要成立**：编排层给了出口，而且这个 agent 设了要流。
+        if on_delta is not None and call.stream:
             payload["stream"] = True
             payload["stream_options"] = {"include_usage": True}
+        else:
+            on_delta = None
 
         try:
             if on_delta is None:

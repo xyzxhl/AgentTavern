@@ -33,8 +33,9 @@ import json
 from dataclasses import dataclass
 from enum import StrEnum
 
-from ..llm import LLMGateway, Message, Role
+from ..llm import Call, LLMGateway, Message, Role
 from ..models import StateDelta
+from ..prompting import call_of
 
 
 class Attribution(StrEnum):
@@ -255,7 +256,7 @@ async def grade_turn(
     prose: str,
     state_before: dict[str, object],
     delta: StateDelta,
-    model: str | None = None,
+    model: str = "",
     repeat: int = 1,
 ) -> list[Judgement]:
     """对一轮做归因。**逐类独立调用**，互不见面。
@@ -264,6 +265,10 @@ async def grade_turn(
     读法**（P19）。实测：同一批素材连判三次，跨次稳定复现的三条全是真问题，
     只出现一次的四条全是误报。温度已经设为 0，但它并不能消掉这种波动。
     """
+    # **grader 不跟着任何一份 agent YAML 走**：它是评测工具，用哪个模型判是
+    # 调用方的事（`--grader-model`），默认取 director 那份——它是被判得最多的
+    # 那一个，用同一个模型至少让"判官和被判的一样"这件事说得清。
+    model = model or call_of("director").model
     needs_prose = {Attribution.DEVIATION, Attribution.WRITE_MISS}
     results: list[Judgement] = []
 
@@ -288,7 +293,9 @@ async def grade_turn(
 
         for _ in range(max(1, repeat)):
             try:
-                response = await gateway.complete(messages, model=model, temperature=0.0)
+                response = await gateway.complete(
+                    messages, call=Call(model=model, stream=False), temperature=0.0
+                )
             except Exception as exc:
                 unknowns += 1
                 evidences.append(f"grader 调用失败：{type(exc).__name__}")

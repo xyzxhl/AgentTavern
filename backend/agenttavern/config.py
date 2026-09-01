@@ -41,7 +41,10 @@ class Settings(BaseSettings):
     """
 
     llm_api_key: str = Field(default="", repr=False)
-    llm_model: str = ""
+
+    # **模型名不在这里了**（S159）：它按 agent 各设一份，写在那份 YAML 顶上的
+    # `model` 里。留一个全局兜底的坏处很具体——某份 YAML 忘了写，它照样跑得
+    # 好好的，用的是别人的模型，而没有任何地方会说一声。
 
     llm_timeout_seconds: float = 300.0
     """director 的 tool loop 可能跑很久，且 P21 已放弃流式——超时要给足。"""
@@ -84,16 +87,9 @@ class Settings(BaseSettings):
 
     data_dir: Path = Path("data")
 
-    stream: bool = True
-    """**边生成边推**（S118）。关掉则一轮写完才整段出现。
-
-    **它在服务级，不在 session 上**（S80）：S118 自己就写着「这是这组里唯一一条
-    关于交付而不是关于能力的」——开关它不改变模型收到什么、也不改变产出，
-    只改变用户什么时候看到。别的开关全都上调到了提示词层，而这一条上调到服务。
-
-    P21 说的是「不为保住逐 token 流式而扭曲 agent 结构」。这条不扭曲任何结构：
-    四个 agent 的顺序、工具循环、契约、重放全都不变，流式只是多了一条旁路。
-    """
+    # **`stream` 也不在这里了**（S159）：它同样按 agent 各设一份——正文流着看，
+    # 状态维护不必流。S118 当初把它判成"服务级"，理由是"它关于交付不关于能力"；
+    # 那句话仍然对，但**交付也是按 agent 分的**：用户等的是正文，不是状态增量。
 
     trace: bool = False
     """trace 落不落盘。**运维，跟模型完全无关**（S80），所以也在服务级。

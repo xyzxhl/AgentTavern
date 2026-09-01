@@ -58,11 +58,10 @@ export interface SessionCard {
 }
 
 export interface ServerMeta {
+  /** **只剩这一样**（S159）：模型名和流式已经按 agent 各设一份，住在那几份
+   * YAML 顶上。这里再给一份全局的就是同一件事的第二个入口，而四份可能各不
+   * 相同，那一份必然在撒谎。 */
   developer: boolean;
-  model: string;
-  /** 边生成边推。**服务级**（S80）：关于交付，不关于能力，所以它没跟着配置
-   * 一起上调到提示词层。在 `.env` 里定，运行时只读。 */
-  stream: boolean;
 }
 
 /** 提示词列表里的一条。数字只为让列表有点信息量，编辑要进详情。 */

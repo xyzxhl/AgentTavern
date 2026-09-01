@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from conftest import GOAL_MARK, ScriptedLLM, text, tool, tools
+from conftest import GOAL_MARK, ScriptedLLM, text, tool, tools, using
 from fastapi.testclient import TestClient
 
 from agenttavern.config import Settings
@@ -37,11 +37,12 @@ def happy_llm(prose: str = "门轴发出一声长长的呻吟。") -> ScriptedLL
 
 @pytest.fixture
 def client_for(tmp_path: Path):
-    def build(llm: ScriptedLLM, *, developer: bool = False, stream: bool = True):
-        # `stream` / `trace` 是**服务级**的（S80）：一条关于交付，一条关于
-        # 运维，两条都跟模型收到什么无关，所以它们没跟着配置一起上调到提示词层。
+    def build(llm: ScriptedLLM, *, developer: bool = False):
+        # `trace` 与 `developer` 是**服务级**的（S80/S113）：一条关于运维、
+        # 一条关于"这台服务拿来干什么"，两条都跟模型收到什么无关。
+        # `stream` 与 `model` 已经上调到各 agent 的 YAML 了（S159）。
         app = create_app(
-            Settings(data_dir=tmp_path, llm_model="m", developer=developer, stream=stream),
+            Settings(data_dir=tmp_path, developer=developer),
             gateway=llm.gateway(),
         )
         return TestClient(app)
@@ -1738,18 +1739,25 @@ def test_the_agents_after_the_writer_stream_too(client_for) -> None:
     assert first[-1]["node"]["prose"] == "正文一。"
 
 
-def test_streaming_can_be_switched_off(client_for) -> None:
-    """**可开关**。关掉则一轮写完才整段出现，产出完全一样。"""
+def test_streaming_is_per_agent(client_for) -> None:
+    """**流不流按 agent 各设一份**（S159）：那份 YAML 顶上的 `stream`。
+
+    以前它是服务级的一个开关，于是"正文流着看、状态维护不必流"这种差别
+    根本表达不了——而那正是这个旋钮最常见的用法：用户等的是正文。
+    """
+    from agenttavern.prompting import AGENTS
+
     llm = ScriptedLLM(
         tool("submit_outline", outline="她推开门。"),
         text("门轴响了。"),
         state=one_state(),
     )
-    client = client_for(llm, stream=False)
+    client = client_for(llm)
     session = Session()
     client.post("/sessions", json=session.model_dump(mode="json"))
 
-    with client.websocket_connect(f"/sessions/{session.id}/ws") as ws:
+    off = {name: {"stream": False} for name in AGENTS}
+    with using(calls=off), client.websocket_connect(f"/sessions/{session.id}/ws") as ws:
         ws.receive_text()
         ws.send_text(json.dumps({"type": "submit", "text": "我推开门"}))
         messages = collect(ws, "run_finished")
@@ -1874,18 +1882,18 @@ def test_the_frontend_can_tell_which_mode_the_service_started_in(client_for) -> 
     assert client_for(happy_llm(), developer=True).get("/meta").json()["developer"] is True
 
 
-def test_meta_no_longer_carries_the_control_options(client_for) -> None:
-    """**`options` 已经删掉**（R31）。
+def test_meta_carries_only_what_is_really_service_wide(client_for) -> None:
+    """**`/meta` 只剩开发者模式一样**（R31/S159）。
 
-    档位和当前取值都住在 agent 的 YAML 里，前端要看就去 `/agents/{name}`——
-    `/meta` 再给一份就是同一件事的第二个入口，而两个入口迟早对不上。
+    档位和当前取值住在 agent 的 YAML 里，`model` 和 `stream` 现在也是——
+    这里再给一份全局的就是同一件事的第二个入口，而四份可能各不相同，
+    那一份必然在撒谎。
 
-    留下的三样都是**服务自己的性质**，运行时改不了：开发者模式、模型名、
-    流不流式。
+    `developer` 留着：它真的是服务级的（「这台服务是拿来查问题的还是拿来玩的」），
+    而且前端要靠它决定显不显示开发者面板。
     """
     meta = client_for(happy_llm()).get("/meta").json()
-    assert "options" not in meta
-    assert set(meta) == {"developer", "model", "stream"}
+    assert set(meta) == {"developer"}
 
 
 def test_no_goal_means_no_autocontinue(client_for) -> None:

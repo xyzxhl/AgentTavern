@@ -12,6 +12,19 @@
 # 它的四个工具**不吃开关**：goal 要么在跑要么不在，没有中间档；这四个是它全部的
 # 表达方式，缺一个就有话说不出来。所以 `tools` 底下没有 `enabled`（默认就是开）。
 
+# -- 调用旋钮（S159）：用哪个模型、流不流、额外塞什么进请求体 --------------
+#
+# 它们按 agent 各设一份，因为它们本来就因 agent 而异。以前 `model` 和 `stream`
+# 在 `.env` 里、全局一份，而它们全都在改「这一次调用长什么样」——那正是这份
+# 文件管的事（同 S80 那次上调的判据）。
+#
+# `extra` **原样并进请求体**，一个字都不解释：思考模式那类参数各家拼法不同
+# （`thinking: {type: enabled}` / `reasoning_effort: high` / `budget_tokens`），
+# 定一套可移植的三档就要按家数映射，而猜错的症状是**不报错、只是没生效**。
+model: deepseek-v4-flash
+stream: true
+extra: {}
+
 sections:
 - type: text
   role: system

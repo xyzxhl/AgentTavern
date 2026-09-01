@@ -31,7 +31,7 @@ from collections.abc import Sequence
 
 from ..llm import LLMGateway, Message, ToolCall
 from ..models import Actor, TraceEventType
-from ..prompting import special_messages
+from ..prompting import call_of, special_messages
 from ..tools import close_segment_tool
 from ..tracing import Tracer
 
@@ -104,10 +104,12 @@ async def ask_segment_cut(
     followup = [*messages, *asked]
     # 追问接在 director 自己的对话后面，**必须用同一个 user_id**，
     # 否则它落在另一个缓存空间里，整份前缀白付一次。
+    # **追问用 director 自己那份旋钮**：它接在 director 的对话后面，
+    # 换个模型等于换了个人来答这道题。
     response = await gateway.complete(
         followup,
         tools=[close_segment_tool().spec()],
-        model=model,
+        call=call_of("director"),
         user_id=user_id,
     )
     tracer.exchange(Actor.ORCHESTRATOR, followup, response)

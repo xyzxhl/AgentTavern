@@ -29,7 +29,7 @@ from ..models import (
     UserInput,
     trim_dangling_tool_call,
 )
-from ..prompting import director_prompt, special_text, tool_enabled
+from ..prompting import call_of, director_prompt, special_text, tool_enabled
 from ..tools import RunContext, ToolOutcome, ToolRegistry
 from ..tracing import Tracer
 from .replay import append_message, replay_messages, turn_messages
@@ -181,6 +181,7 @@ async def run_director(
                 ctx.gateway.complete(
                     messages,
                     tools=specs,
+                    call=call_of("director"),
                     user_id=session.id,
                     # 推演阶段流的是**思考段**——正文还没开始写，这里的 `content`
                     # 多半只是几句自言自语，而思考段才是"它在想什么"。

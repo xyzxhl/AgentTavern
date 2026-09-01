@@ -14,6 +14,36 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class Call(BaseModel):
+    """一次模型调用的三个旋钮：**用哪个模型、流不流、额外塞什么进请求体**。
+
+    **它们按 agent 各设一份**（S159），住在那份 YAML 的顶层——和「文风选哪一档」
+    是同一类东西：都在改这一次调用长什么样。writer 关掉思考省一大笔，而 director
+    开着；正文流着看，状态维护不必流——**这些差别按 agent 才说得清**。
+
+    ## `extra` 是原样透传
+
+    **不定义"思考三档"那种可移植的抽象**：各家拼法根本不同——DeepSeek 是
+    `thinking: {type: enabled}`，OpenAI o 系是 `reasoning_effort: "high"`，
+    Anthropic 是 `thinking: {budget_tokens: N}`。定一套三档就要按家数映射，
+    而我们一家真端点都没验过，**猜错的症状是不报错、只是没生效**（同 P29）。
+
+    所以这里什么都不猜：YAML 里写什么就发什么。代价是用户得知道自己那家怎么写，
+    换来的是"写了没生效"这件事不会悄悄发生。
+    """
+
+    model: str = ""
+    """用哪个模型。**空的会当场报错**——它以前有个 `.env` 里的全局兜底，
+    而那个兜底的坏处是：某份 YAML 忘了写，它照样跑得好好的，用的是别人的模型。"""
+
+    stream: bool = True
+    """边生成边推。**和"有没有出口"是两件事**：编排层没给出口时照样不流
+    （`RunContext.stream_to`），这一条管的是"这个 agent 要不要流"。"""
+
+    extra: dict[str, Any] = Field(default_factory=dict)
+    """原样并进 `extra_body`。thinking / reasoning_effort 这类各家自定义的参数走这里。"""
+
+
 class Role(StrEnum):
     SYSTEM = "system"
     USER = "user"

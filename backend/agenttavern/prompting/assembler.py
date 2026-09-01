@@ -67,7 +67,7 @@ from typing import Any
 
 import yaml
 
-from ..llm import Message, Role
+from ..llm import Call, Message, Role
 
 _DIR = Path(__file__).parent
 
@@ -307,6 +307,28 @@ def selected(name: str, group: str) -> str:
         if isinstance(item, dict) and item.get("type") == "choice" and item.get("name") == group:
             return str(item.get("selected") or "")
     return ""
+
+
+def call_of(name: str) -> Call:
+    """这一份 YAML 的**调用旋钮**：用哪个模型、流不流、额外塞什么（S159）。
+
+    它们写在文件顶层，和 `enabled` 并排。**按 agent 各一份**，因为它们本来就
+    因 agent 而异：writer 关掉思考省一大笔而 director 开着，正文流着看而状态
+    维护不必流，判定用便宜模型而推演用贵的。
+
+    以前 `model` 和 `stream` 在 `.env` 里、全局一份。上调的判据和 S80 那次是
+    同一条：**它们全都在改「这一次调用长什么样」**，而那正是 agent YAML 管的事。
+
+    读不到就用默认（`model` 空、流、无额外参数）——**空模型会在发出去那一刻
+    当场报错**，不是悄悄回落到别人的模型上。
+    """
+    data = load(name)
+    extra = data.get("extra")
+    return Call(
+        model=str(data.get("model") or ""),
+        stream=data.get("stream", True) is not False,
+        extra=dict(extra) if isinstance(extra, dict) else {},
+    )
 
 
 def param(name: str, source: str, key: str, default: int) -> int:

@@ -64,7 +64,6 @@ export function App(): JSX.Element {
 function Story(): JSX.Element {
   const sessionId = useSession((s) => s.sessionId);
   const title = useSession((s) => s.session?.meta?.title);
-  const model = useSession((s) => s.meta?.model);
   const developer = useSession((s) => s.meta?.developer ?? false);
   const worldbookId = useSession((s) => s.session?.worldbook_id ?? "");
   const books = useSession((s) => s.sessions);
@@ -94,7 +93,6 @@ function Story(): JSX.Element {
           onCommit={(next) => void rename(next)}
           className="text-sm text-fg"
         />
-        <span className="font-mono text-[11px] text-dim">{model}</span>
         {/* **不是「本局设定」，是一个指向它的标签**（R17）：编辑永远在设定页
             发生，一件事一个入口。两个入口各自维护列表状态，迟早显示旧的东西。 */}
         {worldbookId && (

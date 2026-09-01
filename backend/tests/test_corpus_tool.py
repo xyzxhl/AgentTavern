@@ -86,7 +86,7 @@ def gateway(reply: str = "0,1,2") -> LLMGateway:
         )
 
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-    return LLMGateway(Settings(llm_model="m"), http_client=client)
+    return LLMGateway(Settings(), http_client=client)
 
 
 class ReorderingReranker:

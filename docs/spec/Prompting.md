@@ -161,7 +161,52 @@ session 只装标题、目标、节点树；worldbook 只装名字和条目。
 本身带来的。要换一套配置就去 agent 管理改——**那是配置层面的动作，不是每轮的动作**，
 所以「设一次长期有效」这条判断没被破坏。
 
-**验收** `test_the_current_choice_lives_in_the_yaml_not_the_session` · `test_meta_no_longer_carries_the_control_options` · `test_speaking_rule_is_a_choice_not_a_toggle_in_code`
+**验收** `test_the_current_choice_lives_in_the_yaml_not_the_session` · `test_meta_carries_only_what_is_really_service_wide` · `test_speaking_rule_is_a_choice_not_a_toggle_in_code`
+
+### S159 · 调用旋钮按 agent 各设一份
+
+**服务** [R34](../req/调教提示词.md)
+
+**规格** 每一份提示词 YAML 顶层带三个旋钮，和 `enabled` 并排：
+
+| | 是什么 | 缺省 |
+|---|---|---|
+| `model` | 这一份用哪个模型 | **必填**，空的在调用那一刻当场报错 |
+| `stream` | 这个 agent 流不流 | `true` |
+| `extra` | **原样并进请求体**的额外参数 | `{}` |
+
+界面上是 agent 那一页的「调用」标签，**改完立刻生效**（`load` 的进程内缓存
+在写盘时清掉）。
+
+**`extra` 什么都不解释**：思考模式那类参数走这里——DeepSeek 是
+`thinking: {type: enabled}`，OpenAI o 系是 `reasoning_effort: "high"`，
+Anthropic 是 `thinking: {budget_tokens: N}`。
+
+**不做** 定一套可移植的「思考三档」；**不做**全局兜底的模型名；
+**不做**服务级的流式开关。
+
+**为什么**
+
+- **为什么上调**：判据和 S80 那次是同一条——**它们全都在改「这一次调用长什么样」**，
+  而那正是 agent YAML 管的事。而且它们本来就因 agent 而异：推演用贵的模型、
+  判定用便宜的；正文值得流着看，状态维护不必流；writer 关掉思考省一大笔，
+  而 director 开着。全局一份时**这些差别根本表达不了**。
+- **为什么不定"三档"**：各家拼法根本不同，定一套就要按家数映射，而我们一家真
+  端点都没验过——**猜错的症状是不报错、只是没生效**（同 [P29](../Principles.md)，
+  也同 [S141](Corpus.md#s141) 那条阈值绑死在"哪一家 + 哪个模型"上）。
+  代价写在明处：用户得知道自己那家怎么写。换来的是"写了没生效"不会悄悄发生。
+- **为什么不留全局兜底**：留一个的坏处很具体——**某份 YAML 忘了写模型，它照样
+  跑得好好的，用的是别人的那个**，而没有任何地方会说一声。现在它当场抛，
+  而且 `dev.ps1` 起服务前先扫一遍五份 YAML。
+
+**代价：模型名进了版本控制。** 它以前在 `.env` 里，判据是「换台机器要不要改」。
+现在它和提示词正文住在一起——**而提示词正文本来就是这个仓库里最该跟着走的东西**，
+这台服务的部署方就是用户自己。换机器要改的东西因此多了五处。
+
+**验收** `test_every_prompt_file_carries_its_own_call_knobs` ·
+`test_the_knobs_are_editable_and_take_effect_at_once` ·
+`test_a_blank_model_is_refused_at_the_call_not_silently_swapped` ·
+`test_streaming_is_per_agent` · `test_meta_carries_only_what_is_really_service_wide`
 
 ### S81 · 控制维度四项，各三档
 
@@ -256,12 +301,11 @@ session 里，改一次只影响一个故事，**而且从提示词那侧完全�
 
 **验收** `test_config_yaml_covers_every_knob` · `test_a_missing_config_file_falls_back_instead_of_crashing`
 
-### S87 · 服务级的三项只读
+### S87 · 服务级的两项只读
 
 **服务** [R36](../req/开发者视角.md)
 
-**规格** 流式、trace 落盘、开发者模式在 `.env` 里，启动服务时就定了，
-界面上**只读**。
+**规格** trace 落盘、开发者模式在 `.env` 里，启动服务时就定了，界面上**只读**。
 
 **不做** 做成运行时开关。
 
@@ -269,6 +313,11 @@ session 里，改一次只影响一个故事，**而且从提示词那侧完全�
 做成可写的等于**把一个部署决定降级成一个运行时开关**，而切来切去会让
 「这一轮到底记了没有」变成要翻日志才知道的问题。
 
-这三项**不是 agent 行为**：流式关于交付、trace 关于运维，开关它们不改变模型收到什么。
+这两项**不是 agent 行为**：trace 关于运维、开发者模式关于"这台服务拿来干什么"，
+开关它们不改变模型收到什么。
 
-**验收** `test_meta_no_longer_carries_the_control_options`
+**流式曾经是第三项，现在不是了**（[S159](#s159)）。当时把它判成服务级的理由是
+「它关于交付而不关于能力」——那句话仍然对，但**交付也是按 agent 分的**：
+用户等的是正文，不是状态增量。它和 `model` 一起上调到了各 agent 的 YAML。
+
+**验收** `test_meta_carries_only_what_is_really_service_wide`

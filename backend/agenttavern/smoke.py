@@ -24,7 +24,7 @@ from .bench.scenarios import SCENARIOS
 from .config import Settings, load_settings
 from .models import Session, TraceEvent, UserInput
 from .orchestration import execute_run
-from .prompting import selected
+from .prompting import call_of, selected
 from .storage import Store
 
 # --------------------------------------------------------------------------
@@ -58,7 +58,7 @@ def render_report(
     out: list[str] = [
         f"# 冒烟 · {datetime.now(UTC).isoformat(timespec='seconds')}",
         "",
-        f"- 模型：`{settings.llm_model}` @ `{settings.llm_base_url}`",
+        f"- 模型：`{call_of('director').model}` @ `{settings.llm_base_url}`",
         f"- 结果：{'**失败** — ' + failure if failure else '成功'}",
         f"- 指标：{json.dumps(metrics.as_dict(), ensure_ascii=False)}",
         # 配置整体上调到了提示词层（S80），session 上没有它们了。记下**当前
@@ -153,8 +153,8 @@ def render_report(
 
 async def run_once(args: argparse.Namespace) -> int:
     settings = load_settings()
-    if not settings.llm_model:
-        print("!! .env 里没有 LLM_MODEL", file=sys.stderr)
+    if not call_of("director").model:
+        print("!! director.yaml 顶上没写 model", file=sys.stderr)
         return 2
 
     store = Store(settings.data_dir)
@@ -180,7 +180,7 @@ async def run_once(args: argparse.Namespace) -> int:
         print(f"   [ask_question] {question} -> 自动选「{options[0]}」")
         return options[0]
 
-    print(f"session={session.id}  model={settings.llm_model}")
+    print(f"session={session.id}  model={call_of('director').model}")
     print(f"输入：{args.text}")
 
     try:

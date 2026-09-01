@@ -47,7 +47,7 @@ from ..models import (
     Node,
     TraceEventType,
 )
-from ..prompting import assemble, rendering
+from ..prompting import assemble, call_of, rendering
 from ..tools import GoalContext, ToolRegistry
 from ..tracing import Tracer
 from .replay import interjections_of
@@ -241,7 +241,7 @@ async def advance_goal(
 
     for _ in range(max_rounds):
         response = await gateway.complete(
-            messages, tools=specs, model=model, user_id=user_id, on_delta=on_delta
+            messages, tools=specs, call=call_of("goal_manager"), user_id=user_id, on_delta=on_delta
         )
         tracer.exchange(Actor.GOAL_MANAGER, messages, response, tools=specs)
         tracer.emit(

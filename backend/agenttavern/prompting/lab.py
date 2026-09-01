@@ -44,6 +44,14 @@ class PromptSetup:
     """``{agent: 跑不跑}``。关掉一个 agent 是最粗的一档消融——**state_manager
     是唯一真的能关的那个**（原 `Capabilities.state`）。"""
 
+    calls: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    """``{名字: {model / stream / extra: …}}``——**这一次调用的旋钮**（S159）。
+
+    它是第四种改法：换个模型、关掉流式、改一下思考参数再跑同一批素材。
+    P19 要的正是这个——`writer_lab` 那个「thinking 开 / 关各跑一遍」的实验，
+    以前只能靠一个 `complete(thinking=...)` 参数，现在和别的消融同一条路。
+    """
+
     tool_choices: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
     """``{agent: {工具名: 描述选哪一档}}``。
 
@@ -52,7 +60,7 @@ class PromptSetup:
     """
 
     def empty(self) -> bool:
-        return not (self.choices or self.tools or self.tool_choices or self.agents)
+        return not (self.choices or self.tools or self.tool_choices or self.agents or self.calls)
 
     def _apply(self, root: Path) -> None:
         for agent, on in self.agents.items():
@@ -70,6 +78,15 @@ class PromptSetup:
                     if picked not in (item.get("options") or {}):
                         raise KeyError(f"{agent}.yaml 的 `{item['name']}` 里没有 `{picked}` 这一档")
                     item["selected"] = picked
+            _dump(path, data)
+
+        for name, knobs in self.calls.items():
+            path = root / f"{name}.yaml"
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            for key, value in knobs.items():
+                if key not in ("model", "stream", "extra"):
+                    raise KeyError(f"{name}.yaml 顶上没有 `{key}` 这个旋钮")
+                data[key] = value
             _dump(path, data)
 
         for agent in {*self.tools, *self.tool_choices}:

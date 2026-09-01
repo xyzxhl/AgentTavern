@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { api, type PromptCard, type PromptDoc, type PromptGroup, type Section } from "../api";
 import { type Page, useSession } from "../store";
+import { JsonEditor } from "./JsonEditor";
 import { Pick, YesNo } from "./Pick";
 
 /** 每一类默认打开哪一份——列表还没回来时也得有个选中项。 */
@@ -41,9 +42,14 @@ export function PromptsPage({ group }: { group: PromptGroup }): JSX.Element {
 
   const [cards, setCards] = useState<PromptCard[]>([]);
   const [doc, setDoc] = useState<PromptDoc | null>(null);
-  const [tab, setTab] = useState<"context" | "tools" | "specials">("context");
+  const [tab, setTab] = useState<Tab>("context");
   const [problem, setProblem] = useState("");
   const [saved, setSaved] = useState(false);
+  // **正在编辑的东西还不合法时，保存必须停下来。** 这里的「额外请求参数」是一段
+  // JSON：解析不出来时它压根没进 `doc`，而按下保存会**把上一份原样写回去**，
+  // 页头还写着「已保存」——用户以为自己那段改动生效了。同 S135：
+  // 一个不出声的丢弃和失败没有区别。
+  const [blocked, setBlocked] = useState<string | null>(null);
 
   useEffect(() => {
     void api.listPrompts().then(setCards);
@@ -52,6 +58,7 @@ export function PromptsPage({ group }: { group: PromptGroup }): JSX.Element {
   useEffect(() => {
     setDoc(null);
     setProblem("");
+    setBlocked(null);
     void api.getPrompt(picked).then(setDoc);
   }, [picked]);
 
@@ -67,6 +74,11 @@ export function PromptsPage({ group }: { group: PromptGroup }): JSX.Element {
 
   async function save(): Promise<void> {
     if (!doc) return;
+    if (blocked) {
+      setSaved(false);
+      setProblem(blocked);
+      return;
+    }
     setProblem("");
     try {
       setDoc(await api.putPrompt(doc.name, doc.data));
@@ -120,16 +132,15 @@ export function PromptsPage({ group }: { group: PromptGroup }): JSX.Element {
             </span>
           )}
           <div className="flex-1" />
-          <Pick<"context" | "tools" | "specials">
+          <Pick<Tab>
             value={tab}
-            options={[
-              ["context", TAB.context],
-              ["tools", TAB.tools],
-              ["specials", TAB.specials],
-            ]}
-            onChange={setTab}
+            options={Object.entries(TAB) as [Tab, string][]}
+            onChange={(next) => {
+              setBlocked(null);
+              setTab(next);
+            }}
           />
-          <button className="btn" onClick={() => void save()} disabled={!doc}>
+          <button className="btn" onClick={() => void save()} disabled={!doc || !!blocked}>
             保存
           </button>
         </header>
@@ -148,6 +159,8 @@ export function PromptsPage({ group }: { group: PromptGroup }): JSX.Element {
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
           {!doc ? (
             <p className="text-sm text-dim">读取中……</p>
+          ) : tab === "call" ? (
+            <CallKnobs data={data} onChange={patch} onBlocked={setBlocked} />
           ) : tab === "context" ? (
             <Sections
               items={(data.sections as Section[]) ?? []}
@@ -172,7 +185,8 @@ const LABEL: Record<string, string> = {
   summarize: "摘要",
 };
 
-const TAB = { context: "上下文", tools: "工具", specials: "特殊" };
+const TAB = { call: "调用", context: "上下文", tools: "工具", specials: "特殊" };
+type Tab = keyof typeof TAB;
 
 /** 一条消息能以谁的身份发出去。**没有 `tool`**：那个 role 的消息必须配着一次
  * 真实的工具调用（`tool_call_id`），装配器摆不出来。 */
@@ -181,6 +195,103 @@ const ROLES: [string, string][] = [
   ["user", "user"],
   ["assistant", "assistant"],
 ];
+
+/**
+ * 调用旋钮：**用哪个模型、流不流、额外塞什么进请求体**（S159）。
+ *
+ * 它们按 agent 各设一份，住在那份 YAML 顶层。以前 `model` 和 `stream` 在
+ * `.env` 里、全局一份——而它们全都在改「这一次调用长什么样」，那正是这一页
+ * 管的事（同 S80 那次上调的判据）。
+ */
+function CallKnobs({
+  data,
+  onChange,
+  onBlocked,
+}: {
+  data: Record<string, unknown>;
+  onChange: (next: Record<string, unknown>) => void;
+  /** 这段 JSON 现在解析不出来——**保存要停下来**，否则那次改动被静默丢弃。 */
+  onBlocked: (why: string | null) => void;
+}): JSX.Element {
+  const extra = (data.extra ?? {}) as Record<string, unknown>;
+  const [text, setText] = useState(() => JSON.stringify(extra, null, 2));
+  const [bad, setBad] = useState<string | null>(null);
+
+  function edit(next: string): void {
+    setText(next);
+    const why = parse(next);
+    setBad(why);
+    onBlocked(why);
+  }
+
+  /** 解析并落进草稿；返回拦下保存的理由，没有就是 `null`。 */
+  function parse(next: string): string | null {
+    try {
+      const parsed: unknown = JSON.parse(next || "{}");
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return "必须是一个对象：键 → 值。";
+      }
+      onChange({ extra: parsed });
+      return null;
+    } catch (err) {
+      return `不是合法 JSON：${(err as Error).message}`;
+    }
+  }
+
+  return (
+    <div className="mx-auto max-w-2xl space-y-5">
+      <Knob
+        label="模型"
+        hint="这一份用哪个模型。留空会在调用那一刻当场报错——没有全局兜底，否则某一份忘了写，它会安静地用着别人的那个。"
+      >
+        <input
+          value={String(data.model ?? "")}
+          onChange={(e) => onChange({ model: e.target.value })}
+          placeholder="模型名"
+          className="w-72 rounded border border-line bg-ink-800 px-3 py-1.5 text-sm text-fg placeholder:text-dim/60 focus:border-dim focus:outline-none"
+        />
+      </Knob>
+
+      <Knob label="边写边显示" hint="关掉则这一份写完才整段出现，产出完全一样。正文值得流着看，状态维护不必——所以它按 agent 分。">
+        <YesNo value={data.stream !== false} onChange={(on) => onChange({ stream: on })} />
+      </Knob>
+
+      <Knob
+        label="额外请求参数"
+        hint="原样并进请求体，一个字都不解释。思考模式那类参数走这里——各家拼法不同，这里不替你猜。"
+      >
+        <JsonEditor value={text} onChange={edit} error={bad} rows={8} />
+        <p className="mt-1.5 text-[11px] leading-snug text-dim">
+          例：DeepSeek 是 <code className="font-mono text-accent">
+            {'{"thinking": {"type": "enabled"}}'}
+          </code>，OpenAI o 系是 <code className="font-mono text-accent">
+            {'{"reasoning_effort": "high"}'}
+          </code>。
+        </p>
+      </Knob>
+    </div>
+  );
+}
+
+function Knob({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint: string;
+  children: React.ReactNode;
+}): JSX.Element {
+  return (
+    <div>
+      <div className="mb-1.5 flex items-baseline gap-2">
+        <span className="shrink-0 text-xs font-medium text-fg">{label}</span>
+        <span className="min-w-0 flex-1 text-[11px] leading-snug text-dim">{hint}</span>
+      </div>
+      {children}
+    </div>
+  );
+}
 
 const KIND: Record<Section["type"], string> = {
   text: "text",

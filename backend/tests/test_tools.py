@@ -40,7 +40,7 @@ def fake_gateway(reply: str = "摘要文本") -> LLMGateway:
         )
 
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-    return LLMGateway(Settings(llm_model="m"), http_client=client)
+    return LLMGateway(Settings(), http_client=client)
 
 
 @pytest.fixture

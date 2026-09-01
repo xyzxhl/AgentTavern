@@ -12,9 +12,13 @@ import { Pick } from "./Pick";
  *
  * - **界面** —— 色彩模式、正文字体与字号。这是「这台机器上的这个人怎么看得
  *   舒服」，所以它落在浏览器本地，和后端一个字节都不来往。
- * - **服务** —— 流式、trace、开发者模式。**只读**：它们在 `.env` 里，
- *   启动服务时就定了（S113）。做成可写的话，「这台服务是拿来查问题的还是拿来
- *   玩的」就成了一个每局故事都要重答一遍的问题。
+ * - **服务** —— 只剩开发者模式。**只读**：它在 `.env` 里，启动服务时就定了
+ *   （S113）。做成可写的话，「这台服务是拿来查问题的还是拿来玩的」就成了一个
+ *   每局故事都要重答一遍的问题。
+ *
+ * 模型名与流式**曾经也在这一组里**，现在按 agent 各设一份（S159）——它们改的
+ * 是「这一次调用长什么样」，那是 agent 那一页的事；留在这里等于给同一件事开
+ * 第二个入口，而四份可能各不相同，这里那一份必然在撒谎。
  */
 export function SettingsPage(): JSX.Element {
   const meta = useSession((s) => s.meta);
@@ -76,15 +80,14 @@ export function SettingsPage(): JSX.Element {
           </Group>
 
           <Group name="服务" hint="在 .env 里定，启动时就固定了。这里只读。">
-            <Row label="模型">
-              <span className="font-mono text-xs text-fg">{meta?.model || "（未配置）"}</span>
-            </Row>
-            <Row label="边写边显示" hint="关掉则一轮写完才整段出现，产出完全一样。">
-              <State on={meta?.stream ?? true} />
-            </Row>
             <Row label="开发者模式" hint="额外记录每次模型往返的完整输入输出，并强制 trace 落盘。">
               <State on={meta?.developer ?? false} />
             </Row>
+            <p className="text-[11px] leading-snug text-dim">
+              <b className="font-medium text-fg">模型、边写边显示、额外请求参数</b>
+              不在这里——它们按 agent 各设一份，去「agent 提示词」那一页的
+              <b className="font-medium text-fg">调用</b>标签改，改完立刻生效（S159）。
+            </p>
           </Group>
         </div>
       </div>

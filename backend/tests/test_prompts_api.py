@@ -17,7 +17,7 @@ from agenttavern.server import create_app
 
 @pytest.fixture
 def client(tmp_path: Path):
-    settings = Settings(data_dir=tmp_path, llm_model="m")
+    settings = Settings(data_dir=tmp_path)
     return TestClient(create_app(settings, ScriptedLLM().gateway()))
 
 
@@ -138,6 +138,68 @@ def test_a_good_edit_lands_and_takes_effect_at_once(client, sandbox) -> None:
 def test_an_unknown_prompt_is_a_404(client) -> None:
     assert client.get("/prompts/nope").status_code == 404
     assert client.put("/prompts/nope", json={"data": {}}).status_code == 404
+
+
+# -- S159 调用旋钮：模型、流式、额外请求参数 -----------------------------------
+
+
+def test_every_prompt_file_carries_its_own_call_knobs() -> None:
+    """**三个旋钮按 agent 各设一份**（S159），写在那份 YAML 顶层。
+
+    `model` 和 `stream` 以前在 `.env` 里、全局一份。上调的判据和 S80 那次是同
+    一条：**它们全都在改「这一次调用长什么样」**，而那正是这份文件管的事——
+    推演用贵的模型、判定用便宜的，正文流着看、状态维护不必流。
+
+    **每一份都得写 model**：没有全局兜底了。留一个兜底的坏处很具体——某份忘了
+    写，它照样跑得好好的、用着别人的那个，而没有任何地方会说一声。
+    """
+    from agenttavern.prompting import call_of
+
+    for name in PROMPT_FILES:
+        call = call_of(name)
+        assert call.model, f"{name}.yaml 顶上没写 model"
+        assert isinstance(call.extra, dict)
+
+
+def test_the_knobs_are_editable_and_take_effect_at_once(client, sandbox) -> None:
+    """改完**当轮就生效**（`load` 有进程内缓存，写盘时清掉）。
+
+    `extra` **原样透传**：这里存什么，请求体里就是什么。不定义"思考三档"那种
+    可移植的抽象——各家拼法根本不同，定一套就要按家数映射，而猜错的症状是
+    **不报错、只是没生效**（同 P29）。
+    """
+    from agenttavern.prompting import call_of
+
+    doc = client.get("/prompts/writer").json()["data"]
+    doc["model"] = "换一个模型"
+    doc["stream"] = False
+    doc["extra"] = {"reasoning_effort": "high"}
+
+    assert client.put("/prompts/writer", json={"data": doc}).status_code == 200
+
+    call = call_of("writer")
+    assert call.model == "换一个模型"
+    assert call.stream is False
+    assert call.extra == {"reasoning_effort": "high"}
+    assert "换一个模型" in (sandbox / "writer.yaml").read_text(encoding="utf-8")
+
+
+def test_a_blank_model_is_refused_at_the_call_not_silently_swapped() -> None:
+    """**空模型当场报错**，不回落到任何全局值（S159）。
+
+    这一条是那个已经删掉的 `.env` 兜底留下的反面：有兜底的时候，"某份 YAML
+    忘了写模型"和"写对了"跑起来一模一样。
+    """
+    import pytest as _pytest
+
+    from agenttavern.config import Settings
+    from agenttavern.llm import Call, LLMError, LLMGateway, Message, Role
+
+    gateway = LLMGateway(Settings())
+    with _pytest.raises(LLMError, match="模型名"):
+        import asyncio
+
+        asyncio.run(gateway.complete([Message(role=Role.USER, content="hi")], call=Call(model="")))
 
 
 # -- S147 提示词分两类：agent 与单次调用 ---------------------------------------

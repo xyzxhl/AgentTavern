@@ -255,9 +255,9 @@ def test_no_provider_configured_means_no_reranker() -> None:
 
     那时链路**根本不 rerank**：按融合次序取前几条，不发任何模型调用（S141）。
     """
-    assert reranker_from_settings(Settings(llm_model="m")) is None
+    assert reranker_from_settings(Settings()) is None
     # 只填了家数没填模型，同样不启用：**不去猜一个模型名**。
-    assert reranker_from_settings(Settings(llm_model="m", rerank_provider="cohere")) is None
+    assert reranker_from_settings(Settings(rerank_provider="cohere")) is None
 
 
 def test_an_unknown_provider_is_refused_at_once() -> None:
@@ -266,7 +266,7 @@ def test_an_unknown_provider_is_refused_at_once() -> None:
     回落的后果是每次检索都对着错的端点报错，而症状只是"检索总是查不到"——
     一个没生效的配置不该悄悄没生效（P29）。
     """
-    settings = Settings(llm_model="m", rerank_provider="cohre", rerank_model="m")
+    settings = Settings(rerank_provider="cohre", rerank_model="m")
     with pytest.raises(ValueError, match="cohre"):
         reranker_from_settings(settings)
 
@@ -274,7 +274,7 @@ def test_an_unknown_provider_is_refused_at_once() -> None:
 @pytest.mark.parametrize("name", sorted(PROVIDERS))
 def test_each_provider_builds_from_settings(name: str) -> None:
     built = reranker_from_settings(
-        Settings(llm_model="m", rerank_provider=name, rerank_model="rr", rerank_api_key="k")
+        Settings(rerank_provider=name, rerank_model="rr", rerank_api_key="k")
     )
     assert isinstance(built, PROVIDERS[name])
     assert built.model == "rr"
@@ -284,7 +284,6 @@ def test_a_custom_base_url_wins_over_the_official_one() -> None:
     """自建与代理要能接——同 `llm_base_url` 那条。"""
     built = reranker_from_settings(
         Settings(
-            llm_model="m",
             rerank_provider="qwen",
             rerank_model="rr",
             rerank_base_url="http://127.0.0.1:8000/",

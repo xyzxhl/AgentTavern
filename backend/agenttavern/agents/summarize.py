@@ -24,7 +24,7 @@ from __future__ import annotations
 from ..config import LIMITS
 from ..llm import LLMGateway
 from ..models import Actor
-from ..prompting import assemble
+from ..prompting import assemble, call_of
 from ..tracing import Tracer
 
 MAX_SEGMENT_RUNS = LIMITS.segment.max_runs
@@ -73,7 +73,7 @@ async def summarize_text(
     if not enabled:
         return ""
     prompt = assemble("summarize", contexts={"content": content})
-    response = await gateway.complete(prompt.messages, user_id=user_id)
+    response = await gateway.complete(prompt.messages, call=call_of("summarize"), user_id=user_id)
     # 开发者模式下这一次往返也要留下原文（S113）。摘要是**不可逆**的——一段压完
     # 原细纲就不再进上下文了，压坏了事后只能从这里看出是压的时候丢的还是本来就没有。
     if tracer is not None:

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from ..llm import Usage
 from ..models import Actor, Node, TraceEventType
-from ..prompting import upstream_runs, writer_prompt
+from ..prompting import call_of, upstream_runs, writer_prompt
 from ..tools import RunContext
 from ..tracing import Tracer
 
@@ -53,7 +53,10 @@ async def run_writer(ctx: RunContext, tracer: Tracer, outline: str) -> WriterRes
     # **正文是流式最值得的地方**（S118）：它是一次调用、纯文本、而且是用户真正
     # 在等的东西。`stream_to` 在编排层没给出口时返回 None，那条路就退回非流式。
     response = await ctx.gateway.complete(
-        messages, user_id=ctx.session.id, on_delta=ctx.stream_to(Actor.WRITER)
+        messages,
+        call=call_of("writer"),
+        user_id=ctx.session.id,
+        on_delta=ctx.stream_to(Actor.WRITER),
     )
     tracer.exchange(Actor.WRITER, messages, response)
     prose, deviation = _split_deviation(response.content)
