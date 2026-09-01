@@ -69,6 +69,22 @@ class SessionPatch(BaseModel):
     modes: SessionModes | None = None
 
 
+class Rename(BaseModel):
+    """设定改名的请求体。**必须住在模块级**，不能定义在 `create_app` 里面。
+
+    这个文件有 `from __future__ import annotations`，所以函数签名里的注解是字符串，
+    FastAPI 只能拿**模块的 globals** 去解析它。定义在函数体内时那个名字不在里面，
+    于是 `patch: Rename` 解析不出是个 BaseModel，**被当成查询参数**——每一次带
+    body 的 PATCH 都 422，报的还是「缺少查询参数 patch」，和"改名"对不上。
+
+    连带损伤更隐蔽：`app.openapi()` 直接抛 `ForwardRef('Rename') is not fully
+    defined`，**整个 `/docs` 和 `/openapi.json` 打不开**，而不只是这一条路由。
+    `test_every_route_declares_its_body` 就是钉这件事的。
+    """
+
+    name: str
+
+
 class NodePatch(BaseModel):
     """用户直接编辑节点数据（R22）。
 
@@ -366,9 +382,6 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
             "sessions": store.sessions_of(worldbook_id),
             "initial_state": repo.compose_initial_state().values,
         }
-
-    class Rename(BaseModel):
-        name: str
 
     @app.patch("/worldbooks/{worldbook_id}")
     def patch_worldbook(worldbook_id: str, patch: Rename) -> Worldbook:

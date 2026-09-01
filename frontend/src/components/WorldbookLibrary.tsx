@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type WorldbookCard } from "../api";
 import type { Worldbook, WorldbookBundle } from "../protocol";
 import { useSession } from "../store";
+import { EditableTitle } from "./EditableTitle";
 import { WorldbookPanel } from "./WorldbookPanel";
 
 /**
@@ -91,9 +92,8 @@ export function WorldbookLibrary(): JSX.Element {
     await guard(() => newSession(book.id ?? undefined));
   }
 
-  async function rename(card: WorldbookCard): Promise<void> {
-    const name = prompt("设定叫什么？", card.worldbook.name ?? "");
-    if (name === null) return;
+  /** **点标题就地改**（S134 的同一条判据）：不再是「改名按钮 + 浏览器弹窗」。 */
+  async function rename(card: WorldbookCard, name: string): Promise<void> {
     await guard(async () => {
       await api.patchWorldbook(card.worldbook.id ?? "", name);
       await reload();
@@ -158,8 +158,12 @@ export function WorldbookLibrary(): JSX.Element {
               className="rounded border border-line px-4 py-3 transition-colors hover:border-dim"
             >
               <div className="flex items-baseline gap-2">
-                <h3 className="min-w-0 flex-1 truncate text-sm text-fg">
-                  {card.worldbook.name || "未命名"}
+                <h3 className="flex min-w-0 flex-1">
+                  <EditableTitle
+                    value={card.worldbook.name ?? ""}
+                    onCommit={(name) => void rename(card, name)}
+                    className="min-w-0 flex-1 truncate text-sm text-fg"
+                  />
                 </h3>
                 <span className="shrink-0 font-mono text-[11px] text-dim">{card.entries} 条</span>
               </div>
@@ -191,9 +195,6 @@ export function WorldbookLibrary(): JSX.Element {
                 </button>
                 <button className="btn" onClick={() => setEditing(card.worldbook.id ?? null)}>
                   编辑条目
-                </button>
-                <button className="btn" onClick={() => void rename(card)}>
-                  改名
                 </button>
                 <button className="btn" onClick={() => void remove(card)}>
                   删除

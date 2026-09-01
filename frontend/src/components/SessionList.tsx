@@ -1,5 +1,8 @@
+import { useState } from "react";
+
 import { api } from "../api";
 import { type Page, useSession } from "../store";
+import { EditableTitle } from "./EditableTitle";
 
 /**
  * 左栏：**上面是独立页面的入口，下面是会话记录**（R17）。
@@ -25,9 +28,11 @@ export function SessionList(): JSX.Element {
     go({ kind: "story" });
   }
 
-  async function rename(id: string, was: string): Promise<void> {
-    const title = prompt("这局故事叫什么？", was);
-    if (title === null || title === was) return;
+  /** 正在改名的那一行。**这里是受控的**：列表行的文字本身是"打开这局故事"，
+   * 点它改名会把主要动作顶掉，所以由旁边的 ✎ 触发（见 `EditableTitle`）。 */
+  const [renaming, setRenaming] = useState<string | null>(null);
+
+  async function rename(id: string, title: string): Promise<void> {
     await api.patchSession(id, { meta: { title } });
     await refreshSessions();
     if (id === current) await refreshState();
@@ -96,15 +101,22 @@ export function SessionList(): JSX.Element {
                 here ? "bg-ink-600" : "hover:bg-ink-700"
               }`}
             >
-              <button onClick={() => open(card.id)} className="min-w-0 flex-1 px-2 py-1.5 text-left">
-                <span className={`block truncate text-xs ${here ? "text-fg" : "text-dim"}`}>
-                  {card.title || "未命名"}
-                </span>
+              <div
+                onClick={() => renaming !== card.id && open(card.id)}
+                className="min-w-0 flex-1 cursor-pointer px-2 py-1.5 text-left"
+              >
+                <EditableTitle
+                  value={card.title}
+                  onCommit={(title) => void rename(card.id, title)}
+                  editing={renaming === card.id}
+                  onEditingChange={(on) => setRenaming(on ? card.id : null)}
+                  className={`block w-full truncate text-xs ${here ? "text-fg" : "text-dim"}`}
+                />
                 {/* 第二行是它开在哪份设定上——列表里唯一需要的第二位信息。 */}
                 <span className="block truncate text-[10px] text-dim/70">{card.worldbook_name}</span>
-              </button>
+              </div>
               <button
-                onClick={() => void rename(card.id, card.title)}
+                onClick={() => setRenaming(card.id)}
                 title="改名"
                 className="shrink-0 px-1.5 py-1.5 text-[11px] text-dim opacity-0 transition-opacity hover:text-fg group-hover:opacity-100"
               >

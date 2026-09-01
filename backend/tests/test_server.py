@@ -118,6 +118,49 @@ def test_worldinfo_roundtrip(client_for) -> None:
     assert entries[0]["name"] == "教团"
 
 
+def test_renaming_a_worldbook_actually_renames_it(client_for) -> None:
+    """S64：worldbook 上**只有名字可改**，那就得真的改得动。
+
+    这条测试是补的，因为改名一直是坏的：请求体模型 `Rename` 定义在 `create_app`
+    函数体内，而那个文件有 `from __future__ import annotations`——FastAPI 拿模块
+    globals 解析不出这个局部名字，于是把 `patch` 当成**查询参数**，每次改名
+    都 422。界面上的症状是「改名无效」，报错却说缺一个查询参数。
+    """
+    client = client_for(happy_llm())
+    book = client.post("/worldbooks", json={"name": "未命名"}).json()["id"]
+
+    renamed = client.patch(f"/worldbooks/{book}", json={"name": "旧城区"})
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["name"] == "旧城区"
+
+    # 落盘了才算改成——只改内存里那一份的话，列表刷新回来还是旧名字。
+    assert client.get(f"/worldbooks/{book}").json()["worldbook"]["name"] == "旧城区"
+    assert client.get("/worldbooks").json()[0]["worldbook"]["name"] == "旧城区"
+
+
+def test_every_route_declares_its_body(client_for) -> None:
+    """**解析不出来的请求体会被静默降级成查询参数**，这条测试扫全部路由。
+
+    上面那个 bug 不是"忘了写一行"，是一类**不报错的错**：注解解析失败时
+    FastAPI 不抛异常，它退而求其次把参数当成查询参数，于是坏的是运行时的
+    422，而不是启动时的一声响。
+
+    `app.openapi()` 是这一类的通用探测器——同一个解析失败会让它抛
+    `PydanticUserError`，而且是**整份文档**抛，不只是那一条路由。所以这里
+    同时买到两件事：这类降级会当场变红，`/docs` 与 `/openapi.json` 也被钉住了
+    （它们坏了整整几个提交都没人发现，因为没有一条测试碰过）。
+    """
+    client = client_for(happy_llm())
+
+    spec = client.get("/openapi.json")
+    assert spec.status_code == 200, spec.text
+
+    # 具体钉一条：改名走的是请求体，不是查询参数。
+    patch = spec.json()["paths"]["/worldbooks/{worldbook_id}"]["patch"]
+    assert "requestBody" in patch
+    assert [p["name"] for p in patch.get("parameters", [])] == ["worldbook_id"]
+
+
 def test_a_worldbook_can_open_several_sessions(client_for) -> None:
     """**一份设定开出好几个故事**（S63）。
 

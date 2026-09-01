@@ -50,7 +50,8 @@ session 只存一个 `worldbook_id`。
 **代价**：题材与尺度不再是独立可挪的一节，位置由设定的渲染顺序决定——
 这是"不特殊处理"的定义本身带来的。
 
-**验收** `test_worldinfo_roundtrip` · `test_export_drops_the_id_and_the_cached_summary`
+**验收** `test_worldinfo_roundtrip` · `test_export_drops_the_id_and_the_cached_summary` ·
+`test_renaming_a_worldbook_actually_renames_it`
 
 ### S65 · 条目分三类，用户扮演的角色不是第四类
 

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { EntryKind, Worldbook, WorldbookBundle, WorldbookEntry } from "../protocol";
 import { useSession } from "../store";
+import { EditableTitle } from "./EditableTitle";
 import { JsonEditor } from "./JsonEditor";
 import { Pick, YesNo } from "./Pick";
 
@@ -80,6 +81,11 @@ export function WorldbookPanel({
     void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [worldbookId]);
+
+  async function renameBook(name: string): Promise<void> {
+    await api.patchWorldbook(worldbookId, name);
+    await reload();
+  }
 
   function open(entry: WorldbookEntry): void {
     setSelected(entry.id ?? null);
@@ -211,7 +217,14 @@ export function WorldbookPanel({
   return (
     <div className="absolute inset-0 z-10 flex flex-col bg-ink-900">
       <header className="flex items-center gap-2 border-b border-line px-5 py-2.5">
-        <span className="text-sm text-fg">{book?.name || "世界设定"}</span>
+        {/* **点标题就地改名**（S64：worldbook 上只有名字可改，那就在看得见它的
+            地方改）。以前这里是纯文本，改名只在设定库的卡片上有一个按钮。 */}
+        <EditableTitle
+          value={book?.name ?? ""}
+          placeholder="世界设定"
+          onCommit={(name) => void renameBook(name)}
+          className="text-sm text-fg"
+        />
         <span className="text-[11px] text-dim">{entries.length} 条</span>
         {/* **一份设定开出好几局故事**（S63）：改它对它们全都生效，这件事得看得见。 */}
         {users.length > 1 && (
