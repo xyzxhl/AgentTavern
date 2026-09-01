@@ -34,6 +34,14 @@ export type Page =
 export interface Thought {
   actor: string;
   text: string;
+
+  /** 这一段的第一个分片和最后一个分片到达的时刻（`Date.now()`）。
+   *
+   * **量的是到达浏览器的时间**，包含网络——分片本身不带时间戳，而 trace 那份
+   * 时间要等落盘。这个数只用来显示"它想了多久"，不参与任何判断，
+   * 所以那点误差不值得为它加一路时间戳。 */
+  startedAt: number;
+  endedAt: number;
 }
 
 export interface SessionState {
@@ -435,11 +443,14 @@ export const useSession = create<SessionState>((set, get) => {
 /** 接上最后一段，来源变了才另起一段。**分片是逐字来的**，一片一段的话
  * 一轮下来会有两万多个元素，而它们本来就是一句话。 */
 function append(process: Thought[], actor: string, text: string): Thought[] {
+  const now = Date.now();
   const last = process.at(-1);
   if (last?.actor === actor) {
-    return [...process.slice(0, -1), { actor, text: last.text + text }];
+    // **换了 agent 才算换一段**，所以 `endedAt` 一路往后推：这一段的用时就是
+    // 它自己第一个分片到最后一个分片，不含它前后别人占的时间。
+    return [...process.slice(0, -1), { ...last, text: last.text + text, endedAt: now }];
   }
-  return [...process, { actor, text }];
+  return [...process, { actor, text, startedAt: now, endedAt: now }];
 }
 
 function upsert(path: Node[], node: Node): Node[] {

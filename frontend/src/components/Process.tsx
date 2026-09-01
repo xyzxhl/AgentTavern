@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { TraceEvent } from "../protocol";
 import type { Thought } from "../store";
@@ -132,10 +132,12 @@ export function Process({
   );
 }
 
-const FOLD_AT = 300;
-
 /**
- * 某个 agent 的一段思考。**长了就自己折起来**（同 S128 的理由）。
+ * 某个 agent 的一段思考。
+ *
+ * **每一段都长一个样**：折叠按钮 + 「谁的思考 · N 字 · Ns」。这里以前按 300 字
+ * 分长短——短的连标题行都没有，于是字数和用时无处可放，而"这一段想了多久"
+ * 恰恰是短思考也想知道的。同一种东西不该有时候有标题有时候没有。
  *
  * 跑着的时候默认摊开——那时它就是进度条，你盯着它看到哪儿了；跑完之后默认
  * 折起，因为那时它只在"为什么写成这样"被问起时才需要，而 director 一轮的
@@ -143,31 +145,56 @@ const FOLD_AT = 300;
  */
 function Thinking({ thought, running }: { thought: Thought; running: boolean }): JSX.Element {
   const [opened, setOpened] = useState<boolean | null>(null);
-  const long = thought.text.length > FOLD_AT;
-  const open = opened ?? (running || !long);
+  const open = opened ?? running;
   const who = ACTOR_LABEL[thought.actor] ?? thought.actor;
+  const elapsed = useElapsed(thought, running);
 
   return (
     <div>
-      {long && (
-        <button
-          onClick={() => setOpened(!open)}
-          className="flex items-baseline gap-1.5 text-[10px] text-dim/70 transition-colors hover:text-fg"
-        >
-          <span className="select-none">{open ? "▾" : "▸"}</span>
-          <span>
-            {who}的思考 {thought.text.length} 字
-          </span>
-        </button>
-      )}
+      <button
+        onClick={() => setOpened(!open)}
+        className="flex items-baseline gap-1.5 text-[10px] text-dim/70 transition-colors hover:text-fg"
+      >
+        <span className="select-none">{open ? "▾" : "▸"}</span>
+        <span>
+          {who}的思考 {thought.text.length} 字 · {seconds(elapsed)}
+        </span>
+      </button>
       {open && (
-        <p className="whitespace-pre-wrap text-xs leading-relaxed text-dim/70">
-          {!long && <span className="mr-1.5 font-mono text-[10px] text-dim/50">{who}</span>}
-          {thought.text}
-        </p>
+        <p className="whitespace-pre-wrap text-xs leading-relaxed text-dim/70">{thought.text}</p>
       )}
     </div>
   );
+}
+
+/**
+ * 这一段想了多久。**跑着的时候每秒往前走**——那时它是进度指示的一部分，
+ * 一个跑完才出现的总数恰恰错过了最想看它的那段时间。
+ *
+ * 只有**还在动的那一段**才跳：`running` 是整块过程的状态，而一块里可能有好几段，
+ * 前面几段早就结束了。判据是「最后一个分片是不是刚到」——上一段的 `endedAt`
+ * 停在它自己的最后一个分片上，不会再变。
+ */
+function useElapsed(thought: Thought, running: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  const live = running && now - thought.endedAt < STALE_AFTER;
+
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [running]);
+
+  return (live ? now : thought.endedAt) - thought.startedAt;
+}
+
+/** 隔这么久没有新分片，就当这一段已经结束了（换 agent 了，或者这一轮完了）。 */
+const STALE_AFTER = 2000;
+
+/** 十秒以内给一位小数，之后给整数——一段想了两万字的思考，小数点后那一位是噪声。 */
+function seconds(ms: number): string {
+  const s = Math.max(0, ms) / 1000;
+  return s < 10 ? `${s.toFixed(1)}s` : `${Math.round(s)}s`;
 }
 
 function Step({ event }: { event: TraceEvent }): JSX.Element {
