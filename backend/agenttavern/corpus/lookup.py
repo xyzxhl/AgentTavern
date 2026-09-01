@@ -1,5 +1,8 @@
 """一次完整的检索：多份资料 → 两路候选 → rerank → 几段原文（S139/S140/S146）。
 
+**rerank 只有一条路了**：专业 reranker（cross-encoder）。没配就是不 rerank，
+按融合次序取前几条——那一版用 chat 模型排序的实现已经删掉（S141）。
+
 **判定在这一层做完。** 调用方拿到的只有两种结果：几段原文，或者空——
 「这次没找到」那句话由它去说，但**它不需要再判一次**（S148 已经判过了）。
 
@@ -29,7 +32,6 @@ from pydantic import BaseModel, Field
 from ..config import LIMITS
 from ..models.corpus import Chunk
 from .bm25 import BM25Index
-from .rerank import GatewayLike, rerank_passages
 from .rerankers import Reranker, RerankError
 from .search import EmbedderLike, Hit, hybrid_search
 from .vectors import VectorIndex
@@ -98,7 +100,6 @@ async def look_up(
     sources: Sequence[Source],
     *,
     query: str,
-    gateway: GatewayLike,
     embedder: EmbedderLike | None = None,
     reranker: Reranker | None = None,
     candidates: int = CANDIDATES,
@@ -172,16 +173,18 @@ async def look_up(
         if why:
             degraded.append(why)
     else:
-        # **没配专业 reranker 就退回 chat 模型**（S141）：只能排序，不能否决，
-        # 但它不需要任何额外端点。**降级不是拒绝启用。**
-        ordered = await rerank_passages(
-            gateway, query=query, candidates=[c.hit for c in pool], limit=top_k
-        )
-        # **按 (资料, 块序号) 认回来，不按对象身份。** rerank 现在返回的就是传进去
-        # 的那几个对象，但那是它的实现，不是它的契约——哪天它改成返回副本，
-        # 按 `id()` 认就会当场认不出来。
-        by_key = {(c.hit.corpus_id, c.hit.chunk_index): c for c in pool}
-        picked = [by_key[(h.corpus_id, h.chunk_index)] for h in ordered]
+        # **没配 reranker 就用融合排序，不发任何模型调用**（S141）。
+        #
+        # 这里曾经退回一份 chat 模型排序（`corpus/rerank.py` + `rerank.yaml`）。
+        # 那条路**只能排序、不能否决**，而这条链路最危险的一类恰恰是"同领域
+        # 但答不上"——它排第几都还是会被当成答案用。留着它的代价是一份要维护的
+        # 提示词、一个宽容解析器，买到的只是次序变一变。
+        #
+        # **降级到此为止**：这一步不再判相关性，`min_relevance` 无从施加。
+        # 拦得住的只剩混合检索那一步的阈值（S148）。这件事**只报用户**
+        # （`degraded`），不报模型——同下面那条，模型知道了也不会换个做法。
+        picked = pool[:top_k]
+        degraded.append("没有配 reranker，这次只按混合检索的融合次序给，没有判过相关性。")
 
     stages["after_rerank"] = [_where(c) for c in picked]
 

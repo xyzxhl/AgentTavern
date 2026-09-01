@@ -253,7 +253,7 @@ async def test_a_garbled_item_is_skipped_not_fatal() -> None:
 def test_no_provider_configured_means_no_reranker() -> None:
     """**没配就是 `None`，不是故障**（同 embeddings 那条）。
 
-    那时链路退回用 chat 模型重排——能排序、不能否决，但不需要额外端点。
+    那时链路**根本不 rerank**：按融合次序取前几条，不发任何模型调用（S141）。
     """
     assert reranker_from_settings(Settings(llm_model="m")) is None
     # 只填了家数没填模型，同样不启用：**不去猜一个模型名**。

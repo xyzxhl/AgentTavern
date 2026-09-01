@@ -18,7 +18,7 @@
 | | 名字 | 有哪几份 |
 |---|---|---|
 | **agent** | **名词**，它是一个角色 | `director` / `writer` / `state_manager` / `goal_manager` |
-| **单次调用** | **动词**，它是一次动作 | `summarize` / `rerank` |
+| **单次调用** | **动词**，它是一次动作 | `summarize` |
 
 agent 会推演、会产出剧情、有自己的上下文与工具面；单次调用输入固定、输出固定、
 不参与剧情，做完就没了。`summarize` 曾经叫 `summarizer`，于是一直被算作「第五个

@@ -170,7 +170,6 @@ const LABEL: Record<string, string> = {
   state_manager: "状态",
   goal_manager: "目标",
   summarize: "摘要",
-  rerank: "资料排序",
 };
 
 const TAB = { context: "上下文", tools: "工具", specials: "特殊" };

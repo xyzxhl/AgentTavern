@@ -18,7 +18,7 @@
                               ↓
 director 调 corpus_search(query)
     → BM25 取 N 条 + 向量取 N 条，合并去重
-    → rerank（独立的模型调用）取前 k
+    → rerank（专业 reranker，没配就不 rerank）取前 k
     → 回执只有两种：那几段原文 + 位置，或者「这次没找到」
 ```
 
@@ -211,16 +211,12 @@ BM25 那一路**不依赖任何外部模型**，所以它是**降级路径**：
 
 **验收** `test_rrf_ranks_by_position_not_by_score` · `test_a_chunk_found_by_both_paths_ranks_above_one_found_by_one` · `test_both_paths_contribute_and_duplicates_collapse` · `test_it_falls_back_to_bm25_when_embeddings_are_unavailable` · `test_chinese_terms_survive_tokenisation`
 
-### S141 · rerank 首选专业 reranker，没配则退回 chat 模型
+### S141 · rerank 只有专业 reranker 一条路，没配就不 rerank
 
 **服务** [R40](../req/资料检索.md)
 
-**规格** 两条路，**配了就走上面那条**：
-
-| | 能做什么 | 要什么 |
-|---|---|---|
-| **专业 reranker**（cross-encoder） | 排序**并且**给相关度分——**能否决** | 一个额外端点 |
-| **chat 模型**（`rerank.yaml`） | 只能排序，**不能否决** | 什么都不要 |
+**规格** 配了 reranker 就 rerank，**没配就按混合检索的融合次序取前 k，
+一次模型调用都不发**。
 
 四家走同一个接口（`corpus/rerankers.py`）：`cohere` / `jina` / `voyage` / `qwen`。
 它们的结果项形状一致（`index` + `relevance_score`），差别只在 URL、请求体、
@@ -230,35 +226,30 @@ BM25 那一路**不依赖任何外部模型**，所以它是**降级路径**：
 这是 [S148](#s148) 已经吃过一次的亏（BM25 原始分不能当阈值），换个地方又出现——
 Cohere 的 0.5 和 Voyage 的 0.5 不是一回事，而**换一家照抄阈值不会有任何地方报错**。
 
-走 chat 模型那条路时，三条约束不变：
+**没配时的降级写在明处**：那一步不判相关性，`min_relevance` 无从施加，
+拦得住的只剩混合检索那一步的阈值（[S148](#s148)）。这件事**只报用户**
+（`Lookup.degraded`），**不报模型**——模型知道了也不会换个做法，同 [S140](#s140)。
 
-1. **独立调用。** 不接在 director 的对话后面，不进它的 tool loop——
-   它是一次干净的、只看 [query + 候选段落] 的调用。
-2. **独立的缓存空间。** 不传 session 的 id，用它自己的。
-3. **提示词归「单次调用」那一类**，不归任何 agent（见 [S147](#s147)）。
-   排序而不是逐段打分：给它全部候选让它**排个序**，不问「这一段几分」。
-
-**不做** 把专业 reranker 定成必需；不做在调用方写 `if provider == ...`。
+**不做** 把专业 reranker 定成必需（没配仍然查得到东西）；不做在调用方写
+`if provider == ...`；**不做用 chat 模型排序那条退路**。
 
 **为什么**
 
-- **为什么改用专业 reranker**：这一条曾经判的是「不引 cross-encoder 端点」，理由是
+- **为什么要 reranker**：这一条曾经判的是「不引 cross-encoder 端点」，理由是
   可移植性。**推翻它的是一次实测**——相似度阈值**分不开「答得上」和「同领域但
   答不上」**（重叠：0.5557–0.7433 对 0.4311–0.5812），而后者正是这条链路最危险的
   一类：模型拿到几段同领域但答非所问的原文，**会当成答案用**。
-  cross-encoder 在同一批问法上把三档**干净分开**（0.2833 对 0.1594），数据见
-  [TODO.md](../TODO.md)。
-- **可移植性那条顾虑仍然成立，所以留了退路**：没配就退回 chat 模型，不需要任何额外
-  端点。**降级不是拒绝启用**，同 embeddings 那条（[S140](#s140)）。
+  cross-encoder 在同一批问法上把三档**干净分开**，数据见 [TODO.md](../TODO.md)。
+- **为什么删掉 chat 模型那条退路**（它曾经是这条规格的另一半：一份 `rerank.yaml`
+  加一个宽容的序号解析器，只能排序、不能否决）：**它买到的只是次序变一变。**
+  这条链路最危险的那一类是"同领域但答不上"，而那一类**排第几都还是会被当成答案
+  用**——排序解决不了它，只有否决能。留着它的代价是实的：一份要维护的提示词
+  （而提示词正文归用户，等于多给用户一件要照看的东西）、一条只在没配 reranker
+  时才走的解析路径、以及这条规格里一半的篇幅。
 - **收下分数不违反 [P10](../Principles.md)**：那一条禁的是**模型的开放判断**——
   让通用 chat 模型自由打分，分数从哪来无从追究。cross-encoder 的分数是一个专门
   训练来估相关度的模型的输出，是**测量**，不是它临场的意见。
   而分数正是排序做不到的那件事：**它让「一条都不合适」成为可能**。
-- **独立调用**：接在 director 对话后面的话，它会读到整轮推演，
-  于是"哪一段最相关"变成"哪一段最符合我已经想好的走向"——那是自我确认（同 [P20](../Principles.md)）。
-- **独立缓存**：它的静态前缀（排序指令）跨会话完全相同，独占一个空间能最大化复用；
-  而混进 session 的空间只会**污染那边的缓存命中率**——
-  这个项目已经栽过一次「所有会话挤在同一个缓存空间里」（[P29](../Principles.md)）。
 
 **否决阈值 `corpus.min_relevance` 绑死在「哪一家 + 哪个模型」上**，换任何一样
 都要重量。当前值量的是 **qwen / qwen3-rerank**：真实链路上 20 个 query，
@@ -274,24 +265,24 @@ Cohere 的 0.5 和 Voyage 的 0.5 不是一回事，而**换一家照抄阈值�
 | **出错** | 根本没看成 | **退回融合排序，一条都不丢** |
 
 把出错当成否决，一次网络抖动就会让模型收到一句**假的结论**——同 S139 那条硬线
-（不下没有资格下的断言）。出错时也**不改用 chat reranker 重试**：那要多花一次
+（不下没有资格下的断言）。出错时也**不换一个 reranker 重试**：那要多花一次
 调用，而且更糟的是**一次网络抖动会悄悄换掉产出这份排序的算法**
 （[P28](../Principles.md)），此后任何一次前后对照都不成立。
 
 **验收** `test_every_provider_returns_the_same_shape` ·
 `test_every_provider_stamps_who_scored_it` · `test_voyage_says_top_k_not_top_n` ·
 `test_qwen_nests_input_and_parameters` · `test_an_unknown_provider_is_refused_at_once` ·
-`test_rerank_is_its_own_call_not_appended_to_the_director` ·
-`test_rerank_uses_its_own_cache_space` · `test_rerank_orders_rather_than_scores` ·
 `test_rerank_sees_more_candidates_than_it_returns` ·
 `test_everything_below_the_threshold_is_a_miss` ·
 `test_only_the_ones_above_the_threshold_come_back` ·
 `test_the_threshold_comes_from_config` ·
 `test_the_scores_and_who_gave_them_land_in_the_trace` ·
 `test_a_rerank_failure_degrades_to_the_fusion_order` ·
-`test_a_failure_does_not_fall_back_to_the_chat_reranker` ·
-`test_without_a_reranker_the_chat_path_still_runs` ·
+`test_a_failure_degrades_to_no_rerank_at_all` ·
+`test_without_a_reranker_nothing_is_reranked_and_nothing_is_called` ·
+`test_no_provider_configured_means_no_reranker` ·
 `test_candidates_from_several_corpora_are_reranked_together`
+
 
 ### S142 · 递归字符切分：先按自然边界，切不动才按字符
 
@@ -412,7 +403,7 @@ rerank 前后的次序都要记：**它到底有没有起作用，是这条链�
 | | 是什么 | 怎么命名 | 有哪几份 |
 |---|---|---|---|
 | **agent** | 一个**角色**——会推演、会产出剧情、有自己的上下文与工具面，跨轮次一直在那儿 | **名词** | director · writer · state_manager · goal_manager |
-| **单次调用** | 一次**动作**——输入固定、输出固定、不参与剧情，做完就没了 | **动词** | summarize · rerank |
+| **单次调用** | 一次**动作**——输入固定、输出固定、不参与剧情，做完就没了 | **动词** | summarize |
 
 1. **命名按词性分。** agent 用名词，单次调用用动词。
 2. **管理界面上各占一个入口**，不是一页里的两个小标题。
@@ -421,7 +412,7 @@ rerank 前后的次序都要记：**它到底有没有起作用，是这条链�
 
 两类都可编辑（[R31](../req/调教提示词.md) 管的是「模型会读到的字」，不分是谁在读）。
 
-**不做** 把 rerank 塞进 director 的附属提示词；不做把单次调用列在 agent 页的一个
+**不做** 把单次调用塞进 director 的附属提示词；不做把它们列在 agent 页的一个
 小标题底下；不做给它们起名词名字。
 
 **为什么** `summarize` 曾经叫 `summarizer`，列在 agent 名单的第五位——于是它

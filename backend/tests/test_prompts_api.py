@@ -136,3 +136,40 @@ def test_a_good_edit_lands_and_takes_effect_at_once(client, sandbox) -> None:
 def test_an_unknown_prompt_is_a_404(client) -> None:
     assert client.get("/prompts/nope").status_code == 404
     assert client.put("/prompts/nope", json={"data": {}}).status_code == 404
+
+
+# -- S147 提示词分两类：agent 与单次调用 ---------------------------------------
+#
+# 这两条原先在 `test_corpus_rerank.py` 里，跟着那份文件一起过来的——
+# chat 模型重排删掉之后（S141）那份文件整个没了，但这两条钉的是提示词的分类，
+# 和 rerank 只是碰巧同住。
+
+
+def test_an_agent_is_a_noun_and_a_single_call_is_a_verb() -> None:
+    """**名字就是分界线**（S147）。
+
+    agent 是一个角色——会推演、会产出剧情、有自己的上下文与工具面，跨轮次一直
+    在那儿，所以用名词。单次调用是一次动作——输入固定、输出固定、不参与剧情，
+    做完就没了，所以用动词。
+
+    `summarize` 曾经叫 `summarizer`，于是一直被算作「第五个 agent」。**那个误解
+    会影响判断**：比如以为该给它工具面、以为它该读世界设定。
+
+    这条断言钉死两份名单，是**故意的路障**：加一份 YAML 时它会红，读到这里
+    才知道该用哪种词性、该进哪一类。
+
+    **单次调用现在只剩一个成员**（`rerank` 随 S141 删掉了）。分类照留——
+    它区分的是两种东西，不是两份文件。
+    """
+    assert set(AGENTS) == {"director", "writer", "state_manager", "goal_manager"}
+    assert set(CALLS) == {"summarize"}
+    assert not set(AGENTS) & set(CALLS)
+    assert (*AGENTS, *CALLS) == PROMPT_FILES
+
+
+def test_a_single_call_is_still_editable() -> None:
+    """两类都可编辑——R31 管的是「模型会读到的字」，不分是谁在读。"""
+    from agenttavern.prompting import load
+
+    for name in CALLS:
+        assert load(name).get("sections"), f"{name} 应当有可编辑的 sections"

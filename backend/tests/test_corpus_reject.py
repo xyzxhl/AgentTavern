@@ -1,7 +1,8 @@
 """专业 reranker 接进检索链路：**它能否决**（S141 / S148 / S139）。
 
-这是 chat 模型那一版做不到的事——它只能重排。而"同领域但答不上"那一档
-既拦不住又最危险：模型拿到几段答非所问的原文，**会当成事实写进剧情**。
+**否决是没配 reranker 时做不到的事**——那时只有一个融合次序，一段都判不掉。
+而"同领域但答不上"那一档既拦不住又最危险：模型拿到几段答非所问的原文，
+**会当成事实写进剧情**。
 
 一条贯穿的原则：**rerank 是锦上添花的一步，它坏掉不该让检索失败。**
 所以"否决"和"出错"必须分得开——前者是结论，后者是降级。
@@ -62,15 +63,8 @@ class FakeReranker:
         return sorted(out, key=lambda s: -s.score)[:top_n]
 
 
-class NeverCalled:
-    """chat 那条路的替身。**被叫到就是错**。"""
-
-    async def complete(self, messages, *, user_id=None, **kw):  # type: ignore[no-untyped-def]
-        raise AssertionError("配了专业 reranker 就不该再走 chat 那条路")
-
-
 async def run(reranker, **kw):
-    return await look_up([source()], query="长官", gateway=NeverCalled(), reranker=reranker, **kw)
+    return await look_up([source()], query="长官", reranker=reranker, **kw)
 
 
 # -- 否决 ----------------------------------------------------------------------
@@ -139,48 +133,36 @@ async def test_a_rerank_failure_degrades_to_the_fusion_order() -> None:
     assert lookup.stages["rejected"] == 0, "没看成，谈不上否决"
 
 
-async def test_a_failure_does_not_fall_back_to_the_chat_reranker() -> None:
+async def test_a_failure_degrades_to_no_rerank_at_all() -> None:
     """**失败就退到"没 rerank"，不换一个 reranker 重试。**
 
-    退到 chat 那条路要多花一次调用的时间，而且更糟的是：一次网络抖动会
-    **悄悄换掉产出这份排序的算法**——那正是 P28 说的"偷偷加了一个变量"，
-    此后任何一次前后对照都不成立了。
-
-    `NeverCalled` 是 gateway 的替身，被叫到就抛。
+    换一个要多花一次调用的时间，而且更糟的是：一次网络抖动会**悄悄换掉产出
+    这份排序的算法**——那正是 P28 说的"偷偷加了一个变量"，此后任何一次前后
+    对照都不成立了。
     """
     lookup = await run(FakeReranker(fails=True))
     assert lookup.passages, "退化成融合排序，不是失败"
 
 
-# -- 没配专业 reranker 时仍然走 chat 那条路 ------------------------------------
+# -- 没配 reranker：不 rerank，也不发任何模型调用 ------------------------------
 
 
-async def test_without_a_reranker_the_chat_path_still_runs() -> None:
-    """**没配就退回 chat 模型重排**（S141）——它不需要任何额外端点。
+async def test_without_a_reranker_nothing_is_reranked_and_nothing_is_called() -> None:
+    """**没配就按融合次序给**（S141），一次模型调用都不发。
 
-    那一版只能排序不能否决，所以这时一段都不会被判掉。
+    这里曾经退回一份 chat 模型排序。**那条路整个删掉了**——它只能排序不能
+    否决，而这条链路最危险的一类正是"同领域但答不上"：排第几都还是会被当成
+    答案用。留着它的代价是一份要维护的提示词，买到的只是次序变一变。
+
+    代价写在明处：这时 `min_relevance` 无从施加，拦得住的只剩混合检索那一步
+    的阈值（S148）。**这件事只报用户**——模型知道了也不会换个做法。
     """
+    lookup = await look_up([source()], query="长官", reranker=None)
 
-    class Chat:
-        def __init__(self) -> None:
-            self.calls = 0
-
-        async def complete(self, messages, *, user_id=None, **kw):  # type: ignore[no-untyped-def]
-            self.calls += 1
-
-            class _R:
-                content = "2,0,1"
-                tool_calls: list[object] = []
-
-            return _R()
-
-    chat = Chat()
-    lookup = await look_up([source()], query="长官", gateway=chat, reranker=None)
-
-    assert chat.calls == 1
-    assert [p.chunk_index for p in lookup.passages] == [2, 0, 1]
-    assert lookup.stages["rejected"] == 0, "chat 那一版不能否决"
+    assert [p.chunk_index for p in lookup.passages] == [0, 1, 2], "融合次序，原样"
+    assert lookup.stages["rejected"] == 0, "没 rerank，谈不上否决"
     assert "reranker" not in lookup.stages
+    assert any("没有配 reranker" in reason for reason in lookup.degraded)
 
 
 @pytest.mark.parametrize("floor", [0.0, 1.0])

@@ -121,8 +121,8 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
     # 客户端，每次检索新建一个不会报错，只会变慢。
     embedder = Embedder.from_settings(resolved)
 
-    # 专业 reranker（S141）。**没配 `RERANK_PROVIDER` 时是 `None`**，那时退回
-    # chat 模型重排——只能排序不能否决。家数名写错在这里就当场报错，不猜（P29）。
+    # 专业 reranker（S141）。**没配 `RERANK_PROVIDER` 时是 `None`**，那时不 rerank，
+    # 按融合次序给。家数名写错在这里就当场报错，不猜（P29）。
     reranker = reranker_from_settings(resolved)
 
     @asynccontextmanager

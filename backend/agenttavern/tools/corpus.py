@@ -48,7 +48,6 @@ async def _corpus_search(ctx: RunContext, params: CorpusSearchParams) -> ToolRes
     lookup = await look_up(
         sources,
         query=params.query,
-        gateway=ctx.gateway,
         embedder=ctx.embedder,
         reranker=ctx.reranker,
     )

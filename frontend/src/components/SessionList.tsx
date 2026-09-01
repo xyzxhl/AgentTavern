@@ -51,7 +51,7 @@ export function SessionList(): JSX.Element {
           page={{ kind: "agents" }}
           go={go}
         />
-        {/* **单次调用自己一个入口**（S147）：`summarize` / `rerank` 是一次动作，
+        {/* **单次调用自己一个入口**（S147）：`summarize` 是一次动作，
             不是一个角色。挂在 agent 那一页的小标题底下，读起来就是「agent，
             以及一些附属的东西」——而那个误解会影响判断，比如以为该给它们工具面。 */}
         <Entry

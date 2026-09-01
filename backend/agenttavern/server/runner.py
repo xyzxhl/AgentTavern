@@ -94,8 +94,8 @@ class SessionRunner:
         self._gateway = gateway
         self._broadcast = broadcast
         self._reranker = reranker
-        """专业 reranker（S141）。**`None` 时退回 chat 模型重排**——只能排序，
-        不能否决。配了它，「同领域但答不上」那一档才拦得住。"""
+        """专业 reranker（S141）。**`None` 时不 rerank**，按融合次序取前几条。
+        配了它，「同领域但答不上」那一档才拦得住。"""
         self._embedder = embedder
         """资料检索里向量那一路的客户端（S140）。**`None` 是常态**：没配
         embeddings 时那条链路退回纯 BM25，不是拒绝启用。

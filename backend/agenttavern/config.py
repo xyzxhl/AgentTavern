@@ -65,8 +65,11 @@ class Settings(BaseSettings):
     rerank_provider: str = ""
     """哪一家的 reranker：`cohere` / `jina` / `voyage` / `qwen`（S141）。
 
-    **留空 = 用 chat 模型重排**（`corpus/rerank.py`），那一版只能排序、不能否决，
-    但它不需要任何额外端点。同 embeddings 那条：**降级不是拒绝启用**。
+    **留空 = 不 rerank**：按混合检索的融合次序取前几条，不发任何模型调用，
+    `min_relevance` 也无从施加（S141）。
+
+    这里曾经退回一份 chat 模型排序。**那条路删掉了**——它只能排序、不能否决，
+    而这条链路最危险的一类正是"同领域但答不上"，它排第几都还是会被当成答案用。
 
     OpenAI SDK 没有 rerank 这个面，各家形状自己定，所以这里要指名道姓；
     写了不认得的名字**当场报错**，不猜。

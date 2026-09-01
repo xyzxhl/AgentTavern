@@ -89,6 +89,24 @@ def gateway(reply: str = "0,1,2") -> LLMGateway:
     return LLMGateway(Settings(llm_model="m"), http_client=client)
 
 
+class ReorderingReranker:
+    """按给定的分数重排。**只有它能让 rerank 前后不一样**（S141）。"""
+
+    provider = "qwen"
+
+    def __init__(self, scores: list[float]) -> None:
+        self.scores = scores
+
+    async def rerank(self, query: str, documents: list[str], *, top_n: int):  # type: ignore[no-untyped-def]
+        from agenttavern.corpus.rerankers import Scored
+
+        out = [
+            Scored(index=i, score=s, provider=self.provider)
+            for i, s in enumerate(self.scores[: len(documents)])
+        ]
+        return sorted(out, key=lambda s: -s.score)[:top_n]
+
+
 class BrokenEmbedder:
     """端点挂了。**降级路径要被真的走一遍**，不能只在单测里假设它会发生。"""
 
@@ -309,8 +327,13 @@ async def test_a_search_lands_in_the_trace_with_both_stages(tmp_path: Path) -> N
     它到底有没有起作用，是这条链路第一个要量的东西——两边都记下来才比得出。
     """
     corpus = make_corpus(tmp_path, "唐代官制", TANG)
-    # 模型把第三块提到最前面：**次序确实被改动过**，两份记录因此不同。
-    ctx = context(tmp_path, corpus, reply="2,0,1")
+    # reranker 把第三块提到最前面：**次序确实被改动过**，两份记录因此不同。
+    # 这里以前用的是 chat 那条路（`reply="2,0,1"`），它删掉之后（S141）
+    # 得给一个真的 reranker——**没有 reranker 就没有 rerank**，前后自然相同，
+    # 那时这条测试钉不到任何东西。
+    ctx = context(tmp_path, corpus)
+    # 三个分都得**过得了 `min_relevance`**，否则这条测的就成了否决而不是重排。
+    ctx.reranker = ReorderingReranker([0.70, 0.65, 0.95])
     result = await search(ctx, "长官")
 
     trace = result.payload["corpus"]

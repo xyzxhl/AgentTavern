@@ -115,7 +115,7 @@ async def execute_run(
         inbox=inbox,
         on_delta=on_delta,
         # 没配 embeddings 时它就是 `None`，资料检索退回纯 BM25（S140）；
-        # 没配 reranker 时退回 chat 模型重排（S141）。**两条都是降级，不是拒绝启用。**
+        # 没配 reranker 时不 rerank，按融合次序给（S141）。**两条都是降级，不是拒绝启用。**
         embedder=embedder,
         reranker=reranker,
         # state 阶段被打断时，已经写下的那几笔是**已经完成的动作**，不必重来（S48）。
