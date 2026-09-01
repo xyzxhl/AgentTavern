@@ -5,7 +5,16 @@ import json
 from pathlib import Path
 
 import pytest
-from conftest import STATE_MARK, CancelWriter, ScriptedLLM, option, text, tool, using
+from conftest import (
+    STATE_MARK,
+    CancelWriter,
+    ScriptedLLM,
+    close_segment,
+    option,
+    text,
+    tool,
+    using,
+)
 
 from agenttavern.models import (
     EntryKind,
@@ -401,12 +410,16 @@ async def test_collapsing_a_list_into_a_string_is_flagged(tmp_path: Path) -> Non
     assert "沈砚 › 随身" in flag and "沈砚 › 灵石" in flag
 
 
-def _script(runs: int, outline: str, *tail, closes: list[str] | None = None, followup: bool = True):
+def _script(runs: int, outline: str, *tail, closes: list[int] | None = None, followup: bool = True):
     """每轮的调用序列：state_write / submit_outline / writer（/ 归段追问）。
 
     追问**每轮都发生**——判定在生成时，不等它滑出窗口（S58）。
+
+    `closes` 是每轮的归段答案：`0` = 不调用 `close_segment`（先别断），
+    `k` = 调用它、`after=k`。**答案走工具调用，不走自由文本**——以前是让
+    模型回一串数字，代码从回复里抓，抓错了不出声而标记一打就不可逆。
     """
-    answers = closes or ["0"] * runs
+    answers = closes or [0] * runs
     body: list = []
     for i in range(runs):
         body += [
@@ -415,8 +428,8 @@ def _script(runs: int, outline: str, *tail, closes: list[str] | None = None, fol
             text("门开了。"),
         ]
         if followup:
-            body.append(text(answers[i]))
-    return ScriptedLLM(*body, *tail, auto_close=None if followup else "0")
+            body.append(close_segment(answers[i]))
+    return ScriptedLLM(*body, *tail, auto_close=None if followup else 0)
 
 
 async def _drive(repo, session, gateway, reg, runs: int):
@@ -440,7 +453,7 @@ async def test_segment_closes_when_the_director_says_it_closed(tmp_path: Path) -
         runs,
         long_outline,
         text("她进了店，陈在屋里。"),
-        closes=["0", "0", "0", "4"],
+        closes=[0, 0, 0, 4],
     )
     repo, session, gw, reg = setup(tmp_path, llm)
     parent = await _drive(repo, session, gw, reg, runs)
@@ -449,6 +462,67 @@ async def test_segment_closes_when_the_director_says_it_closed(tmp_path: Path) -
     assert end.closes_segment, "结尾标记在生成时当场打上"
     assert end.outline_summary == "她进了店，陈在屋里。"
     assert end.segment_span == runs, "摘要要记住自己覆盖了几轮"
+
+
+def test_the_cut_comes_from_a_tool_call_not_from_free_text() -> None:
+    """**答案走工具调用**（S58）：`close_segment(after=k)`，不调用就是先别断。
+
+    以前是让模型「只回这个数字」，代码从回复里抓第一串数字。**那是在自由文本
+    里找结构**：模型多写一句「我认为断在第 2 条」抓到的就不是 2，而抓错的后果
+    不可逆且不出声——标记打在没人指的那一条上，那几轮就被压成了一段。
+
+    所以这里一律从严：不是那个工具、参数缺了、不是个整数——**全算 0**。
+    """
+    from agenttavern.agents.postrun import parse_cut
+    from agenttavern.llm import ToolCall
+
+    def call(name: str, **args):
+        return ToolCall(id="c1", name=name, arguments=args)
+
+    assert parse_cut([call("close_segment", after=2)], 4) == 2
+    assert parse_cut([], 4) == 0, "什么都不调 = 先别断"
+    assert parse_cut([call("state_query", paths=[["地点"]])], 4) == 0, "别的工具不算"
+    assert parse_cut([call("close_segment")], 4) == 0, "参数缺了不算"
+    assert parse_cut([call("close_segment", after="第二条")], 4) == 0, "不是个数不算"
+    assert parse_cut([call("close_segment", after=True)], 4) == 0, "布尔不是序号"
+
+    assert parse_cut([call("close_segment", after="2")], 4) == 2, "字符串数字照收"
+    assert parse_cut([call("close_segment", after=12)], 3) == 3, "上界夹住"
+    assert parse_cut([call("close_segment", after=-1)], 3) == 0
+
+
+async def test_the_followup_prompt_comes_from_the_yaml(tmp_path: Path) -> None:
+    """**追问的正文归 `director.yaml` 的 `specials.segment`**（R31）。
+
+    它曾经在 `postrun.py` 里另存了一份四百多字的 Python 字符串，而**发出去的
+    是那一份**：YAML 那一份是死字，用户改完什么都不会发生，两份还必然对不上
+    （同 S27）。当时的测试只断言了 YAML 里写着什么——那一侧一直是对的，
+    所以它一直绿着。**这一条断言发出去的那句话。**
+    """
+    import shutil
+
+    import yaml
+
+    from agenttavern.prompting import assembler
+
+    llm = _script(1, "她推开门。", closes=[0])
+    repo, session, gw, reg = setup(tmp_path, llm)
+
+    room = tmp_path / "prompts"
+    shutil.copytree(assembler._DIR, room, ignore=shutil.ignore_patterns("__pycache__"))
+    doc = yaml.safe_load((room / "director.yaml").read_text(encoding="utf-8"))
+    doc["specials"]["segment"]["sections"][0]["body"] = "本轮已经提交。改过的追问：断不断？"
+    (room / "director.yaml").write_text(
+        yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+    assembler.use_dir(room)
+    try:
+        await _drive(repo, session, gw, reg, 1)
+    finally:
+        assembler.use_dir(None)
+
+    sent = [str(r["messages"][-1].get("content") or "") for r in llm.requests]
+    assert any("改过的追问：断不断？" in c for c in sent), "发出去的必须是 YAML 那一份"
 
 
 async def test_open_run_count_resets_at_the_previous_close(tmp_path: Path) -> None:
@@ -460,7 +534,7 @@ async def test_open_run_count_resets_at_the_previous_close(tmp_path: Path) -> No
     from agenttavern.orchestration.run import _open_segment
 
     runs = 5
-    llm = _script(runs, "她推开门。", closes=["0", "2", "0", "0", "0"])
+    llm = _script(runs, "她推开门。", closes=[0, 2, 0, 0, 0])
     repo, session, gw, reg = setup(tmp_path, llm)
     parent = await _drive(repo, session, gw, reg, runs)
 
@@ -496,7 +570,7 @@ async def test_every_segment_goes_through_summarize(tmp_path: Path) -> None:
     short = "她推开门。"
 
     # 最后那条 `text` 是压缩那次调用的回复。近路还在的话它根本不会被用到。
-    llm = _script(runs, short, text("她进了店。"), closes=["0", "0", "0", "4"])
+    llm = _script(runs, short, text("她进了店。"), closes=[0, 0, 0, 4])
     repo, session, gw, reg = setup(tmp_path, llm)
     parent = await _drive(repo, session, gw, reg, runs)
 
@@ -548,7 +622,7 @@ async def test_backfill_failure_does_not_fail_the_run(tmp_path: Path) -> None:
     """归段失败只该回退到头部截断——这一轮已经落盘了，不能因此报错。"""
 
     runs = 4
-    llm = _script(runs, "她推开门，屋里坐着陈。" * 30, closes=["0", "0", "0", "4"])
+    llm = _script(runs, "她推开门，屋里坐着陈。" * 30, closes=[0, 0, 0, 4])
     repo, session, gw, reg = setup(tmp_path, llm)
 
     class Exploding:

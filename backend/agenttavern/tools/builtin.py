@@ -275,8 +275,7 @@ class WorldInfoListParams(BaseModel):
 async def _worldinfo_list(ctx: RunContext, _: WorldInfoListParams) -> ToolResult:
     entries = ctx.repo.worldbook()
     index = [
-        {"ref": e.id, "name": e.name, "summary": e.summary_or_head(), "chars": len(e.content)}
-        for e in entries
+        {"ref": e.id, "name": e.name, "开头": e.head(), "chars": len(e.content)} for e in entries
     ]
     return ToolResult(
         content=json.dumps(index, ensure_ascii=False),
@@ -331,57 +330,32 @@ async def _worldinfo_read(ctx: RunContext, params: WorldInfoReadParams) -> ToolR
 
 
 # --------------------------------------------------------------------------
-# summarize —— 懒惰生成 + 系统缓存（S25）
+# close_segment —— 只在生成后追问里出现，绝不进 loop（S22/S58）
 # --------------------------------------------------------------------------
 
 
-class SummarizeParams(BaseModel):
-    source: str = Field(
-        description="要压缩的对象：``run:<run_id>``（某轮细纲）或 ``wi:<ref>``（某条设定）。"
+class CloseSegmentParams(BaseModel):
+    after: int = Field(
+        ge=1,
+        description="断在待归段列表的第几条之后。第 1 到第 k 条合成一段，第 k+1 条起属于下一段。",
     )
 
 
-async def _summarize(ctx: RunContext, params: SummarizeParams) -> ToolResult:
-    kind, _, ident = params.source.partition(":")
+async def _close_segment(ctx: RunContext, params: CloseSegmentParams) -> ToolResult:
+    """**没有实现，也不该有。**
 
-    if kind == "run":
-        node = ctx.repo.all_nodes().get(ident)
-        if node is None:
-            return error(f"没有这个 run：{ident}", label="压缩失败")
-        if node.outline_summary:
-            return ToolResult(content=node.outline_summary, label="复用了已有摘要")
-        summary = await _llm_summarize(ctx, node.outline)
-        node.outline_summary = summary
-        ctx.repo.save_node(node)
+    它不走 `ToolRegistry.dispatch`：生成后追问是一次**独立的、不带 loop 的调用**，
+    编排层直接读回复里的这次调用（`agents/postrun.py`），拿到那个数字就完了。
+    它做成一个工具是为了**答案有形状**——以前是让模型回一个数字，代码从自由
+    文本里抓第一串数字，而抓错的后果不可逆且不出声。
 
-    elif kind == "wi":
-        entry = ctx.repo.book().load_entry(ident)
-        if entry is None:
-            return error(f"没有这个设定条目：{ident}", label="压缩失败")
-        if entry.summary:
-            return ToolResult(content=entry.summary, label="复用了已有摘要")
-        summary = await _llm_summarize(ctx, entry.content)
-        entry.summary = summary
-        ctx.repo.book().save_entry(entry)
-
-    else:
-        return error(f"source 必须是 run:<id> 或 wi:<ref>，收到：{params.source}", label="压缩失败")
-
-    # 写回后即成为索引里的 summary 字段，之后不必重算。
-    return ToolResult(
-        content=summary,
-        label=f"压缩了 {params.source}",
-        payload={"source": params.source, "chars": len(summary)},
+    留这个 handler 只为让它和别的工具同形（描述从 YAML 取、参数由 Python 生成，
+    在提示词页上并排显示）。真被调到说明它被错误地注册进了某个工具面。
+    """
+    return error(
+        "close_segment 只在生成后追问里可用，不在这一轮的工具面里。",
+        label="close_segment 不该出现在这里",
     )
-
-
-async def _llm_summarize(ctx: RunContext, content: str) -> str:
-    # **函数内 import 是有意的**：模块级会成环（tools → agents → director → tools）。
-    # 环一直在，只是恰好没人单独 import 过 `agenttavern.tools`——测试全跑时
-    # 别的模块先把 agents 装好了，环就看不见。
-    from ..agents.summarize import summarize_text
-
-    return await summarize_text(ctx.gateway, content)
 
 
 # --------------------------------------------------------------------------
@@ -487,8 +461,16 @@ def worldinfo_tools(agent: str = "director") -> list[Tool[Any]]:
     ]
 
 
-def summarize_tool(agent: str = "director") -> Tool[Any]:
-    return _tool(agent, "summarize", SummarizeParams, _summarize)
+def close_segment_tool(agent: str = "director") -> Tool[Any]:
+    """归段那一刀。**不进任何工具面**（S22）——只有生成后追问那一次调用带上它。
+
+    `summarize` 曾经在这里，是 director 手上的一个工具（S25：按引用寻址、
+    懒惰生成）。**它删掉了**：压缩由编排层在轮次滑出全文窗口时自己做
+    （`orchestration/run.py` 的 `close_segment`），模型不该有一个能主动
+    触发压缩的入口——判定和压缩本来就不同步，给它这个工具等于请它去动
+    一件它管不着、也看不见后果的事。
+    """
+    return _tool(agent, "close_segment", CloseSegmentParams, _close_segment)
 
 
 def ask_question_tool(agent: str = "director") -> Tool[Any]:
@@ -509,10 +491,10 @@ def ask_question_tool(agent: str = "director") -> Tool[Any]:
 
 __all__ = [
     "ask_question_tool",
+    "close_segment_tool",
     "history_tools",
     "state_query_tool",
     "state_write_tool",
     "submit_tool",
-    "summarize_tool",
     "worldinfo_tools",
 ]

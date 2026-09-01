@@ -199,7 +199,8 @@
 那不是精度低一点，而是**位置偏置**——开头原样保留、结尾完全消失，
 而它还顶着「总结」的名字。**会误导模型的回退不能当作安全默认值。**
 
-**验收** `test_every_segment_goes_through_summarize` · `test_summary_falls_back_to_head_in_index`
+**验收** `test_every_segment_goes_through_summarize` · `test_an_index_entry_says_how_much_it_left_out`
+（后者钉的是回退那一半：没归过段的轮次在索引里是"细纲前 N 字 + 全文字数"）
 
 ### S60 · director 的对话跨轮持续，压缩越界一次、全部替换
 

@@ -40,7 +40,7 @@ class ScriptedLLM:
     def __init__(
         self,
         *replies: dict[str, Any],
-        auto_close: str | None = "0",
+        auto_close: int | None = 0,
         state: dict[str, Any] | list[dict[str, Any]] | None = None,
         auto_state: bool = True,
         on_goal_request: Callable[[], None] | None = None,
@@ -50,6 +50,10 @@ class ScriptedLLM:
         追问每轮都发生（S58：判定在生成时），但绝大多数测试与归段无关——
         让它们各自在脚本里插一条应答，只会把测试写得更吵、更容易错位。
         测归段的测试传 ``auto_close=None``，自己把每一轮的答案排进脚本。
+
+        **答案是一次工具调用，不是一个数字**：`0` = 不调用 `close_segment`
+        （先别断），`k` = 调用它、`after=k`。以前是让模型回一串数字，
+        代码从自由文本里抓——抓错了不出声，而标记一打就不可逆。
 
         **state_manager 同理**（S7）：它每轮跑一次，跑在 writer 之后。
         把这一轮该记的东西传 ``state=``（形状就是 `state_write` 的参数，
@@ -106,8 +110,8 @@ class ScriptedLLM:
         ):
             self.on_writer_request()
 
-        if self._auto_close and FOLLOWUP_MARK in messages[-1].get("content", ""):
-            return self._reply(text(self._auto_close), streaming=streaming)
+        if self._auto_close is not None and FOLLOWUP_MARK in messages[-1].get("content", ""):
+            return self._reply(close_segment(self._auto_close), streaming=streaming)
 
         if self._auto_state and STATE_MARK in messages[0].get("content", ""):
             # 已经写过一次（上一条是工具结果）就收口——**出口是"不再调用工具"**。
@@ -197,6 +201,15 @@ def tool(name: str, **arguments: Any) -> dict[str, Any]:
             }
         ],
     }
+
+
+def close_segment(after: int) -> dict[str, Any]:
+    """生成后追问的一个答案（S58）。
+
+    **`0` 是"不调用"**，不是"调用并传 0"：`close_segment.after` 有 `ge=1`，
+    0 没有含义——"先别断"的表达方式就是这一次什么工具都不调。
+    """
+    return text("先不断。") if after <= 0 else tool("close_segment", after=after)
 
 
 def tools(*calls: tuple[str, dict[str, Any]]) -> dict[str, Any]:

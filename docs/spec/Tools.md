@@ -9,7 +9,7 @@
 
 | agent | 工具 |
 |---|---|
-| director | `submit_outline` · `state_query` · `history_*` · `worldinfo_*` · `corpus_search` · `summarize` · `ask_question` |
+| director | `submit_outline` · `state_query` · `history_*` · `worldinfo_*` · `corpus_search` · `ask_question` |
 | writer | **一个都没有**，单次调用 |
 | state_manager | `state_write` · `state_query` |
 | goal_manager | `plan` · `check` · `steer` · `finish` |
@@ -70,17 +70,27 @@
 **服务** [R16](../req/推进剧情.md)
 
 **规格** 判据是**影不影响本轮产出**。生成中：`state_query`、`worldinfo_read`、
-`history_read`、`ask_question`。生成后：归段追问。
+`history_read`、`ask_question`。生成后：归段追问（`close_segment`）。
 
 生成后的动作**必须问 director 本人**，接在它自己的对话后面。
+`close_segment` 因此**不在任何一个 agent 的工具面里**——它只挂在追问那一次
+独立调用上，`build_tools()` 一次都不注册它。
 
-**不做** 把归段追问塞进 tool loop。
+**答案是一次工具调用**：`close_segment(after)` 收一个 typed int，
+**不调用就是「先别断」**。
+
+**不做** 把归段追问塞进 tool loop；**不做**让模型回一个数字。
 
 **为什么** 它对本轮产出毫无帮助，却要占往返、分散注意力，还和 `submit_outline`
 的终止语义打架。而另起一个只看得见几段细纲的冷调用，判据全靠猜——判的是"这场戏
 完了没有"，需要状态、前情和故事走向。
 
-**验收** `test_segment_closes_when_the_director_says_it_closed` · `test_open_segment_waits_another_run`
+**答案不走自由文本**，是因为原来那一版从回复里抓第一串数字：模型多写一句
+「我认为断在第 2 条」，抓到的就是别的数。而抓错的后果**不可逆且不出声**——
+标记打在没人指的那一条上，那几轮被压成一段，没有任何地方会报错。
+这是 [P10](../Principles.md) 的同一条：**受约束的选择胜过在自由文本里找结构。**
+
+**验收** `test_segment_closes_when_the_director_says_it_closed` · `test_open_segment_waits_another_run` · `test_the_cut_comes_from_a_tool_call_not_from_free_text` · `test_close_segment_is_in_no_tool_face` · `test_the_followup_prompt_comes_from_the_yaml`
 
 ### S23 · `ask_question` 是「题干 + 恰好三个选项」
 
@@ -116,24 +126,38 @@
 
 **验收** `test_ask_question_awaits_user`
 
-### S25 · `summarize` 按引用寻址、懒惰生成、不设字数上限
+### S25 · 压缩归编排层，模型没有触发它的工具
 
 **服务** [R16](../req/推进剧情.md)
 
-**规格** `summarize(source)`，`source` 是 `run:<id>` 或 `wi:<ref>`。
-结果由系统缓存复用，成为索引里的 summary 字段。**没有摘要的条目回退到「前 N 字 + 总字数」**。
+**规格** 摘要**只由编排层生成**：轮次滑出全文窗口、且那一段已经标了结尾时，
+`close_segment()` 调一次 `summarize_text`（`prompting/summarize.yaml`，
+属于「单次调用」那一类，[S147](Corpus.md)）。
 
 **没有 `max_chars`**，只统计：归段事件带 `chars_in` / `chars_out`，
 **看压缩比不看绝对字数**。
 
-**不做** 传裸文本；不做预先批量生成；不做字数上限。
+**摘要只有一种**：history 压缩出来的那一段（`Node.outline_summary`）。
+设定条目**没有摘要**——它是 title → content，索引里给名字和体量。
 
-**为什么** 传裸文本时系统不知道该把摘要挂到哪里，缓存落不了地。
+**不做** 给 director 一个 `summarize` 工具；不做预先批量生成；不做字数上限；
+不做在设定条目上缓存摘要。
+
+**为什么** 这一条原先是一个工具（`summarize(source)`，`source` 是 `run:<id>`
+或 `wi:<ref>`，懒惰生成 + 系统缓存）。**它删掉了**：判定与压缩本来就不同步
+（[S58](Retrieval.md)：判定在生成时，压缩在需要时），而一个能主动触发压缩的
+工具等于请模型去动一件**它管不着、也看不见后果的事**——压缩不可逆，而它
+判断不了这一段将来还会不会被读到。实测 12 轮里它一次都没被调用过。
+
+条目那侧的缓存跟着一起删：`summary` 字段的唯一写者就是那个工具，留着它就是
+一个永远为 `None` 的字段，读代码的人会以为它有值。**而且一个词不能指两样
+东西**——「摘要由谁生成」这个问题在两种含义之间会一直错位。
+
 字数上限实测**说了不算而且没有任何地方会发现**：48 条落盘摘要里 16 条超标，
 最坏 779 字 / 3.9 倍，且超出幅度随输入长度增长。**一个说了不算的数比没有更糟**——
 它让"压缩到 200 字"看起来是既成事实，于是整套预算账全是虚的。
 
-**验收** `test_summarize_caches_and_reuses` · `test_summary_falls_back_to_head_in_index` · `test_summarize_rejects_bad_source` · `test_every_segment_goes_through_summarize`
+**验收** `test_every_segment_goes_through_summarize` · `test_close_segment_is_in_no_tool_face` · `test_export_drops_the_id`
 
 ### S26 · 真截断必须出声，隐藏不算截断
 

@@ -25,7 +25,6 @@ from .builtin import (
     state_query_tool,
     state_write_tool,
     submit_tool,
-    summarize_tool,
     worldinfo_tools,
 )
 from .corpus import corpus_tool
@@ -68,8 +67,9 @@ def build_tools(
     if corpora and tool_enabled("director", "corpus_search"):
         tools.append(corpus_tool())
 
-    if tool_enabled("director", "summarize"):
-        tools.append(summarize_tool())
+    # **`close_segment` 不在这里**（S22）：它是生成后的动作，只影响以后怎么回看，
+    # 只有 `agents/postrun.py` 那一次独立调用带上它。`summarize` 曾经在这个位置，
+    # 已经整个删掉——压缩归编排层，模型没有主动触发它的入口。
 
     if tool_enabled("director", "ask_question"):
         # 控制权那一档直接写进它的描述——「越高越少问」讲的是这个工具的调用

@@ -204,8 +204,7 @@ def render_worldinfo(entries: list[WorldbookEntry], *, expandable: bool = True) 
     parts = [f"### {e.name}\n{e.content}" for e in always if e.content]
     if on_demand:
         index = "\n".join(
-            f"- `{e.ref_hint()}` {e.name}（{len(e.content)} 字）：{e.summary_or_head()}"
-            for e in on_demand
+            f"- `{e.ref_hint()}` {e.name}（{len(e.content)} 字）：{e.head()}" for e in on_demand
         )
         # 「用 worldinfo_read 按 ref 展开。」是一句**明确的操作指令**，所以它也归
         # YAML（R31）——改了工具名却忘了改它，模型会去调一个不存在的工具。

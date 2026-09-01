@@ -25,6 +25,7 @@ from agenttavern.tools import (
     ToolRegistry,
     build_state_tools,
     build_tools,
+    goal_tools,
 )
 from agenttavern.tools.builtin import MAX_READ_CHARS
 
@@ -322,36 +323,43 @@ async def test_worldinfo_index_covers_everything(reg, ctx) -> None:
     assert "chars" in index.content
 
 
-# -- summarize --------------------------------------------------------------
+# -- close_segment ----------------------------------------------------------
 
 
-async def test_summarize_caches_and_reuses(reg, ctx) -> None:
-    """懒惰生成 + 系统缓存（S25）：第二次调用不再打模型。"""
-    entry = WorldbookEntry(name="教团", content="很长的设定" * 100)
-    ctx.repo.book().save_entry(entry)
+def test_close_segment_is_in_no_tool_face() -> None:
+    """**它不属于任何一个 agent 的工具面**（S22）。
 
-    first = await call(reg, ctx, "summarize", source=f"wi:{entry.id}")
-    assert first.content == "摘要文本"
-    assert ctx.repo.book().load_entry(entry.id).summary == "摘要文本"
+    归段是生成后的动作：它对本轮产出毫无帮助，却要占往返、分散注意力，
+    还和 `submit_outline` 的终止语义打架。它只出现在生成后追问那一次
+    独立调用里（`agents/postrun.py`）。
 
-    ctx.gateway = fake_gateway("不该被调用")
-    second = await call(reg, ctx, "summarize", source=f"wi:{entry.id}")
-    assert second.content == "摘要文本"
-    assert second.label == "复用了已有摘要"
+    `summarize` 曾经在 director 的工具面里（S25）。**它整个删掉了**——
+    压缩由编排层在轮次滑出全文窗口时自己做，模型不该有一个主动触发压缩的
+    入口：判定和压缩本来就不同步，给它这个工具等于请它去动一件它管不着、
+    也看不见后果的事。
+    """
+    faces = [
+        {t.name for t in build_tools()},
+        {t.name for t in build_state_tools()},
+        {t.name for t in goal_tools()},
+    ]
+    for face in faces:
+        assert "close_segment" not in face
+        assert "summarize" not in face
 
 
-async def test_summary_falls_back_to_head_in_index(reg, ctx) -> None:
-    """尚无摘要的条目回退到"前 N 字 + 字数"——仍满足 P13。"""
+async def test_the_worldinfo_index_shows_the_head_of_the_content(reg, ctx) -> None:
+    """设定索引给的是**正文开头**，不是摘要（S25）。
+
+    这里以前叫 `test_summary_falls_back_to_head_in_index`——那时条目上有一个
+    `summary` 缓存字段，没生成时才退回开头。**那个字段删了**：条目是
+    title → content，没有摘要这回事，索引里永远是名字 + 体量 + 开头。
+    """
     ctx.repo.book().save_entry(
         WorldbookEntry(name="教团", content="甲乙丙丁" * 100, mode=WorldbookMode.ON_DEMAND)
     )
     index = await call(reg, ctx, "worldinfo_list")
     assert "…" in index.content
-
-
-async def test_summarize_rejects_bad_source(reg, ctx) -> None:
-    result = await call(reg, ctx, "summarize", source="乱写")
-    assert result.is_error
 
 
 # -- ask_question -----------------------------------------------------------
@@ -560,9 +568,6 @@ def test_each_switch_removes_its_tools() -> None:
     assert names_for(tools={"director": {"history_search": False}}).isdisjoint(
         {"history_search", "history_read"}
     )
-
-    assert "summarize" in names_for(tools={"director": {"summarize": True}})
-    assert "summarize" not in names_for(tools={"director": {"summarize": False}})
 
     assert "ask_question" in names_for(tools={"director": {"ask_question": True}})
     assert "ask_question" not in names_for(tools={"director": {"ask_question": False}})

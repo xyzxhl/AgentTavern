@@ -233,19 +233,21 @@ def _bundle(client, book: str) -> dict:
     return client.get(f"/worldbooks/{book}/export").json()
 
 
-def test_export_drops_the_id_and_the_cached_summary(client_for) -> None:
+def test_export_drops_the_id(client_for) -> None:
     """**导出的是「有哪些设定」，不是「它们在谁的硬盘上排第几」。**
 
-    - `id` 是这份存储里的地址，不是条目的身份。带着它导入要么撞上已有条目静默
-      覆盖，要么两份文件里的同名 id 指向完全不同的东西。
-    - `summary` 是懒惰生成的缓存（S25），跟着 `content` 走。`content` 一旦被人
-      改过旧摘要就是错的，而导入方无从判断改没改——**缓存不该跨机器传播**。
+    `id` 是这份存储里的地址，不是条目的身份。带着它导入要么撞上已有条目静默
+    覆盖，要么两份文件里的同名 id 指向完全不同的东西。
+
+    这里以前还要去掉一个 `summary`（懒惰生成的缓存，跟着 `content` 走）。
+    **那个字段已经删了**——条目是 title → content，没有摘要这回事；
+    `summary` 现在只指 history 压缩出来的那一段。
     """
     client = client_for(happy_llm())
     book = client.post("/worldbooks").json()["id"]
     client.put(
         f"/worldbooks/{book}/entries",
-        json={"id": "wi_1", "name": "陈屿", "content": "旧货店老板。", "summary": "老板"},
+        json={"id": "wi_1", "name": "陈屿", "content": "旧货店老板。"},
     )
 
     bundle = _bundle(client, book)
@@ -253,7 +255,7 @@ def test_export_drops_the_id_and_the_cached_summary(client_for) -> None:
     assert bundle["version"] == 1
     assert bundle["entries"][0]["name"] == "陈屿"
     assert bundle["entries"][0]["id"] == ""
-    assert bundle["entries"][0]["summary"] is None
+    assert "summary" not in bundle["entries"][0]
 
 
 def test_import_reassigns_ids_so_nothing_is_silently_overwritten(client_for) -> None:

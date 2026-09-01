@@ -4,7 +4,7 @@
 
 - **生成中**：`state_query`、`worldinfo_read`、`history_read`、`ask_question`
   ——它们改变这一轮写出什么。
-- **生成后**：归段（`summarize`）——它只影响**以后**怎么回看这一轮。
+- **生成后**：归段（`close_segment`）——它只影响**以后**怎么回看这一轮。
 
 生成后的动作绝不能放进 tool loop：它对本轮产出毫无帮助，却要占掉往返、
 分散注意力，还会和 `submit_outline` 的终止语义打架（S4）。
@@ -14,53 +14,49 @@
 要往哪走；一个只看得见几段细纲的调用，判据全靠猜。
 
 追问接在 director 自己的对话后面，因此几乎不花额外的输入 token。
+
+## 答案走工具调用，不走自由文本
+
+以前是「回一个数字」，代码从回复里抓第一串数字。**那是在自由文本里找结构**：
+模型多写一句「我认为断在第 2 条」，抓到的就是 2 之外的某个数；写一句
+「这 3 轮还没完」，抓到的是 3。而抓错的后果**不可逆且不出声**——
+标记打在没人指的那一条上，之后那几轮被压成一段，没有任何地方会报错。
+
+`close_segment(after)` 收一个 typed int，**不调用就是「先别断」**。
 """
 
 from __future__ import annotations
 
-from ..llm import LLMGateway, Message, Role
+from collections.abc import Sequence
+
+from ..llm import LLMGateway, Message, ToolCall
 from ..models import Actor, TraceEventType
+from ..prompting import special_messages
+from ..tools import close_segment_tool
 from ..tracing import Tracer
 
-_CLOSE_SEGMENT = """本轮已经提交，下面这个问题**与本轮内容无关**，只影响以后怎么回看。
-
-下面这 {open_runs} 轮还没有归段（按顺序编号，最后一条就是你刚写完的）：
-
-{listing}
-
-**如果要把它们断成一段，断在第几条之后？**
-
-一段是一个完整的场景、一件完整的事。**它通常覆盖好几轮**——一场对峙、
-一次外出、一笔交易谈完，都要几轮才走得完。判断的依据：换了地方、隔了时间、
-一件事有了结果、一场对话双方都没有下一句要说。
-
-**"刚才有件事结束了"不算。** 每一轮都会有什么东西告一段落，那是情节的节奏，
-不是段落的分界。
-
-回一个数字：
-
-- `0` —— 这几轮还是同一件事的中途，先别断。**拿不准就回 0。**
-- `k`（1 ≤ k ≤ {open_runs}）—— 第 1 到第 k 条合成一段，第 k+1 条起属于下一段。
-  **k 可以小于 {open_runs}**：分界常常要等到后面一轮才看得出来，
-  如果真正的分界在前面几条，就断在那里。
-
-只回这个数字。"""
+CLOSE_SEGMENT_TOOL = "close_segment"
 
 
-def parse_cut(content: str, open_runs: int) -> int:
-    """解析分界位置。**认不出来回 0**（当作"还没完"）。
+def parse_cut(calls: Sequence[ToolCall], open_runs: int) -> int:
+    """从这次回复里读出分界位置。**没调工具就是 0**（当作"还没完"）。
 
     段落一压成摘要就不可逆，宁可晚一轮，也不要断在模型没真正给出的位置上。
+    所以这里一律从严：不是那个工具、参数缺了、不是个整数——**全都算 0**。
+    上界照旧夹住：它指到第 12 条而只有 3 条待归段时，取 3。
     """
-    digits = ""
-    for ch in content.strip():
-        if ch.isdigit():
-            digits += ch
-        elif digits:
-            break
-    if not digits:
-        return 0
-    return min(int(digits), open_runs)
+    for call in calls:
+        if call.name != CLOSE_SEGMENT_TOOL:
+            continue
+        raw = (call.arguments or {}).get("after")
+        if isinstance(raw, bool) or not isinstance(raw, int):
+            # 有些模型把整数参数写成字符串。**只认干净的十进制**，
+            # 认不出就当没调——同上面那条，宁可晚一轮。
+            if not (isinstance(raw, str) and raw.strip().isdigit()):
+                return 0
+            raw = int(raw.strip())
+        return max(0, min(raw, open_runs))
+    return 0
 
 
 async def ask_segment_cut(
@@ -85,24 +81,37 @@ async def ask_segment_cut(
 
     位置问法同时保住了时机：在生成后问，揭示分界的那一轮就在手里；
     而回答可以**回溯**到前面几条，正是逐轮问法漏掉的那类分界。
+
+    **问题的正文在 `director.yaml` 的 `specials.segment` 里**（R31）。它以前
+    在这个文件里另存了一份，于是 YAML 那一份是死字——用户改完什么都不会发生，
+    而两份必然对不上（同 S27）。
     """
     open_runs = len(open_outlines)
     if open_runs == 0:
         return 0
 
     listing = "\n".join(f"{i + 1}. {o[:120]}" for i, o in enumerate(open_outlines))
-    followup = [
-        *messages,
-        Message(
-            role=Role.USER,
-            content=_CLOSE_SEGMENT.format(open_runs=open_runs, listing=listing),
-        ),
-    ]
+    asked = special_messages(
+        "director",
+        "segment",
+        values={"open_runs": str(open_runs), "listing": listing},
+    )
+    if not asked:
+        # 这一节关掉了。**判断这件事的地方只有一个**——run.py 那边已经拦过，
+        # 这里是第二道，因为"关掉了却仍然发了一次调用"是要花钱的那种错。
+        return 0
+
+    followup = [*messages, *asked]
     # 追问接在 director 自己的对话后面，**必须用同一个 user_id**，
     # 否则它落在另一个缓存空间里，整份前缀白付一次。
-    response = await gateway.complete(followup, model=model, user_id=user_id)
+    response = await gateway.complete(
+        followup,
+        tools=[close_segment_tool().spec()],
+        model=model,
+        user_id=user_id,
+    )
     tracer.exchange(Actor.ORCHESTRATOR, followup, response)
-    cut = parse_cut(response.content, open_runs)
+    cut = parse_cut(response.tool_calls, open_runs)
 
     # **用 ORCHESTRATOR 而不是 DIRECTOR**：这是系统维护性的追问，不是创作轮次。
     # 记成 director 的 model_response 会被指标当成"只回文本没调工具"的 nudge。
@@ -110,7 +119,7 @@ async def ask_segment_cut(
         TraceEventType.CROSS_CHECK,
         Actor.ORCHESTRATOR,
         f"追问归段：{'断在第 ' + str(cut) + ' 条之后' if cut else '先不断'}（共 {open_runs} 条）",
-        {"cut": cut, "open_runs": open_runs, "raw": response.content.strip()[:40]},
+        {"cut": cut, "open_runs": open_runs, "called": [c.name for c in response.tool_calls]},
         usage=response.usage,
     )
     return cut

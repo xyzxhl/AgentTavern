@@ -113,13 +113,6 @@ class WorldbookEntry(BaseModel):
     树值得给到第二层，而一份地理志给到第一层就够。
     """
 
-    summary: str | None = None
-    """由 ``summarize`` 工具懒惰生成并缓存（S25）。
-
-    ``None`` 表示尚未生成——索引回退到"前 N 字 + 字数"，仍满足 P13：
-    模型知道有这个东西存在、知道它的体量，只是精度低一点。
-    """
-
     @property
     def is_lore(self) -> bool:
         """进 worldinfo 的那两类：世界设定与角色设定。"""
@@ -128,9 +121,16 @@ class WorldbookEntry(BaseModel):
     def ref_hint(self) -> str:
         return self.id
 
-    def summary_or_head(self, head_chars: int = 120) -> str:
-        if self.summary:
-            return self.summary
+    def head(self, head_chars: int = 120) -> str:
+        """索引里那一行的正文预览。
+
+        **条目没有"摘要"这回事**：`summary` 字段随 `summarize` 工具一起删掉了
+        （那是唯一写它的地方）。`summary` 这个词现在只指**history 压缩出来的
+        那一段**（`Node.outline_summary`）——一个词指两样东西时，讨论"摘要
+        由谁生成"会一直错位。
+
+        条目是 **title → content**：名字就是它的提要，正文按需展开。
+        """
         head = self.content[:head_chars]
         return head + "…" if len(self.content) > head_chars else head
 

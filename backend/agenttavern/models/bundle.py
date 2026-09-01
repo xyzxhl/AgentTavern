@@ -41,18 +41,16 @@ class WorldbookBundle(BaseModel):
         name: str = "",
         note: str = "",
     ) -> WorldbookBundle:
-        """打包。**去掉 `id` 与 `summary`**（见文档 §2）。
+        """打包。**去掉 `id`**：它是这份存储里的地址，不是条目的身份。带着它
+        导入要么撞上已有条目静默覆盖，要么两份文件里的同名 id 指向完全不同的东西。
 
-        - `id` 是这份存储里的地址，不是条目的身份。带着它导入要么撞上已有条目
-          静默覆盖，要么两份文件里的同名 id 指向完全不同的东西。
-        - `summary` 是 `summarize` 懒惰生成的缓存（S25），跟着 `content` 走；
-          `content` 一旦被人改过旧摘要就是错的，而导入方无从判断改没改。
-          **缓存不该跨机器传播。**
+        以前这里还要去掉一个 `summary`（`summarize` 工具懒惰生成的缓存）。
+        **那个字段已经删了**：条目是 title → content，没有摘要这回事。
         """
         return cls(
             name=name,
             note=note,
-            entries=[entry.model_copy(update={"id": "", "summary": None}) for entry in entries],
+            entries=[entry.model_copy(update={"id": ""}) for entry in entries],
         )
 
     def check(self) -> str | None:
