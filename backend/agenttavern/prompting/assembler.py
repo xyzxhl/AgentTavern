@@ -137,13 +137,38 @@ def path_of(name: str) -> Path:
     return _dir() / f"{name}.yaml"
 
 
+class _Dumper(yaml.SafeDumper):
+    """落盘时的样子。**判据只有一条：写回去之后这份文件还得能手改。**"""
+
+
+def _block_scalars(dumper: yaml.SafeDumper, text: str) -> yaml.ScalarNode:
+    r"""多行字符串用 `|` 块，不用带 `\n` 的一整行双引号。
+
+    PyYAML 默认把带换行的字符串写成 `"第一行\n第二行\n…"`——**一段八百字的
+    提示词会变成一行**。内容一个字都没丢，但那份文件从此没法手改，
+    而"改提示词只是改文本"正是它当初搬进 YAML 的全部理由。
+    """
+    style = "|" if "\n" in text else None
+    return dumper.represent_scalar("tag:yaml.org,2002:str", text, style=style)
+
+
+_Dumper.add_representer(str, _block_scalars)
+
+
 def save(name: str, data: Mapping[str, Any]) -> None:
     """写回一份提示词文件。**调用方必须先试装配**（见 `server/prompts.py`）。
 
-    这里只管落盘和清缓存：`load` 有 `functools.cache`，不清的话新内容要等
-    进程重启才生效——而那正是"改了没反应"这类问题里最难想到的一种。
+    落盘、清缓存（`load` 有 `functools.cache`，不清的话新内容要等进程重启才生效
+    ——那正是"改了没反应"这类问题里最难想到的一种），此外还有一条不变量：
+
+    > **从界面存一次，文件一个字节都不该变**（S79）。
+
+    它不是洁癖。YAML 转一圈**丢的东西是注释**，而这几份文件曾经把每份自己的理由
+    写在头部注释里——用户去「调用」标签换一下模型，那几十行就没了，
+    而且不会有任何地方说一声。所以那些理由现在住在 `README.md` 和代码里，
+    YAML 只剩数据；`test_saving_a_prompt_file_changes_nothing` 钉着这条。
     """
-    text = yaml.safe_dump(dict(data), allow_unicode=True, sort_keys=False, width=10_000)
+    text = yaml.dump(dict(data), Dumper=_Dumper, allow_unicode=True, sort_keys=False, width=10_000)
     path_of(name).write_text(text, encoding="utf-8")
     load.cache_clear()
 

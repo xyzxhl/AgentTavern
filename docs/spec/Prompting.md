@@ -142,7 +142,19 @@ session 只装标题、目标、节点树；worldbook 只装名字和条目。
 
 不先试装配的话，改坏一个字下一轮生成直接 500，而错误信息离原因很远。
 
-**验收** `test_names_that_do_not_line_up_raise` · `test_saving_runs_a_dry_assembly_first` · `test_a_missing_rendering_string_is_refused` · `test_empty_choices_raises`
+**写盘还有一条不变量：从界面存一次，那份 YAML 一个字节都不该变。**
+
+它挡的是**保存本身会吃掉东西**这件事：那条路走 `yaml.safe_dump`，转一圈之后
+**注释全没了**，而且不会有任何地方说一声。这五份文件的头部曾经各带着几十行
+「这一份为什么这么摆」——用户去改一下模型，那几十行就消失了。
+
+所以理由搬走了：通用规则在 `prompting/README.md`，某个键为什么是那个值写在
+**读它的那段代码**上，YAML 只剩数据。落盘时多行字符串写成 `|` 块——不写的话
+一段八百字的提示词会变成带 `
+` 的一行，内容一个字不丢，但**那份文件从此没法
+手改**，而「改提示词只是改文本」正是它当初搬进 YAML 的全部理由。
+
+**验收** `test_names_that_do_not_line_up_raise` · `test_saving_runs_a_dry_assembly_first` · `test_a_missing_rendering_string_is_refused` · `test_empty_choices_raises` · `test_saving_a_prompt_file_changes_nothing`
 
 ### S80 · 档位的当前取值住在条目自己身上
 

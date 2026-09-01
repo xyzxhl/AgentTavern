@@ -1,37 +1,6 @@
-# writer 的提示词。**只有文风相关的东西**（S3）。
-#
-# 一条纪律：**这里的所有例子都必须来自人写的文本**——docs/novel_example/ 的参考
-# 小说，或 docs/sillytavern_preset_example/ 里经过实战打磨的 preset。不要用我们
-# 自己模型的产出当例子：拿 AI 的输出去教 AI 写作是循环，而且它恰恰是我们想改掉
-# 的那种文字。
-#
-# 每条尽量短。实测繁琐的条款不会更有效，只会互相压——preset 的每一条都是一两行。
-#
-# `sections` 的顺序是有意的：先说**该往哪写**（语感 → 落笔 → 台词），
-# 再说**别往哪写**（定式）。抽象的在前、具体的在后。
-#
-# **它没有 `tools`**——writer 是一次干净的渲染，一个工具都不给（S3）。
-# 也没有 `specials`：运行时不会往它的对话里追加任何东西。
-#
-# `upstream` 那条的 `runs` 就是「给几轮正文上文」（原 `Capabilities.upstream_runs`）：
-# **它从来不是独立的配置，是那段 context 的属性**（S80）。上文只为接住语气，
-# 长程记忆是 director 的事。
-#
-# 写法见 assembler.py 开头：三类条目、`selected` 住在条目上、装配器不加标签。
-
-# -- 调用旋钮（S159）：用哪个模型、流不流、额外塞什么进请求体 --------------
-#
-# 它们按 agent 各设一份，因为它们本来就因 agent 而异。以前 `model` 和 `stream`
-# 在 `.env` 里、全局一份，而它们全都在改「这一次调用长什么样」——那正是这份
-# 文件管的事（同 S80 那次上调的判据）。
-#
-# `extra` **原样并进请求体**，一个字都不解释：思考模式那类参数各家拼法不同
-# （`thinking: {type: enabled}` / `reasoning_effort: high` / `budget_tokens`），
-# 定一套可移植的三档就要按家数映射，而猜错的症状是**不报错、只是没生效**。
 model: deepseek-v4-flash
 stream: true
 extra: {}
-
 sections:
 - type: text
   role: system

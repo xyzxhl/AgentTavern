@@ -140,6 +140,30 @@ def test_an_unknown_prompt_is_a_404(client) -> None:
     assert client.put("/prompts/nope", json={"data": {}}).status_code == 404
 
 
+def test_saving_a_prompt_file_changes_nothing() -> None:
+    """**从界面存一次，这五份文件一个字节都不该变**（S79）。
+
+    这不是洁癖。保存那条路走 `yaml.safe_dump`，**转一圈之后注释全没了**，
+    而且不会有任何地方说一声。这几份文件的头部曾经各带着几十行「这一份为什么
+    这么摆」——用户去「调用」标签换一下模型，那几十行就消失了。
+
+    所以那些理由搬进了 `prompting/README.md` 和读它们的那段代码，YAML 只剩数据。
+    这条测试挡住两件事：**注释偷偷长回来**，以及**手写的格式和落盘的格式不一样**
+    （多行字符串写不写成 `|` 块就是一例——不写的话一段八百字的提示词会变成一行，
+    那份文件从此没法手改）。
+    """
+    import yaml
+
+    from agenttavern.prompting.assembler import _Dumper, path_of
+
+    for name in PROMPT_FILES:
+        raw = path_of(name).read_text(encoding="utf-8")
+        again = yaml.dump(
+            yaml.safe_load(raw), Dumper=_Dumper, allow_unicode=True, sort_keys=False, width=10_000
+        )
+        assert again == raw, f"{name}.yaml 存一次就会变形——多半是又写了注释"
+
+
 # -- S159 调用旋钮：模型、流式、额外请求参数 -----------------------------------
 
 
