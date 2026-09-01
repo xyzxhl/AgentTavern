@@ -1082,11 +1082,12 @@ def test_the_opening_plan_belongs_to_the_run_it_opens(client_for) -> None:
         ws.send_text(json.dumps({"type": "set_goal", "description": "写到摊牌"}))
         messages = collect(ws, "run_finished")
 
-    kinds = [m["type"] for m in messages]
+    # `session_updated` 是设目标那一下推回来的（S158），和这一轮的时序无关。
+    kinds = [m["type"] for m in messages if m["type"] != "session_updated"]
     assert kinds.count("run_started") == 1, "只宣告一次——提前宣告过就不再重复"
     assert kinds.index("run_started") == 0, "宣告排在规划之前"
 
-    run_id = messages[0]["run_id"]
+    run_id = next(m["run_id"] for m in messages if m["type"] == "run_started")
     assert messages[-1]["node"]["id"] == run_id, "run = node，id 是同一个"
     planning = [
         m for m in messages if m["type"] == "trace" and m["event"]["actor"] == "goal_manager"
@@ -1386,6 +1387,36 @@ def test_raising_the_budget_resumes_a_paused_goal(client_for) -> None:
     assert body["meta"]["goal"]["max_runs"] == 9
     assert body["meta"]["goal"]["description"] == "写到摊牌"
     assert body["goal_run"]["paused"] is False, "预算够了就该解除暂停"
+
+
+def test_changing_the_session_outside_a_run_is_pushed_back(client_for) -> None:
+    """**服务端在 run 之外改了 session，就得推回去**（S158）。
+
+    没有这条消息的时候，凡是不起一轮的改动客户端一律不知道：按「暂停」目标真的
+    暂停了，而按钮还写着「暂停」；按「放弃」目标真的没了，而面板照旧挂着。
+    用户读到的是"这几个按钮坏了"——**而服务端每一次都做对了事**。
+
+    它没被发现是因为**设目标那一条顺带 `nudge()` 起了一轮**，正文开始动，
+    看起来像是有反应；pause / abandon / 加预算三条不起轮，就全成了哑的。
+    """
+    client = client_for(happy_llm())
+    session = Session(meta=SessionMeta(goal=Goal(description="写到摊牌", max_runs=5)))
+    client.post("/sessions", json=session.model_dump(mode="json"))
+
+    with client.websocket_connect(f"/sessions/{session.id}/ws") as ws:
+        ws.receive_text()
+
+        ws.send_text(json.dumps({"type": "goal_control", "action": "pause"}))
+        pushed = collect(ws, "session_updated")[-1]["session"]
+        assert pushed["goal_run"]["paused"] is True
+
+        ws.send_text(json.dumps({"type": "set_goal_budget", "max_runs": 9}))
+        pushed = collect(ws, "session_updated")[-1]["session"]
+        assert pushed["meta"]["goal"]["max_runs"] == 9
+
+        ws.send_text(json.dumps({"type": "goal_control", "action": "abandon"}))
+        pushed = collect(ws, "session_updated")[-1]["session"]
+        assert pushed["meta"]["goal"] is None, "放弃之后界面得当场知道目标没了"
 
 
 def test_abandoning_is_the_only_way_to_swap_a_goal(client_for) -> None:

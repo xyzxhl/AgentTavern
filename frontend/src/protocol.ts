@@ -51,6 +51,7 @@ export type ServerMessage =
   | GoalFinished
   | GoalProgress
   | GoalPaused
+  | SessionUpdated
   | ServerError;
 export type Type10 = "run_started";
 export type RunId = string;
@@ -153,8 +154,7 @@ export type MaxRuns2 = number | null;
 export type MaxTotalTokens2 = number | null;
 export type Type24 = "goal_paused";
 export type Reason2 = string;
-export type Type25 = "error";
-export type Message1 = string;
+export type Type25 = "session_updated";
 export type Id2 = string;
 export type CreatedAt1 = string;
 export type WorldbookId = string;
@@ -176,6 +176,8 @@ export type Paused = boolean;
 export type PausedReason = string;
 export type StartedAtLeafId = string | null;
 export type SeenLeafId = string | null;
+export type Type26 = "error";
+export type Message1 = string;
 export type Id3 = string;
 export type Name1 = string;
 /**
@@ -593,9 +595,25 @@ export interface GoalPaused {
   type?: Type24;
   reason: Reason2;
 }
-export interface ServerError {
+/**
+ * **服务端在 run 之外改了 session，整份推回去。**
+ *
+ * 没有它的时候，凡是不触发一轮生成的改动客户端一律不知道：按「暂停」目标真的
+ * 暂停了，而按钮还写着「暂停」；按「放弃」目标真的没了，而面板照旧挂着。
+ * **服务端做了事，界面一动不动**——用户读到的是"这个按钮坏了"。
+ *
+ * 它没有被发现是因为**设目标那一条顺带 `nudge()` 起了一轮**，正文开始动，
+ * 看起来像是有反应；而 pause / abandon / 加预算三条不起轮，就全成了哑的。
+ *
+ * **推整份而不是推差异**：session 不大，而"哪几个字段变了"是个每加一个字段
+ * 就要重想一次的问题——漏掉一个的症状又是同一种，界面显示旧的东西。
+ *
+ * 客户端**不必也不该自己在发完之后去拉一次**：WebSocket 发出去和 HTTP GET
+ * 之间没有先后保证，那一拉可能落在服务端写盘之前，拿回旧的那份。
+ */
+export interface SessionUpdated {
   type?: Type25;
-  message: Message1;
+  session: Session;
 }
 export interface Session {
   id?: Id2;
@@ -684,6 +702,10 @@ export interface GoalRun {
  */
 export interface GoalPlan {
   subgoals?: Subgoals1;
+}
+export interface ServerError {
+  type?: Type26;
+  message: Message1;
 }
 export interface WorldbookEntry {
   id?: Id3;

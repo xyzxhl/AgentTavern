@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from ..models import Node, StateDelta, SubGoal, TraceEvent, Tree
+from ..models import Node, Session, StateDelta, SubGoal, TraceEvent, Tree
 
 # --------------------------------------------------------------------------
 # 客户端 → 服务端
@@ -294,6 +294,27 @@ class StateSnapshot(BaseModel):
     leaf_id: str | None = None
 
 
+class SessionUpdated(BaseModel):
+    """**服务端在 run 之外改了 session，整份推回去。**
+
+    没有它的时候，凡是不触发一轮生成的改动客户端一律不知道：按「暂停」目标真的
+    暂停了，而按钮还写着「暂停」；按「放弃」目标真的没了，而面板照旧挂着。
+    **服务端做了事，界面一动不动**——用户读到的是"这个按钮坏了"。
+
+    它没有被发现是因为**设目标那一条顺带 `nudge()` 起了一轮**，正文开始动，
+    看起来像是有反应；而 pause / abandon / 加预算三条不起轮，就全成了哑的。
+
+    **推整份而不是推差异**：session 不大，而"哪几个字段变了"是个每加一个字段
+    就要重想一次的问题——漏掉一个的症状又是同一种，界面显示旧的东西。
+
+    客户端**不必也不该自己在发完之后去拉一次**：WebSocket 发出去和 HTTP GET
+    之间没有先后保证，那一拉可能落在服务端写盘之前，拿回旧的那份。
+    """
+
+    type: Literal["session_updated"] = "session_updated"
+    session: Session
+
+
 class QueueStatus(BaseModel):
     """队列可见性：用户应能看到待处理的输入并撤销尚未消费的部分。"""
 
@@ -384,5 +405,6 @@ ServerMessage = (
     | GoalFinished
     | GoalProgress
     | GoalPaused
+    | SessionUpdated
     | ServerError
 )

@@ -302,6 +302,18 @@ export const useSession = create<SessionState>((set, get) => {
         void get().refreshState();
         break;
 
+      case "session_updated":
+        // **服务端在 run 之外改了 session，整份换掉。**
+        //
+        // 没有它的时候，凡是不起一轮的改动界面一律不知道：按「暂停」目标真的
+        // 暂停了而按钮还写着「暂停」，按「放弃」目标真的没了而面板照旧挂着。
+        // 那读起来就是"这个按钮坏了"。
+        //
+        // **不在 send 之后自己拉一次**：WS 发出去和 HTTP GET 之间没有先后保证，
+        // 那一拉可能落在服务端写盘之前，拿回旧的那份。
+        set({ session: message.session });
+        break;
+
       case "goal_paused":
         set({ notice: `目标已暂停：${message.reason}` });
         void get().refreshState();

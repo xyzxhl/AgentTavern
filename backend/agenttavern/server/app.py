@@ -48,6 +48,7 @@ from .protocol import (
     Regenerate,
     ServerError,
     ServerMessage,
+    SessionUpdated,
     SetGoal,
     SetGoalBudget,
     StateSnapshot,
@@ -550,6 +551,7 @@ async def _handle(
         session = repo.load_session()
         session.active_leaf_id = message.node_id
         repo.save_session(session)
+        await broadcast(SessionUpdated(session=session))
         # 切换分支必须同时切换状态（S42），否则"文本对、状态悄悄错"。
         await broadcast(
             StateSnapshot(values=repo.state_at(message.node_id).values, leaf_id=message.node_id)
@@ -593,6 +595,7 @@ async def _handle(
             # 之后的每一轮给正文、逐条追加。
             session.goal_run = GoalRun(started_at_leaf_id=session.active_leaf_id)
             repo.save_session(session)
+            await broadcast(SessionUpdated(session=session))
             # **设目标就是"去做"**（S99）。不叫醒的话，一个还没写过任何一轮的
             # 会话会举着「目标推进中」一动不动，直到用户随便打句话把它推起来。
             runner.nudge()
@@ -618,6 +621,7 @@ async def _handle(
             if resumed and run is not None:
                 run.paused, run.paused_reason = False, ""
             repo.save_session(session)
+            await broadcast(SessionUpdated(session=session))
             # 加完预算它得自己接着跑——否则「加预算」只是把数字改大，还得再手动
             # 推一把才动。
             if resumed:
@@ -631,12 +635,14 @@ async def _handle(
             session.meta.goal = None
             session.goal_run = None
             repo.save_session(session)
+            await broadcast(SessionUpdated(session=session))
         else:
             run = session.goal_run or GoalRun()
             run.paused = message.action == "pause"
             run.paused_reason = "用户暂停" if run.paused else ""
             session.goal_run = run
             repo.save_session(session)
+            await broadcast(SessionUpdated(session=session))
             if not run.paused:
                 runner.nudge()
 
