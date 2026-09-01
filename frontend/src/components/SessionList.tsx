@@ -1,8 +1,4 @@
-import { useState } from "react";
-
-import { api } from "../api";
 import { type Page, useSession } from "../store";
-import { EditableTitle } from "./EditableTitle";
 
 /**
  * 左栏：**上面是独立页面的入口，下面是会话记录**（R17）。
@@ -10,8 +6,7 @@ import { EditableTitle } from "./EditableTitle";
  * 不做成 tab 切换——tab 会让会话列表在看设定时消失，而那没道理：设定不是故事的
  * 互斥模式，它是故事的**材料**。入口在上、列表在下，两者同时在场。
  *
- * **会话的标题在这里改**（S80）：session 上只剩标题、目标、节点树，为一个字段
- * 单开一个「会话设置」面板不划算——它就在你能看见这个标题的地方改。
+ * **这一行只负责打开**：改名在故事页顶栏点标题（S155）——一件事一种交互形态。
  */
 export function SessionList(): JSX.Element {
   const sessions = useSession((s) => s.sessions);
@@ -20,22 +15,10 @@ export function SessionList(): JSX.Element {
   const go = useSession((s) => s.go);
   const connect = useSession((s) => s.connect);
   const newSession = useSession((s) => s.newSession);
-  const refreshSessions = useSession((s) => s.refreshSessions);
-  const refreshState = useSession((s) => s.refreshState);
 
   function open(id: string): void {
     void connect(id);
     go({ kind: "story" });
-  }
-
-  /** 正在改名的那一行。**这里是受控的**：列表行的文字本身是"打开这局故事"，
-   * 点它改名会把主要动作顶掉，所以由旁边的 ✎ 触发（见 `EditableTitle`）。 */
-  const [renaming, setRenaming] = useState<string | null>(null);
-
-  async function rename(id: string, title: string): Promise<void> {
-    await api.patchSession(id, { meta: { title } });
-    await refreshSessions();
-    if (id === current) await refreshState();
   }
 
   return (
@@ -97,30 +80,19 @@ export function SessionList(): JSX.Element {
           return (
             <div
               key={card.id}
-              className={`group mb-0.5 flex items-start rounded transition-colors ${
+              className={`mb-0.5 flex items-start rounded transition-colors ${
                 here ? "bg-ink-600" : "hover:bg-ink-700"
               }`}
             >
-              <div
-                onClick={() => renaming !== card.id && open(card.id)}
-                className="min-w-0 flex-1 cursor-pointer px-2 py-1.5 text-left"
-              >
-                <EditableTitle
-                  value={card.title}
-                  onCommit={(title) => void rename(card.id, title)}
-                  editing={renaming === card.id}
-                  onEditingChange={(on) => setRenaming(on ? card.id : null)}
-                  className={`block w-full truncate text-xs ${here ? "text-fg" : "text-dim"}`}
-                />
+              {/* **这一行只负责打开**：改名在故事页顶栏点标题（S155）。
+                  这里以前还有一个 ✎，于是「怎么改名」在界面上有两种答案——
+                  而那正是 S134/S155 那条判据要消掉的东西。 */}
+              <button onClick={() => open(card.id)} className="min-w-0 flex-1 px-2 py-1.5 text-left">
+                <span className={`block truncate text-xs ${here ? "text-fg" : "text-dim"}`}>
+                  {card.title || "未命名"}
+                </span>
                 {/* 第二行是它开在哪份设定上——列表里唯一需要的第二位信息。 */}
                 <span className="block truncate text-[10px] text-dim/70">{card.worldbook_name}</span>
-              </div>
-              <button
-                onClick={() => setRenaming(card.id)}
-                title="改名"
-                className="shrink-0 px-1.5 py-1.5 text-[11px] text-dim opacity-0 transition-opacity hover:text-fg group-hover:opacity-100"
-              >
-                ✎
               </button>
             </div>
           );

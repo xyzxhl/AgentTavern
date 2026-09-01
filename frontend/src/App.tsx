@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 
 import { apply, load, watchSystem } from "./appearance";
+import { api } from "./api";
+import { EditableTitle } from "./components/EditableTitle";
 import { Composer } from "./components/Composer";
 import { CorpusLibrary } from "./components/CorpusLibrary";
 import { DeveloperPanel } from "./components/DeveloperPanel";
@@ -68,15 +70,30 @@ function Story(): JSX.Element {
   const books = useSession((s) => s.sessions);
   const usage = useSession((s) => s.usage);
   const go = useSession((s) => s.go);
+  const refreshSessions = useSession((s) => s.refreshSessions);
+  const refreshState = useSession((s) => s.refreshState);
   const [devtools, setDevtools] = useState(false);
 
   const worldbookName = books.find((c) => c.id === sessionId)?.worldbook_name;
   const spent = usage.tokensIn + usage.tokensOut;
 
+  async function rename(next: string): Promise<void> {
+    if (!sessionId) return;
+    await api.patchSession(sessionId, { meta: { title: next } });
+    await refreshSessions();
+    await refreshState();
+  }
+
   return (
     <>
       <header className="flex items-center gap-3 border-b border-line px-5 py-2.5">
-        <span className="text-sm text-fg">{title || "未命名"}</span>
+        {/* **点标题就地改名**（S155）。这里以前是纯文本，于是「会话叫什么」
+            只能在左栏那个 ✎ 里改——而这是它最显眼的一处。 */}
+        <EditableTitle
+          value={title ?? ""}
+          onCommit={(next) => void rename(next)}
+          className="text-sm text-fg"
+        />
         <span className="font-mono text-[11px] text-dim">{model}</span>
         {/* **不是「本局设定」，是一个指向它的标签**（R17）：编辑永远在设定页
             发生，一件事一个入口。两个入口各自维护列表状态，迟早显示旧的东西。 */}
