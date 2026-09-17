@@ -3,7 +3,7 @@
 > **回答**：文风这件事在系统里落成哪几条可验收的规格。
 >
 > **不回答**：怎么判断一次改动有没有效（那是判据，见 [Principles.md](../Principles.md)
-> P21–P26）、为什么文风归 writer（见 [Generation.md](Generation.md)）。
+> P26–P33）、为什么文风归 writer（见 [Generation.md](Generation.md)）。
 >
 > 参考文本在 `docs/novel_example/`，探针是 `agenttavern.bench.style_probe`。
 
@@ -26,7 +26,7 @@
 「先量方差再改东西」、「提示词里各条的分量决定行为」、「只看六本一致而我们在外的」
 都是**做决定时用的判断法**，不是系统的行为。
 
-它们搬去了 [Principles.md](../Principles.md)（P21–P26）。留在这里的只有真正
+它们搬去了 [Principles.md](../Principles.md)（P26–P33）。留在这里的只有真正
 落成系统行为的四条。
 
 ---

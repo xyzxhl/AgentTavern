@@ -227,12 +227,12 @@
 **验收** `test_every_segment_goes_through_summarize` · `test_an_index_entry_says_how_much_it_left_out`
 （后者钉的是回退那一半：没归过段的轮次在索引里是"细纲前 N 字 + 全文字数"）
 
-### S60 · director 的对话跨轮持续，压缩越界一次、全部替换
+### S60 · director 跨 turn 只继承产品记录，压缩越界一次、全部替换
 
-**服务** [R7](../req/推进剧情.md)
+**服务** [R7](../req/推进剧情.md) [R31](../req/调教提示词.md)
 
-**规格** 上一轮的用户消息、推理、**工具调用与结果**原样接在后面——
-director 看得见自己查过什么、为什么那么写。
+**规格** 已完成 turn 跨边界只留下三类产品记录：顶层 user input、按原位置保留的纠正/
+引导、最终细纲。thinking、tool call/result 与运行时错误一律不进入后续 turn 的 context。
 
 **状态与控制维度放在每轮的用户消息里，不放 system**。
 
@@ -246,34 +246,36 @@ director 看得见自己查过什么、为什么那么写。
 
 每收一段换一段等于每隔几轮动一次前缀，缓存反复失效——**那还不如不持续。**
 
-节点只存**本轮新增的消息**，重放时沿路径拼接，分支因此天然安全。
+节点保存重放所需的产品记录，重放时沿路径拼接，分支因此天然安全。工具结果里值得跨 turn
+保留的事实必须已经进入细纲或 state；系统不再从旧工具回执里补捞。
 
-**验收** `test_everything_is_kept_until_the_budget_is_crossed` · `test_crossing_the_budget_replaces_every_summarised_segment_at_once` · `test_nothing_is_dropped_when_no_segment_has_been_summarised_yet`
+**验收** `test_everything_is_kept_until_the_budget_is_crossed` · `test_crossing_the_budget_replaces_every_summarised_segment_at_once` · `test_nothing_is_dropped_when_no_segment_has_been_summarised_yet` · `test_a_past_turn_carries_no_tool_calls_at_all`
 
-### S61 · 轮内保结构，跨轮扁平化
+### S61 · 执行流量只活在当前 turn，挂起时才进草稿
 
-**服务** [R7](../req/推进剧情.md)
+**服务** [R7](../req/推进剧情.md) [R11](../req/推进剧情.md) [R31](../req/调教提示词.md)
 
-**规格** 同一条信息在两种场合要的形态不同：**本轮内**，工具调用与结果是模型正在
-往下走的那条链；**跨轮**，它只是事实来源。所以重放时把一轮压成
-「用户输入 → 一条 assistant 记录（调了什么、返回了什么、细纲是什么）」。
+**规格** 当前 run 内的 thinking、tool call/result 与运行时错误按协议原样保留，供后续
+操作继续使用。run 被打断并挂起时，为了恢复同一个 run，把协议配对完整的执行记录持久化
+进草稿。
 
-**扁平化发生在重放时，不在落盘时**——节点里存的仍是原样记录。
+turn 完成、明确放弃或整轮失败时，草稿中的执行记录随草稿一起删除；完成节点从一开始就
+不存这些内容。重生成虽然仍在同一逻辑 turn，但它是新 run / 新版本，也不继承旧版本的
+执行流量。
 
-三样必须留住，它们各自不可再生：**用户输入**（用节点上的原文，
-不是当时那条裹着旧状态快照的轮次提示）、**插话**（它改变了那一轮的走向，
-位置也有意义）、**细纲**。
+开发者 trace 是例外：它可以 append-only 留下完整交换用于审计，但永远不作为后续模型
+context 的来源。
 
-**验收** `test_a_past_turn_carries_no_tool_calls_at_all` · `test_flattening_keeps_the_facts_and_drops_the_stale_state` · `test_an_interjection_survives_flattening_in_place`
+**验收** `test_a_past_turn_carries_no_tool_calls_at_all` · `test_flattening_keeps_the_facts_and_drops_the_stale_state` · `test_an_interjection_survives_flattening_in_place`；草稿保留、完成即清除以及重生成不继承旧执行流量的断言待补，见 [TODO](../TODO.md)。
 
-### S62 · 推理段在 run 内原样回传，落盘时抹掉
+### S62 · 推理段计入预算，但只在 run / 草稿内存在
 
 **服务** —（内部契约）
 
-**规格** 分界划在 **run 边界**上。run 内推理是那条工具链的一部分（草稿续跑的是
-同一个 run，所以草稿里要留）；run 之间值钱的是查到了什么、写下了什么细纲。
+**规格** run 内推理是当前工具链的一部分，原样回传并计入 context 预算。草稿续跑的是
+同一个 run，所以挂起时推理段也要随草稿持久化；完成节点与后续 turn context 一律不留。
 
-预算计数**必须把推理段算进去**。
+这条生命周期与 S61 的 tool call/result 完全相同。
 
 **为什么** 实测一轮 director（3 个来回）的推理有 **15284 字**，而它产出的细纲只有
 **207 字**——推理比产出长七十倍。原样存下来，持续对话跑两轮就撞预算，

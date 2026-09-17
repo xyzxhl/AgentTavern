@@ -8,8 +8,8 @@
 
 ## 全貌
 
-worldbook 是**用户写的唯一输入**，所以它是这个项目里唯一值得单独定格式的东西——
-别的（节点树、trace、状态）都是跑出来的产物。
+worldbook 是**用户编写和维护的结构化设定资产**，所以它值得单独定交换格式；
+节点树、trace 与运行中 state 则是系统和用户共同推进后形成的产物。
 
 它是**一级资产**，存在 `data/worldbooks/<id>/` 下，不在任何 session 目录里。
 session 只存一个 `worldbook_id`。
@@ -82,6 +82,7 @@ session 只存一个 `worldbook_id`。
 **服务** [R4](../req/开局与设定.md)
 
 **规格** 保存一条标了 `is_player` 的角色条目时，**其余角色的这个标记一并置否**。
+这个标记属于 worldbook；共用它的所有 session 共用同一个玩家角色，**没有 session 覆盖**。
 
 **不做** 读时挑第一个；不做靠界面自觉。
 
@@ -94,19 +95,24 @@ session 只存一个 `worldbook_id`。
 放在存储层而不是界面层，是因为**写入路径不止界面一个**——
 导入一份别人做的包同样能塞进两个。
 
-**验收** `test_only_one_character_can_be_the_player` · `test_demoting_the_player_leaves_everyone_alone` · `test_the_player_is_a_character_not_a_fourth_kind`
+**验收** `test_only_one_character_can_be_the_player` · `test_demoting_the_player_leaves_everyone_alone` ·
+`test_the_player_is_a_character_not_a_fourth_kind`；多个 session 共用玩家角色且没有覆盖字段的
+断言待补，见 [TODO](../TODO.md)。
 
-### S67 · 两类条目各有自己的可展开开关
+### S67 · 静态条目按条展开，状态树按服务级深度折叠
 
 **服务** [R5](../req/开局与设定.md)
 
-**规格** 每条设定可设「一直在」或「需要时才展开」。
+**规格** `world` 与 `character` 条目各自可设「一直在」或「需要时才展开」。
+`state` 条目先合成同一棵初始状态树，不使用逐条展开开关。
 
 **展开层级不在条目上**：状态折到第几层是**一个值**，写在
 `director.yaml` / `state_manager.yaml` 的 `- type: context, source: state`
 那一节的 `depth` 上，和 `recent` 的 `runs` 同形。默认 **2**。
 
-**不做** 让静态设定和初始状态共用一个开关；**不做**按条目设展开层级。
+这个深度和其它 agent choice 一样是**服务级**，同一台服务上的 session 共用。
+
+**不做** 让静态设定和初始状态共用一个开关；**不做**按 state 条目设展开层级。
 
 **为什么** 前一半：这两样东西的可见性**天然不同步**——一个角色的背景可能几百字、
 该按需展开，而他「在不在场」必须每轮都在眼前，共用一个开关时只能迁就其中一个。
@@ -163,7 +169,7 @@ session 只存一个 `worldbook_id`。
   那个字段随 `summarize` 工具一起删了（[S25](Tools.md)）——条目是 title → content，
   没有摘要这回事。判据仍然成立，只是现在没有第二个可缓存的东西。
 - **会话配置**混进来会让导入变成一件危险的事：用户想要的是几个角色设定，
-  却顺带被改掉了文风、视角和能力开关。
+  却顺带被改掉了控制 choice 和能力开关。
 
 **验收** `test_export_drops_the_id` · `test_import_reassigns_ids_so_nothing_is_silently_overwritten`
 

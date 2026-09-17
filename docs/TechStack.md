@@ -16,15 +16,15 @@
 | 测试 | pytest + pytest-asyncio | |
 | 格式/检查 | ruff（lint + format）+ mypy | |
 
-### 为什么仍然要 WebSocket，即使放弃了流式
+### 为什么要 WebSocket
 
-P21 放弃逐 token 流式，但这些仍然需要双向通道与服务端主动推送：
+流式只是其中一条旁路；这些都需要双向通道与服务端主动推送：
 
 - `ask_question` 的挂起 / 恢复（S24，无超时，可能等很久）
-- 用户中途排队输入（F3a）
+- turn 内纠正 / 引导与 turn 间排队输入（S50 / S107）
 - 长循环下每个 run 完成的推送（无用户请求可搭载）
 - agent 工作过程的实时呈现（trace 投影，F1′）
-- 时间驱动模式（后续）
+- 正文与各 agent 内容的流式旁路（S118 / S159）
 
 SSE 三条都不满足。不用 socket.io——不需要它的房间与 fallback。
 
@@ -34,10 +34,13 @@ SSE 三条都不满足。不用 socket.io——不需要它的房间与 fallback
 
 **但官方 SDK 可以用。** 区别在于它只负责**一次调用**（重试、错误分类、超时、解析），**loop 完全由我们自己写**——SDK 不会挡在中间。省下的是一整套自己写的 HTTP 管道。
 
-只用 **chat completions 这一个面**意味着任何兼容端点都能接：OpenAI、OpenRouter、DeepSeek、本地 llama.cpp / vLLM。配置走 `.env`（`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`），换 provider 不动代码。本地端点常常不校验 key，而 SDK 要求非空，因此空值时填占位串。
+只用 **chat completions 这一个面**意味着任何兼容端点都能接：OpenAI、OpenRouter、
+DeepSeek、本地 llama.cpp / vLLM。端点与 key 走 `.env`（`LLM_BASE_URL` /
+`LLM_API_KEY`）；**模型名、流式开关和额外调用参数按 S159 分别住在各份提示词 YAML**，
+没有全局模型或流式兜底。本地端点常常不校验 key，而 SDK 要求非空，因此空值时填占位串。
 
-**流式可开关**（S118，`Settings.stream`，默认开）。它是**服务级**的（S80）——这组开关里唯一一条关于交付而不是关于能力的。`complete()` 两条路返回同一种 `ModelResponse`。
-它还接受 `model` 覆盖参数——四个 agent 将来可能用不同模型。
+`complete()` 的流式与非流式两条路返回同一种 `ModelResponse`。每个 agent 可以使用不同模型，
+也可以独立决定是否流式输出。
 
 **仍保留一层自己的类型**，理由只有一个但很实在：**工具参数解析失败不抛异常**。OpenAI 格式里 `arguments` 是 JSON 字符串，模型时常输出不合法 JSON。这属于**模型可恢复的错误**，应作为结构化 tool result 回给它重试，而不是让整个 run 崩掉——所以 `ToolCall` 同时保留 `arguments_raw` 与 `parse_error`，这个区分 SDK 的类型表达不了。
 
@@ -73,7 +76,7 @@ data/corpora/<corpus_id>/
   bm25.json / vectors.npy   两路索引。向量那份不可读没关系：它能从原文重新生成
 
 data/sessions/<session_id>/
-  session.json              worldbook_id、corpus_ids、标题、goal、time_driven、冻结的初始状态
+  session.json              worldbook_id、corpus_ids、标题、goal、冻结的初始状态
                             **没有配置**——控制维度与能力开关都在提示词里（S80）
   nodes/<node_id>.json      一个 run 一个节点：细纲、正文、state_delta、偏离报告、parent
   trace/<run_id>.jsonl      append-only，每 run 一个文件（匹配归因分析的粒度）
@@ -81,7 +84,7 @@ data/sessions/<session_id>/
 
 session 只存一个 `worldbook_id`，不内嵌拷贝：拷贝的话「改一次、所有故事都跟着」就没了，
 而那正是把设定独立出来要买的东西。**共享的代价不需要额外机制**——初始状态在每局故事
-自己的第一轮冻结进 `session.json`（S67），其余每一样都是每轮现读的。
+自己的第一轮冻结进 `session.json`（S37），其余每一样都是每轮现读的。
 
 规模上限：几百个 run × 每个几 KB，全量读取毫秒级。真到瓶颈再加索引缓存，模型不变。
 
@@ -107,7 +110,7 @@ WebSocket 消息用 **Pydantic 模型定义，导出 JSON Schema 生成 TS 类�
 backend/agenttavern/
   models/         节点、state 增量、控制维度、goal 运行时、trace 事件
   storage/        JSON 文件、节点树、路径重放
-  llm/            gateway（裸 HTTP + OpenAI 格式）
+  llm/            gateway（官方 OpenAI SDK + OpenAI 格式）
   tools/          spec/Tools.md 的实现 + 注册表与调度（四份工具面）
   agents/         director / writer / state_manager / goal_manager
                   + summarize（摘要）/ postrun（归段追问）/ replay（上下文重建）

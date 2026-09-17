@@ -1,6 +1,6 @@
 # 提示词层
 
-> **回答**：模型收到的每一个字住在哪、长什么形状、谁能改它。
+> **回答**：模型收到的可编排产品内容住在哪、长什么形状、谁能改它。
 >
 > **不回答**：具体某句话该怎么写（那是提示词内容，归用户）、
 > 文风怎么量（见 [Prose.md](Prose.md)）。
@@ -18,11 +18,12 @@ session 只装标题、目标、节点树；worldbook 只装名字和条目。
 
 ---
 
-### S74 · 一份文件 = 一个 agent 收到的全部文字
+### S74 · 一份文件 = 一个 agent 收到的全部可编排文字
 
 **服务** [R31](../req/调教提示词.md)
 
-**规格** 按**接收方**分文件，不按主题分。一份文件五个顶层键：
+**规格** 按**接收方**分文件，不按主题分。一份文件收齐该 agent 的全部可编排产品文案，
+有五个顶层键：
 
 | 键 | 装什么 |
 |---|---|
@@ -38,9 +39,10 @@ session 只装标题、目标、节点树；worldbook 只装名字和条目。
 一侧，翻开对应文件就知道。按主题分会把两侧的内容搅在一起，**而两侧的分工正是整个
 拓扑的地基**。
 
-后三个键是补的，判据是 [R31](../req/调教提示词.md)：`sections` 只是"模型读到的字"
-的一部分。归段追问以前是一段四百多字的 Python 字符串，每轮都进上下文而界面完全够
-不着。
+后三个键是补的，判据是 [R31](../req/调教提示词.md)：`sections` 只是会进入后续
+context 的产品文案的一部分。归段追问以前是一段四百多字的 Python 字符串，每轮都进
+上下文而界面完全够不着。thinking、tool call/result 与运行时错误属于执行记录，
+不在这份“全部”之内。
 
 **验收** `test_each_side_gets_its_own_sections_and_none_of_the_others` · `test_the_attached_prompts_live_with_their_agent` · `test_the_specials_and_the_rendering_strings_are_reachable`
 
@@ -96,7 +98,7 @@ session 只装标题、目标、节点树；worldbook 只装名字和条目。
 
 **规格** 因此约定**一行一个变量**。正文为空的条目**整条跳过，连标题都不出现**。
 
-**不做** 留下「视角：」这样的半截行；不做空标题。
+**不做** 留下「用户角色：」这样的半截行；不做空标题。
 
 **为什么** 半截行**比没有更糟**——模型会以为这里本该有内容而自己补一个。
 空标题白占体量，同样会让模型以为这里缺了东西。
@@ -161,7 +163,9 @@ session 只装标题、目标、节点树；worldbook 只装名字和条目。
 **服务** [R14](../req/推进剧情.md) [R34](../req/调教提示词.md)
 
 **规格** 「有哪些档」和「选哪一档」在同一个地方：`choice` 条目的 `options` 与
-`selected`。**一处定义、一处取值、一处修改**，改完下一轮生效。
+`selected`。**一处定义、一处取值、一处修改**，改完后从下一个新启动的 run 生效。
+所有 choice 都是**服务级**；同一台服务上的 session 共用当前值。run 启动时快照本次所用
+选择，运行中不混入新值；同一 turn 的重生成是新 run，会读取新选择。
 
 **不做** 把取值绑在 session 或 worldbook 上；**不做单轮覆盖**——取值只有一处，
 没有被覆盖的对象了。
@@ -169,9 +173,8 @@ session 只装标题、目标、节点树；worldbook 只装名字和条目。
 **为什么** 曾经「有哪些档」在 YAML、「选哪一档」在 session 上，改一档文风要动两个
 地方。
 
-**已知代价写在明处**：同一台服务上两局故事不能有不同的文风。这是"层级上调"的定义
-本身带来的。要换一套配置就去 agent 管理改——**那是配置层面的动作，不是每轮的动作**，
-所以「设一次长期有效」这条判断没被破坏。
+**已知代价写在明处**：同一台服务上两局故事不能有不同的控制选择，不只是文风。
+要换一套配置就去 agent 管理改——**那是服务配置动作，不是单个 session 或 turn 的动作**。
 
 **验收** `test_the_current_choice_lives_in_the_yaml_not_the_session` · `test_meta_carries_only_what_is_really_service_wide` · `test_speaking_rule_is_a_choice_not_a_toggle_in_code`
 
@@ -195,7 +198,7 @@ session 只装标题、目标、节点树；worldbook 只装名字和条目。
 Anthropic 是 `thinking: {budget_tokens: N}`。
 
 **不做** 定一套可移植的「思考三档」；**不做**全局兜底的模型名；
-**不做**服务级的流式开关。
+**不做**一条覆盖所有 agent 的全局流式开关。
 
 **为什么**
 
@@ -220,11 +223,18 @@ Anthropic 是 `thinking: {budget_tokens: N}`。
 `test_a_blank_model_is_refused_at_the_call_not_silently_swapped` ·
 `test_streaming_is_per_agent` · `test_meta_carries_only_what_is_really_service_wide`
 
-### S81 · 控制维度四项，各三档
+### S81 · 六个独立 choice，各三档
 
 **服务** [R14](../req/推进剧情.md) [R13](../req/推进剧情.md) [R15](../req/推进剧情.md)
 
-**规格** 输入处理 / 模型剧情控制权 / 是否允许抢话 / 铺陈程度。
+**规格** 六项彼此独立，且都是服务级：
+
+1. 输入处理；
+2. 模型剧情控制权；
+3. 是否允许替用户角色说话做事；
+4. director 的事件密度；
+5. writer 的铺陈程度；
+6. goal_manager 的推进节奏。
 
 **输入处理三档**：转述+推进 / 只转述 / 不转述+推进。
 故事跨度**不是独立维度**——想快进就写在指令里。
@@ -234,7 +244,9 @@ Anthropic 是 `thinking: {budget_tokens: N}`。
 **为什么** 乘积会让取值组合爆炸且有无意义的格子。文风写成自由文本时它散在每个
 session 里，改一次只影响一个故事，**而且从提示词那侧完全看不见**。
 
-**验收** `test_input_handling_three_ways` · `test_authority_maps_to_ask_question_eagerness` · `test_speaking_rule_is_a_choice_not_a_toggle_in_code` · `test_density_reaches_both_sides_in_opposite_directions`
+**验收** `test_input_handling_three_ways` · `test_authority_maps_to_ask_question_eagerness` ·
+`test_speaking_rule_is_a_choice_not_a_toggle_in_code`；三项密度彼此独立且为服务级的断言待补，
+见 [TODO](../TODO.md)。
 
 ### S82 · 显式设置优先于输入内容
 
@@ -246,24 +258,25 @@ session 里，改一次只影响一个故事，**而且从提示词那侧完全�
 
 **验收** `test_input_handling_three_ways`
 
-### S83 · 一个维度喂多处时，代码不再保证一致
+### S83 · 三项密度是三个 choice，不做联动
 
 **服务** [R14](../req/推进剧情.md)
 
-**规格** 铺陈程度现在喂三处（director 的事件密度、writer 的篇幅、goal 的推进节奏），
-拆成三个独立的 `selected` 之后**代码不保证它们一致**。
+**规格** director 的事件密度、writer 的篇幅、goal 的推进节奏各有自己的 `selected`，
+**代码不保证它们一致，也不从其中一个推导另外两个**。
 
-**为什么** 这既是代价也是收益：现在做不到「director 紧凑、writer 铺陈」，
-之后可以——**降级的是保证，不是能力**。
+**为什么** 三者改变的是不同阶段。拆开后可以表达「director 紧凑、writer 铺陈」；
+代价是不存在一个总旋钮替用户维持三者一致。
 
-**验收** `test_density_reaches_both_sides_in_opposite_directions`
+**验收** 待补：分别修改三项并证明只影响各自 agent，见 [TODO](../TODO.md)。
 
 ### S84 · 工具描述可编，参数 schema 只读并排显示
 
 **服务** [R31](../req/调教提示词.md)
 
 **规格** 描述搬进 YAML；参数 schema 仍由 Python 生成，在页面上与描述**并排只读**。
-错误文案留在代码里（它不进上下文）。
+错误文案留在代码里。它会作为只读 tool result 进入当前执行 context，
+但不属于用户可编辑的产品内容。
 
 **同一个工具在两个 agent 手上是两份描述、两个开关**。
 
@@ -297,8 +310,8 @@ session 里，改一次只影响一个故事，**而且从提示词那侧完全�
 
 | 住在 | 装什么 | 进版本控制 |
 |---|---|---|
-| `.env` | 端点、key、模型、超时、数据目录 | ✗ 秘密与机器相关 |
-| `config.yaml` | 各种上限、预算、窗口 | ✓ 跟机器无关 |
+| `.env` | 端点、key、超时、数据目录 | ✗ 秘密与机器相关 |
+| `config.yaml` | 服务硬上限、预算与算法阈值 | ✓ 跟机器无关 |
 | agent YAML | 一切改变「模型收到什么」的 | ✓ |
 
 `config.yaml` 里**每个值旁边都写着当初为什么是它、调大调小各会坏成什么样**。

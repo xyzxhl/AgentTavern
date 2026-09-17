@@ -2,7 +2,7 @@
 
 > 这份文档管的是**改动怎么落地**，不是系统怎么设计。
 >
-> **主要读者是模型**（包括我自己下一次开会话时）。人也照这个来。
+> **主要读者是模型**。人也照这个来。
 
 ## 三层
 
@@ -44,13 +44,13 @@
 ### spec 条目的固定字段
 
 ```
-### S42 · 控制维度定为四项
+### S<n> · <一条可验证的系统行为>
 
-服务   R7
-规格   四项各三档，取值住在 agent YAML 的 choice.selected，改完下一轮生效
-不做   单轮覆盖——取值只有一处，没有被覆盖的对象
-为什么 维度越多模型越容易顾此失彼；四项是覆盖与可控的折中
-验收   test_the_current_choice_lives_in_the_yaml_not_the_session
+服务   R<n>
+规格   系统在什么条件下做什么
+不做   最容易被误实现、但明确排除的相邻行为
+为什么 选择这条行为而不是相邻方案的依据
+验收   test_observable_behavior
 ```
 
 「不做」这一节缺席时，文档失效得最快：读的人分不清"没写"是"不需要"还是"忘了"。
@@ -133,11 +133,13 @@ user story  →  req  →  spec + test（同时）  →  code
 ```powershell
 cd backend
 .venv\Scripts\python.exe -m pytest -q
-.venv\Scripts\python.exe -m ruff check . ; .venv\Scripts\python.exe -m ruff format --check .
+.venv\Scripts\python.exe -m ruff check .
+.venv\Scripts\python.exe -m ruff format --check .
 .venv\Scripts\python.exe -m mypy agenttavern
 
 cd ..\frontend
-npm run lint ; npm run build
+npm run lint
+npm run build
 ```
 
 CI（`.github/workflows/ci.yml`）跑的就是这一串，外加生成物漂移检查。

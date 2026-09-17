@@ -195,7 +195,7 @@ JSON 从根上消掉它：`[…]` 不是 `"…"`、`3` 不是 `"3"`、`{}` 不�
 **服务** —（能力边界）
 
 **规格** 代码这一侧**一类检查都不剩**。内容判断全交给模型，程序只做
-**eval 采样标记**（"正文很长但增量为空"、"正文明显短于展开密度"），
+**eval 采样标记**（“正文很长但增量为空”、“正文相对细纲明显过短”），
 **标记从不影响运行时行为**。
 
 **不做** 四类曾设想过的结构性交叉比对——
@@ -233,11 +233,12 @@ JSON 从根上消掉它：`[…]` 不是 `"…"`、`3` 不是 `"3"`、`{}` 不�
 
 **验收** `test_a_bare_key_shadowing_a_namespaced_one_is_flagged` · `test_sibling_keys_under_different_owners_are_not_flagged` · `test_ordinary_state_values_are_not_flagged`
 
-### S40 · 用户改状态：改指令与改结果，都作用在当轮增量上
+### S40 · 用户改上一 turn 的状态：两种入口都落到它的增量
 
 **服务** [R21](../req/回头与改写.md) [R23](../req/回头与改写.md)
 
-**规格**
+**规格** 目标只能是当前活跃路径最后一个已完成 turn 的节点，并且必须仍处于它的编辑窗口：
+没有 run 正在执行或挂起，也没有下一条顶层 user input 已成功提交。
 
 | 操作 | 用户改的 | 系统怎么落 |
 |---|---|---|
@@ -250,23 +251,31 @@ JSON 从根上消掉它：`[…]` 不是 `"…"`、`3` 不是 `"3"`、`{}` 不�
 两个字段**只能给一个**，一起给当场报错。
 
 **不做** 让 `diff` 猜 `append`。从两棵树看不出用户心里想的是"追加一项"还是
-"换成这个列表"，猜错了下游重放就不一样——要表达追加走「改指令」。
-
-也不做「改历史会连锁」之类的警告：下游照常重放就是 event-sourced 的正常行为。
+"换成这个列表"，猜错了后续 turn 的重放结果就不一样——要表达追加走「改指令」。
 
 **为什么** 一起给时"我改了结果，它却按指令存了"是**查不出来的那种错**。
 
-**验收** `test_diff_is_the_delta_that_turns_before_into_after` · `test_diff_only_mentions_what_changed` · `test_diff_expresses_a_deletion_as_a_null_leaf` · `test_diff_never_guesses_append` · `test_diff_creates_an_empty_branch_that_was_not_there` · `test_user_edit_rewrites_node_directly` · `test_editing_an_older_node_keeps_the_state_at_the_leaf`
+**验收** `test_diff_is_the_delta_that_turns_before_into_after` · `test_diff_only_mentions_what_changed` · `test_diff_expresses_a_deletion_as_a_null_leaf` · `test_diff_never_guesses_append` · `test_diff_creates_an_empty_branch_that_was_not_there` · `test_user_edit_rewrites_node_directly`；编辑窗口与禁止编辑更早节点的断言待补，见 [TODO](../TODO.md)。
 
-### S41 · 编辑直接改写节点数据，不做依赖检查
+### S41 · 编辑只改写上一 turn，不重算任何依赖
 
 **服务** [R20](../req/回头与改写.md)
 
-**规格** 用户改细纲、正文、状态都是直接改写那个节点，**不检查下游**。
+**规格** 用户只能改当前活跃路径最后一个已完成 turn 的细纲、正文或状态。窗口从该 turn
+完成时开始，到下一条顶层 user input 成功提交时结束；只要 run 正在执行或有挂起草稿，
+编辑请求就明确失败。系统不替用户取消 run 或丢弃草稿；run 结束或由用户明确放弃后重新
+按窗口条件判断，已经提交过下一条 user input 的旧窗口不会重新打开。
+保存时直接改写该节点的对应字段，**不重跑 writer 或 state_manager，不重算后代、摘要、
+缓存，也不尝试让三个字段重新一致**。
 
-**不做** "插入一个只含增量的新节点"来保护不可变性。
+任何可能返回旧节点内容的派生缓存必须失效；这是让权威数据可见，不是重算下游。
+缓存只在下次读取时按现行来源重建。
 
-**为什么** 乐观假设用户只改最新输出，此时本无下游。为一个乐观假设下不存在的问题
-增加复杂度，也不符合常见 AI chat 的编辑语义。
+**不做** 编辑更早的节点；不做在执行中或挂起时抢写；不做为了编辑自动取消 run 或删除
+草稿；不做依赖检查；不做“插入一个只含增量的新节点”来保护不可变性。
 
-**验收** `test_user_edit_rewrites_node_directly` · `test_editing_outline_invalidates_cached_summary`
+**为什么** 更早的正文和状态不会直接进入后续 context，改动价值有限；更早的细纲会影响
+历史，但原地修改会让已有摘要与缓存失真。上一 turn 的直接编辑仍可能造成细纲、正文、
+状态互相冲突，这个代价由用户承担。
+
+**验收** `test_user_edit_rewrites_node_directly`；编辑窗口的断言待补，见 [TODO](../TODO.md)。

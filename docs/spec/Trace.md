@@ -11,6 +11,7 @@
 
 trace 是**评估与排查的唯一数据源**，也是界面的数据源：
 **界面是 trace 的投影**，不是另一份记录。
+trace 从不参与节点、goal 历史或模型 context 的重放。
 
 ---
 
@@ -67,10 +68,9 @@ trace 是**评估与排查的唯一数据源**，也是界面的数据源：
 
 **不做** 只记 director。
 
-**为什么** 此前**后端没有存过任何一份完整提示词**：
-装配事件只有条数与字数，响应事件只有工具名；四个 agent 里只有 director 的对话进了
-节点、goal_manager 的进了它自己的记录，**writer / state_manager / 摘要 / 归段追问的
-输入输出根本不存在**——归段追问连一条事件都没有。
+**为什么** 节点和 goal 历史按设计不保存已完成 turn 的 thinking 与工具往返；草稿也会在
+完成后删除。没有 trace，完整执行交换在 turn 结束后就不再存在，writer / state_manager /
+摘要 / 归段追问更没有其它可回看的来源。要做归因分析，必须由这条独立旁路完整记录。
 
 **验收** `test_developer_mode_records_every_agents_real_exchange`
 
@@ -131,7 +131,7 @@ writer 写的才是正文。**不按来源分开攒，界面就会把「我先�
 第一句**——实跑中攒出 1084 字而节点正文只有 782 字，第一版正是这么错的。
 
 **流不流按 agent 各设一份**（[S159](Prompting.md#s159)）：那份 YAML 顶上的
-`stream`。它曾经是一个服务级开关，于是"正文流着看、状态维护不必流"这种差别
+`stream`。它曾经是一个单一全局开关，于是“正文流着看、状态维护不必流”这种差别
 根本表达不了——而那正是这个旋钮最常见的用法。
 
 **验收** `test_prose_arrives_in_pieces_while_it_is_written` · `test_the_final_node_is_still_the_authority` · `test_the_agents_after_the_writer_stream_too` · `test_streaming_is_per_agent`
