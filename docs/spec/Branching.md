@@ -60,8 +60,9 @@ agent 之后，那一步就是它的全部工作，跑完必然有一个增量�
 | 普通输入 | 活跃叶下面（那是**延长**，不是分支） |
 | 重生成 | 活跃叶的**父**下面（开兄弟） |
 
-**切换不受限**：可以切到任意历史节点。所以任意分叉照样可达，只是要
-「先切过去、再重生成或推进」两步走。
+**切换不受限**指目标位置：可以切到任意历史节点。所以任意分叉照样可达，只是要
+「先切过去、再重生成或推进」两步走。当前 turn 正在执行时不能切换；挂起草稿时可以，
+切走后该草稿因父节点不匹配而在下一次生成前丢弃。未暂停 goal 的额外限制见 S104。
 
 在**非当前**节点上重生成时，界面自己走这两步，**但要先问过用户**——
 后面几轮会移出当前路径。
@@ -191,6 +192,10 @@ run 完成、放弃或整轮失败后删除草稿；这些记录不转存节点�
 
 纠正掐掉一次工具调用时要**补一条“被打断”的工具结果**，否则消息序不合法。
 
+writer / state_manager 各自是一次不可分操作：引导让当前调用完成，纠正立即取消当前调用；
+两者随后都回 director，废弃已经完成或半完成的下游产物。它们仍属于原 turn，最终只落
+一个节点，插话按顺序进入该节点的产品历史。
+
 判“用户有没有发出纠正/停止”**不能只看有没有掐到东西**——信号和操作在赛跑，
 操作先跑完时没东西可掐，但输入仍应落在下一个合法边界。
 
@@ -199,7 +204,7 @@ run 完成、放弃或整轮失败后删除草稿；这些记录不转存节点�
 **为什么** 那样的话，用户看着它往错方向查了六次资料，也得等整段正文写完才说得上话
 ——**那不叫引导，那是事后补救**。
 
-**验收** `test_guidance_lands_between_two_operations_not_after_the_turn` · `test_an_interrupt_kills_only_the_operation_in_flight` · `test_an_interrupt_with_nothing_to_say_suspends_the_run` · `test_an_aborted_tool_call_still_gets_a_result`
+**验收** `test_guidance_lands_between_two_operations_not_after_the_turn` · `test_guidance_after_director_returns_to_director_in_the_same_turn` · `test_an_interrupt_kills_only_the_operation_in_flight` · `test_an_interrupt_with_nothing_to_say_suspends_the_run` · `test_an_aborted_tool_call_still_gets_a_result`
 
 ### S51 · 会话循环等 run 用 `asyncio.wait`，不 `await` 它
 

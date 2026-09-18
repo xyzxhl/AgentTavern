@@ -8,7 +8,6 @@
 from conftest import using
 
 from agenttavern.agents.replay import CONTEXT_BUDGET_CHARS, replay_messages
-from agenttavern.llm import Message, Role
 from agenttavern.models import (
     Node,
     WorldbookEntry,
@@ -80,9 +79,7 @@ def _compacted(readable: bool) -> str:
     # 塞在提示里会被扁平化吃掉，压根越不了界。
     filler = CONTEXT_BUDGET_CHARS
     node = Node(outline="第一轮" + "长" * filler, outline_summary="她进店，他锁了门。")
-    node.director_messages = [Message(role=Role.USER, content="本轮提示")]
     tail = Node(parent_id=node.id, outline="第二轮" + "长" * filler)
-    tail.director_messages = [Message(role=Role.USER, content="本轮提示")]
 
     return "\n".join(m.content or "" for m in replay_messages([node, tail], readable=readable))
 

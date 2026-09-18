@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from conftest import GOAL_MARK, ScriptedLLM, text, tool, tools, using
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from agenttavern.config import Settings
 from agenttavern.models import Goal, Session, SessionMeta, Worldbook
@@ -798,12 +799,8 @@ def test_the_two_state_views_cannot_both_be_given(client_for) -> None:
         assert collect(ws, "node_updated")[-1]["node"]["prose"] == "还活着。"
 
 
-def test_editing_an_older_node_keeps_the_state_at_the_leaf(client_for) -> None:
-    """改的是历史某一轮时，侧栏仍然显示**路径末端**的状态。
-
-    发被改节点处的快照会让侧栏往回跳——而用户看的从来是"现在是什么样"。
-    下游照常重放，那是 event-sourced 的正常行为（S42/S43），不是连锁事故。
-    """
+def test_editing_an_older_node_is_rejected(client_for) -> None:
+    """下一条顶层输入一到达，上一轮的编辑窗口立即关闭。"""
     llm = ScriptedLLM(
         *one_run(outline="第一轮。"),
         *one_run(outline="第二轮。"),
@@ -818,8 +815,6 @@ def test_editing_an_older_node_keeps_the_state_at_the_leaf(client_for) -> None:
         first = collect(ws, "run_finished")[-1]["node"]["id"]
         ws.send_text(json.dumps({"type": "submit", "text": "第二条"}))
         second = collect(ws, "run_finished")[-1]["node"]["id"]
-        collect(ws, "state")  # 这一轮自己的快照，读掉，别和下面那个混起来
-
         ws.send_text(
             json.dumps(
                 {
@@ -829,11 +824,12 @@ def test_editing_an_older_node_keeps_the_state_at_the_leaf(client_for) -> None:
                 }
             )
         )
-        snapshot = collect(ws, "state")[-1]
+        error = collect(ws, "error")[-1]
 
-    assert snapshot["leaf_id"] == second
-    assert snapshot["values"]["地点"] == "阳台", "第二轮的增量照常盖在上面"
-    assert snapshot["values"]["天气"] == "雨", "改的那一笔也在"
+    assert second != first
+    assert "只能" in error["message"] and "上一轮" in error["message"]
+    first_node = client.get(f"/sessions/{session_id}").json()["path"][0]
+    assert "天气" not in first_node["state_delta"]["set"]
 
 
 def test_editing_outline_invalidates_cached_summary(client_for) -> None:
@@ -944,6 +940,20 @@ def test_goal_drives_another_run_with_a_simulated_input(client_for) -> None:
     assert run["spent_runs"] >= 1, "预算计数必须落盘——它以前在内存里，重启就归零"
 
 
+def test_an_active_goal_blocks_branch_switching(client_for) -> None:
+    """goal 进度挂 session；运行中切分支会让同一份进度指向两条故事路径。"""
+    client = client_for(happy_llm())
+    session = Session(meta=SessionMeta(goal=Goal(description="写到摊牌")))
+    client.post("/sessions", json=session.model_dump(mode="json"))
+
+    with client.websocket_connect(f"/sessions/{session.id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "switch_branch", "node_id": "run_any"}))
+        error = collect(ws, "error")[-1]
+
+    assert "目标运行中" in error["message"]
+
+
 def opening(next_input: str, *subgoals: str):
     """goal 开场那一次 goal_manager 调用（S100）：拆阶段 + 写出第一条输入，然后收口。"""
     return [
@@ -1033,15 +1043,8 @@ def test_a_goal_set_mid_story_also_plans_before_it_runs(client_for) -> None:
     assert "第 1 轮" not in body, "也不算 goal 期间的轮次：它进前缀，不是逐条追加的记录"
 
 
-def test_the_opening_conversation_carries_into_the_first_judgement(client_for) -> None:
-    """开场那次和紧接着的判定**是同一份对话**，中间不重建（S103/S100）。
-
-    `sync_conversation` 只在"上次看到的节点还在 goal 期间那一段里"时才增量追加，
-    否则整份重建。开场恰好卡在这个判据的缝上：那时 goal 期间一轮都还没有，
-    上次看到的是**切点**那个节点。照字面判的话，goal 期间的第一轮就会触发一次
-    重建——而那时对话完全是连续的，重建只是白白丢掉它开场时写计划的那段过程，
-    然后拿一份 `plan_snapshot` 顶上。**恢复时那样降级是有理由的，这里没有。**
-    """
+def test_the_opening_plan_not_tool_transcript_reaches_the_first_judgement(client_for) -> None:
+    """开场工具过程止于当前调用；紧接着的判定只收到当前 plan 投影与产品记录。"""
     llm = ScriptedLLM(
         *opening("我把照片推过去。"),
         *one_run(outline="第一轮。", prose="正文一。"),
@@ -1059,7 +1062,8 @@ def test_the_opening_conversation_carries_into_the_first_judgement(client_for) -
 
     judged = [r for r in llm.requests if GOAL_MARK in r["messages"][0]["content"]][-1]
     called = [c["function"]["name"] for m in judged["messages"] for c in m.get("tool_calls") or []]
-    assert "steer" in called, "开场时它自己那几步还在对话里，没有被重建冲掉"
+    assert "steer" not in called, "开场工具往返不能跨 turn 保留"
+    assert "未成立" in json.dumps(judged["messages"], ensure_ascii=False), "当前 plan 仍须在场"
     assert "第 1 轮" in json.dumps(judged["messages"], ensure_ascii=False), "新的一轮照常追加"
 
 
@@ -1482,6 +1486,34 @@ def test_a_paused_goal_neither_judges_nor_continues(client_for) -> None:
     assert body["goal_run"]["paused_reason"] == "用户暂停"
 
 
+def test_a_first_goal_failure_is_persisted_as_paused(client_for) -> None:
+    """首次判定失败时 GoalRun 也必须已经存在，否则暂停会静默丢失。"""
+
+    class BrokenGoal(ScriptedLLM):
+        def _handle(self, request):  # type: ignore[no-untyped-def]
+            messages = json.loads(request.content)["messages"]
+            if GOAL_MARK in messages[0].get("content", ""):
+                raise RuntimeError("目标端点炸了")
+            return super()._handle(request)
+
+    llm = BrokenGoal(*one_run(outline="第一轮。", prose="正文一。"))
+    client = client_for(llm)
+    session = Session(meta=SessionMeta(goal=Goal(description="写到摊牌")))
+    client.post("/sessions", json=session.model_dump(mode="json"))
+
+    with client.websocket_connect(f"/sessions/{session.id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "开始"}))
+        finished = collect(ws, "run_finished")[-1]
+        paused = collect(ws, "goal_paused")[-1]
+
+    assert finished["node"]["prose"] == "正文一。", "goal 在原子节点提交后失败，不回滚剧情"
+    assert "目标判定失败" in paused["reason"]
+    body = client.get(f"/sessions/{session.id}").json()["session"]
+    assert body["goal_run"]["paused"] is True
+    assert "目标判定失败" in body["goal_run"]["paused_reason"]
+
+
 def test_resuming_hands_over_the_turns_the_user_wrote_meanwhile(client_for) -> None:
     """**暂停期间用户自己跑的那几轮，恢复时要交给 goal_manager**（S92）。
 
@@ -1723,18 +1755,20 @@ def test_the_agents_after_the_writer_stream_too(client_for) -> None:
         node_id = first[-1]["node"]["id"]
         second = collect(ws, "run_finished")
 
-    def said_by(actor: str) -> list[dict]:
+    def said_by(messages: list[dict], actor: str) -> list[dict]:
         return [
             m
-            for m in first + second
+            for m in messages
             if m["type"] == "delta" and m["actor"] == actor and m["kind"] == "content"
         ]
 
-    goal_deltas = said_by("goal_manager")
+    goal_deltas = said_by(first, "goal_manager")
     assert "".join(m["text"] for m in goal_deltas) == "这一步还差着摊牌。"
     assert {m["run_id"] for m in goal_deltas} == {node_id}, "归到它判定的那一轮名下"
     # 状态维护也跑在正文之后（S7），同样该看得见。
-    assert "".join(m["text"] for m in said_by("state_manager")) == "无变化。无变化。"
+    assert (
+        "".join(m["text"] for m in said_by(first + second, "state_manager")) == "无变化。无变化。"
+    )
     # 它们写的东西**都不是正文**——按 actor 分流就是为了挡住这个（同 `deltas_say_who`）。
     assert first[-1]["node"]["prose"] == "正文一。"
 
@@ -1945,6 +1979,25 @@ def test_unknown_session_websocket_is_rejected(client_for) -> None:
         client.websocket_connect("/sessions/nope/ws") as ws,
     ):
         ws.receive_text()
+
+
+def test_a_session_allows_only_one_live_socket(client_for) -> None:
+    """本地单用户拓扑下，同一 session 不能有两个 runner 同时写盘。"""
+    client = client_for(happy_llm())
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as first:
+        first.receive_text()
+        with (
+            pytest.raises(WebSocketDisconnect) as rejected,
+            client.websocket_connect(f"/sessions/{session_id}/ws") as second,
+        ):
+            second.receive_text()
+        assert rejected.value.code == 4409
+
+    # 第一个连接释放后，登记也必须释放，不能把会话永久锁死。
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as next_socket:
+        assert json.loads(next_socket.receive_text())["type"] == "state"
 
 
 def test_a_hand_edit_lands_in_the_trace(client_for) -> None:

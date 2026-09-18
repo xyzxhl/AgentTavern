@@ -1,21 +1,8 @@
-"""把一条路径重放成 director 的对话（S60）。
+"""把一条路径重放成 director 的产品历史（S60/S61）。
 
-## 轮内保结构，跨轮扁平化（S61）
-
-同一条信息在两种场合要的形态不同：
-- **本轮内**：原样保留 `tool_calls`、`role=tool` 结果、`reasoning_content`。
-  模型正在这条链上往下想；这也是 DeepSeek 的契约要求。
-- **跨轮重放**：压成 `assistant` 文本——调了什么、返回了什么、细纲是什么。
-  上一轮的往返对这一轮只是**事实来源**，不再是一条待续的链。
-
-扁平化顺带把 S62 里那条已知风险**消掉了**，不只是压低：DeepSeek 要求
-`reasoning_content` 回传的前提是**那条 assistant 消息带着 `tool_calls`**，
-文档同时写明"模型未执行工具调用时，中间 assistant 的 `reasoning_content`
-不需要参与上下文拼接"。扁平化之后历史轮次里**一个 `tool_calls` 都没有**，
-这条要求根本不适用——换到严格执行的模型也不会 400。
-
-**扁平化发生在重放时，不在落盘时。** 节点里存的仍是结构化的原样记录：
-存储要忠实，呈现是可以改的决定（同 S42 存增量而不存快照的理由）。
+轮内执行链会持久化到可恢复草稿，以支持打断；一旦 turn 完成，跨轮只保留并重放
+`用户输入 → 用户插话 → 细纲`。thinking、工具调用与工具结果都是 turn 内协议流量，
+不会进入节点，也不会在后续 turn 里换一种形态继续存活。
 
 ## 压缩的触发方式：越界一次，全部替换
 
@@ -62,7 +49,7 @@ def append_message(said: str) -> Message:
     return messages[0]
 
 
-def _interjection_mark() -> str:
+def interjection_mark() -> str:
     """追加输入那一条的**结构标记**。
 
     扁平化时要靠它把用户的插话和编排层的催促（"请调用 submit_outline……"）
@@ -85,24 +72,31 @@ def _interjection_mark() -> str:
     return mark
 
 
-INTERJECTION_MARK = _interjection_mark()
-
-
 def interjections_of(node: Node) -> list[str]:
     """这一轮用户插了哪几句（S50）。
 
-    **从 `director_messages` 里认，不另存一份**——插话本来就在那儿，
-    再存一份必然漂移。认的是 `INTERJECTION_MARK` 那个结构标记。
+    节点只保存跨轮产品记录；工具对话与 reasoning 的生命周期止于本 turn。
     """
+    return list(node.interjections)
+
+
+def interjection_texts(messages: list[Message]) -> list[str]:
+    """从本轮临时对话中提取已渲染的插话，供节点产品记录落盘。"""
+    mark = interjection_mark()
     return [
-        (m.content or "")
-        for m in node.director_messages
-        if m.role is Role.USER and m.content and INTERJECTION_MARK in m.content
+        _interjection_body(m.content, mark)
+        for m in messages
+        if m.role is Role.USER and m.content and mark in m.content
     ]
 
 
-SUBMIT_TOOL = "submit_outline"
-"""扁平化时跳过它——它的产出就是 `node.outline`，直接取节点上的更准。"""
+def _interjection_body(content: str, mark: str) -> str:
+    """默认标记是成对标签；自定义成别的形状时至少不丢整条消息。"""
+    after = content.split(mark, 1)[1]
+    closing = mark.replace("<", "</", 1)
+    if closing in after:
+        return after.split(closing, 1)[0].strip()
+    return content.strip()
 
 
 def _chars(messages: list[Message]) -> int:
@@ -141,12 +135,9 @@ def _summary_message(node: Node, *, readable: bool) -> Message:
 
 
 def flatten_turn(node: Node) -> list[Message]:
-    """把一轮压成「用户输入 → 一条 assistant 记录」（S61）。
+    """把一轮重放成「顶层输入 → 插话 → 细纲」（S60/S61）。
 
-    产出的 assistant 消息里没有 `tool_calls`，因此 DeepSeek 那条
-    `reasoning_content` 必须回传的要求不适用（见模块开头）。
-
-    三样东西必须留住，它们各自都是不可再生的：
+    三样东西必须留住，它们各自都是不可再生的；工具过程不跨轮：
 
     - **用户输入**：换成 `node.user_input` 的原文，而不是当时那条完整的轮次提示——
       提示里裹着**那一轮的 state 快照**，几百字，而且它已经被这一轮的新快照
@@ -155,51 +146,18 @@ def flatten_turn(node: Node) -> list[Message]:
     - **细纲**：直接取 `node.outline`。它在原始消息里只是 `submit_outline` 的一个参数，
       藏在 JSON 里。
     """
-    results = {
-        m.tool_call_id: (m.content or "")
-        for m in node.director_messages
-        if m.role is Role.TOOL and m.tool_call_id
-    }
-
     out: list[Message] = []
-    actions: list[str] = []
-
-    def flush() -> None:
-        if actions:
-            out.append(Message(role=Role.ASSISTANT, content="\n".join(actions)))
-            actions.clear()
-
-    seen_first_user = False
-    for message in node.director_messages:
-        if message.role is Role.USER:
-            if not seen_first_user:
-                seen_first_user = True
-                text = node.user_input.text if node.user_input else ""
-                if text:
-                    flush()
-                    # 记号在 `director.yaml` 的 `rendering.flat_user_input` 里（R31）。
-                    # 前情和这一轮的输入并排出现在同一串消息里，形状要一致——
-                    # 装配器不再自动包标签，所以两边都由用户自己写。
-                    out.append(
-                        Message(
-                            role=Role.USER,
-                            content=rendering("director", "flat_user_input", text=text),
-                        )
-                    )
-            elif message.content and INTERJECTION_MARK in message.content:
-                flush()
-                out.append(message)
-            # 其余的 USER 消息是编排层的催促，跨轮不带。
-        elif message.role is Role.ASSISTANT:
-            for call in message.tool_calls:
-                if call.name == SUBMIT_TOOL:
-                    continue
-                result = results.get(call.id, "")
-                actions.append(f"· {call.name}({call.arguments_raw})\n  → {result}")
-
+    text = node.user_input.text if node.user_input else ""
+    if text:
+        out.append(
+            Message(
+                role=Role.USER,
+                content=rendering("director", "flat_user_input", text=text),
+            )
+        )
+    out.extend(Message(role=Role.USER, content=text) for text in node.interjections if text)
     if node.outline:
-        actions.append(f"\n## 本轮提交的细纲\n{node.outline}")
-    flush()
+        out.append(Message(role=Role.ASSISTANT, content=node.outline))
     return out
 
 
@@ -238,34 +196,3 @@ def replay_messages(path: list[Node], *, readable: bool = True) -> list[Message]
     for node in path[last_summarised + 1 :]:
         compacted.extend(flatten_turn(node))
     return compacted
-
-
-def turn_messages(messages: list[Message], start: int) -> list[Message]:
-    """这一轮新增的消息。工具消息必须成组保留，否则重放时会出现孤儿 tool result。"""
-    return [m for m in messages[start:] if m.role is not Role.SYSTEM]
-
-
-def without_reasoning(messages: list[Message]) -> list[Message]:
-    """落盘前抹掉推理段。**推理只活到产出它的那个 run 结束**（S62）。
-
-    实测一轮 director（3 个来回）的 `reasoning_content` 有 **15 000 字**，
-    而它产出的细纲只有 207 字——推理比产出长了七十倍。原样存进
-    `director_messages`，持续对话（S60）跑两轮就撞上 `CONTEXT_BUDGET_CHARS`，
-    压缩变成每轮都发生，前缀反复失效，**持续对话的全部意义就没了**。
-
-    分界划在 run 边界上，因为两侧的用途不同：
-
-    - **run 内**：推理是那条工具链的一部分，模型接着自己上一步往下想，且这是
-      DeepSeek 的契约要求。草稿（S48）续跑的是同一个 run，所以草稿里**要留**。
-    - **run 间**：下一轮值钱的是查到了什么、写下了什么细纲，不是三轮之前
-      模型怎么绕到那个结论的。
-
-    **已知风险**：文档说带工具调用的 assistant 消息不回传 `reasoning_content`
-    会返回 400。实测 `deepseek-v4-flash` 不回传能过（这也正是改动前一直没炸的
-    原因）。若换到严格执行的模型，重放历史轮次时会立刻 400——症状明确、
-    出现在第二轮，不是那种要查很久的错。
-    """
-    return [
-        m if m.reasoning_content is None else m.model_copy(update={"reasoning_content": None})
-        for m in messages
-    ]

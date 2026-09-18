@@ -358,3 +358,67 @@ def test_migration_gives_each_old_session_its_own_worldbook(tmp_path: Path) -> N
     store.migrate()
     books = {store.session(f"sess_{n}").load_session().worldbook_id for n in ("a", "b")}
     assert len(books) == 2
+
+
+def test_migration_reduces_runtime_records_to_cross_turn_products(tmp_path: Path) -> None:
+    """旧节点/goal 的工具对话被丢弃，只抢救明确的用户插话。"""
+    import json
+
+    from agenttavern.storage import Store
+
+    old = tmp_path / "sessions" / "sess_runtime"
+    (old / "nodes").mkdir(parents=True)
+    (old / "session.json").write_text(
+        json.dumps(
+            {
+                "id": "sess_runtime",
+                "active_leaf_id": "run_old",
+                "modes": {"time_driven": True},
+                "goal_run": {
+                    "conversation": [
+                        {"role": "assistant", "content": "旧推理"},
+                        {"role": "tool", "content": "旧工具结果", "tool_call_id": "call_1"},
+                    ],
+                    "seen_leaf_id": "run_old",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (old / "nodes" / "run_old.json").write_text(
+        json.dumps(
+            {
+                "id": "run_old",
+                "outline": "她改道去了阳台。",
+                "prose": "风从阳台吹进来。",
+                "director_messages": [
+                    {"role": "assistant", "content": "隐藏推理"},
+                    {
+                        "role": "user",
+                        "content": "<用户追加输入>等等，让她去阳台</用户追加输入>",
+                    },
+                    {"role": "tool", "content": "检索结果", "tool_call_id": "call_2"},
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    store = Store(tmp_path)
+    store.migrate()
+
+    session = store.session("sess_runtime").load_session()
+    assert session.editable_node_id == "run_old"
+    assert session.input_revision == 0
+    assert session.goal_run is not None
+    assert session.goal_run.conversation == []
+    assert session.goal_run.seen_leaf_id is None
+    migrated = store.session("sess_runtime").load_node("run_old")
+    assert migrated.interjections == ["等等，让她去阳台"]
+
+    raw_session = json.loads((old / "session.json").read_text(encoding="utf-8"))
+    raw_node = json.loads((old / "nodes" / "run_old.json").read_text(encoding="utf-8"))
+    assert "modes" not in raw_session
+    assert "director_messages" not in raw_node

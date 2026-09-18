@@ -2,14 +2,12 @@
 
 from agenttavern.agents.replay import (
     CONTEXT_BUDGET_CHARS,
-    INTERJECTION_MARK,
     _chars,
     flatten_turn,
     replay_messages,
-    without_reasoning,
 )
 from agenttavern.llm import Message, Role, ToolCall
-from agenttavern.models import Node, UserInput
+from agenttavern.models import Node, RunDraft, UserInput
 
 
 def _run(
@@ -20,34 +18,14 @@ def _run(
     closes: bool = False,
     summary: str | None = None,
 ):
-    """一轮的**原样记录**：轮次提示 → 带 tool_calls 的 assistant → tool 结果 → 提交细纲。
-
-    两种"占地方"要分开，因为扁平化只吃掉其中一种：
-
-    - ``stale`` 塞在轮次提示里，模拟那份 state 快照——**扁平化会丢掉它**。
-    - ``filler`` 塞在细纲里，那是要留住的内容——用它来把体量顶过预算。
-    """
+    """一轮的产品记录；``stale`` 只保留为旧测试调用参数，节点不再存旧快照。"""
+    del stale
     node = Node(
         outline=outline + "长" * filler,
         closes_segment=closes,
         outline_summary=summary,
         user_input=UserInput(text=f"用户：{outline}"),
     )
-    node.director_messages = [
-        Message(role=Role.USER, content="## 本轮状态\n" + "填" * stale + f"\n用户：{outline}"),
-        Message(
-            role=Role.ASSISTANT,
-            tool_calls=[
-                ToolCall(id=f"q{outline}", name="state_query", arguments_raw='{"keys":[]}')
-            ],
-        ),
-        Message(role=Role.TOOL, content=f"工具结果：{outline}", tool_call_id=f"q{outline}"),
-        Message(
-            role=Role.ASSISTANT,
-            tool_calls=[ToolCall(id=f"s{outline}", name="submit_outline")],
-        ),
-        Message(role=Role.TOOL, content="细纲已提交。", tool_call_id=f"s{outline}"),
-    ]
     return node
 
 
@@ -68,20 +46,13 @@ def test_a_past_turn_carries_no_tool_calls_at_all() -> None:
     assert all(m.reasoning_content is None for m in flat)
 
 
-def test_flattening_keeps_the_facts_and_drops_the_stale_state() -> None:
-    """留住三样不可再生的：用户输入、查到了什么、提交的细纲。
-
-    轮次提示里那份 state 快照**不留**——它已经被这一轮的新快照完全取代，
-    留着不只是浪费，还会以"写在前面"的权威姿态和新值打架。
-    """
+def test_flattening_keeps_only_the_input_and_outline() -> None:
+    """跨轮只有产品记录；旧 state、thinking 与工具过程都不在节点里。"""
     text = "\n".join(m.content or "" for m in flatten_turn(_run("第1轮", stale=500)))
 
     assert "用户：第1轮" in text
-    assert "state_query" in text
-    assert "工具结果：第1轮" in text
     assert "第1轮" in text
-    assert "填" not in text, "旧的 state 快照不该跨轮"
-    assert "细纲已提交。" not in text, "工具的回执是脚手架，不是事实"
+    assert "state_query" not in text
 
 
 def test_an_interjection_survives_flattening_in_place() -> None:
@@ -90,17 +61,13 @@ def test_an_interjection_survives_flattening_in_place() -> None:
     编排层的催促则不留：跨轮带着它，会像一条仍然生效的指令。
     """
     node = _run("第1轮")
-    node.director_messages.insert(
-        3, Message(role=Role.USER, content=f"{INTERJECTION_MARK}\n别去码头")
-    )
-    node.director_messages.insert(4, Message(role=Role.USER, content="请通过工具完成本轮。"))
+    node.interjections = ["别去码头"]
 
     flat = flatten_turn(node)
     text = "\n".join(m.content or "" for m in flat)
 
     assert "别去码头" in text
     assert "请通过工具完成本轮" not in text
-    # 插在第一次工具调用之后，所以排在那条动作记录后面。
     positions = [i for i, m in enumerate(flat) if "别去码头" in (m.content or "")]
     assert positions and positions[0] > 0
 
@@ -111,7 +78,6 @@ def test_everything_is_kept_until_the_budget_is_crossed() -> None:
     messages = replay_messages(path)
     text = "\n".join(m.content or "" for m in messages)
 
-    assert all(f"工具结果：第{i}轮" in text for i in range(5))
     assert all(f"第{i}轮" in text for i in range(5))
 
 
@@ -139,12 +105,12 @@ def test_crossing_the_budget_replaces_every_summarised_segment_at_once() -> None
     assert "第一段的摘要" in text
     assert "第二段的摘要" in text
     # 被覆盖的轮次不再单独出现
-    assert "工具结果：第1轮" not in text
-    assert "工具结果：第2轮" not in text
-    assert "工具结果：第3轮" not in text
+    assert "用户：第1轮" not in text
+    assert "用户：第2轮" not in text
+    assert "用户：第3轮" not in text
     # 最后一段之后的轮次原样保留
-    assert "工具结果：第4轮" in text
-    assert "工具结果：第5轮" in text
+    assert "用户：第4轮" in text
+    assert "用户：第5轮" in text
 
 
 def test_a_summary_says_how_many_runs_it_replaced_and_how_to_get_them_back() -> None:
@@ -179,8 +145,8 @@ def test_nothing_is_dropped_when_no_segment_has_been_summarised_yet() -> None:
 
     messages = replay_messages(path)
     text = "\n".join(m.content or "" for m in messages)
-    assert "工具结果：第1轮" in text
-    assert "工具结果：第2轮" in text
+    assert "用户：第1轮" in text
+    assert "用户：第2轮" in text
 
 
 def test_empty_path_replays_to_nothing() -> None:
@@ -190,14 +156,8 @@ def test_empty_path_replays_to_nothing() -> None:
 # -- 推理段的生命周期（S62） ---------------------------------------------------
 
 
-def test_reasoning_is_stripped_before_a_node_is_stored() -> None:
-    """推理只活到产出它的那个 run 结束。
-
-    实测一轮 director 的 `reasoning_content` 有一万五千字，而它产出的细纲只有
-    两百字。原样存进 `director_messages`，持续对话跑两轮就撞预算——**压缩变成
-    每轮都发生，前缀反复失效，S60 的全部意义就没了**。
-    """
-    kept = Message(role=Role.TOOL, content="结果", tool_call_id="c1")
+def test_reasoning_and_tools_only_persist_in_a_draft() -> None:
+    """执行流量为恢复同一 turn 可以落草稿，但不进入完成节点。"""
     messages = [
         Message(role=Role.USER, content="本轮输入"),
         Message(
@@ -205,15 +165,15 @@ def test_reasoning_is_stripped_before_a_node_is_stored() -> None:
             tool_calls=[ToolCall(id="c1", name="state_query")],
             reasoning_content="想了很久" * 500,
         ),
-        kept,
+        Message(role=Role.TOOL, content="结果", tool_call_id="c1"),
     ]
+    draft = RunDraft(messages=messages)
+    node = Node(outline="结果")
 
-    stripped = without_reasoning(messages)
-    assert all(m.reasoning_content is None for m in stripped)
-    # 其余部分一字不动——抹掉的只有推理段。
-    assert [m.content for m in stripped] == [m.content for m in messages]
-    assert stripped[1].tool_calls == messages[1].tool_calls
-    assert messages[1].reasoning_content is not None, "不能就地改掉调用方的消息"
+    assert draft.messages[1].reasoning_content is not None
+    dumped = node.model_dump()
+    assert "director_messages" not in dumped
+    assert "messages" not in dumped
 
 
 def test_reasoning_counts_toward_the_context_budget() -> None:

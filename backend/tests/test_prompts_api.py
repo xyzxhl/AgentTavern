@@ -185,15 +185,17 @@ def test_every_prompt_file_carries_its_own_call_knobs() -> None:
         assert isinstance(call.extra, dict)
 
 
-def test_the_knobs_are_editable_and_take_effect_at_once(client, sandbox) -> None:
-    """改完**当轮就生效**（`load` 有进程内缓存，写盘时清掉）。
+def test_the_knobs_take_effect_on_the_next_turn(client, sandbox) -> None:
+    """保存立即更新磁盘，但已开始 turn 继续读取开始时的冻结快照。
 
     `extra` **原样透传**：这里存什么，请求体里就是什么。不定义"思考三档"那种
     可移植的抽象——各家拼法根本不同，定一套就要按家数映射，而猜错的症状是
     **不报错、只是没生效**（同 P29）。
     """
-    from agenttavern.prompting import call_of
+    from agenttavern.prompting import call_of, capture_snapshot, using_snapshot
 
+    frozen = capture_snapshot()
+    old_model = call_of("writer").model
     doc = client.get("/prompts/writer").json()["data"]
     doc["model"] = "换一个模型"
     doc["stream"] = False
@@ -201,11 +203,38 @@ def test_the_knobs_are_editable_and_take_effect_at_once(client, sandbox) -> None
 
     assert client.put("/prompts/writer", json={"data": doc}).status_code == 200
 
+    with using_snapshot(frozen):
+        assert call_of("writer").model == old_model
+
     call = call_of("writer")
     assert call.model == "换一个模型"
     assert call.stream is False
     assert call.extra == {"reasoning_effort": "high"}
     assert "换一个模型" in (sandbox / "writer.yaml").read_text(encoding="utf-8")
+
+
+def test_the_interjection_marker_is_frozen_per_turn_too(client) -> None:
+    """运行时结构标记属于提示词配置，不能在进程启动时被永久写死。"""
+    from agenttavern.agents.replay import interjection_mark
+    from agenttavern.prompting import capture_snapshot, using_snapshot
+
+    frozen = capture_snapshot()
+    old = interjection_mark()
+    new = "<本轮插话>"
+    doc = client.get("/prompts/director").json()["data"]
+    append = doc["specials"]["append"]
+    append["mark"] = new
+    for section in append["sections"]:
+        section["body"] = (
+            section["body"]
+            .replace(old, new)
+            .replace(old.replace("<", "</", 1), new.replace("<", "</", 1))
+        )
+    assert client.put("/prompts/director", json={"data": doc}).status_code == 200
+
+    with using_snapshot(frozen):
+        assert interjection_mark() == old
+    assert interjection_mark() == new
 
 
 def test_a_blank_model_is_refused_at_the_call_not_silently_swapped() -> None:

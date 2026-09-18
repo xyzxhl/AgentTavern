@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from .control import GoalRun, SessionMeta, SessionModes
+from .control import GoalRun, SessionMeta
 from .node import new_id
 
 
@@ -45,10 +45,6 @@ class Session(BaseModel):
     # 整体上调到了提示词层——它们全都在改「模型收到什么」，就该和提示词住在
     # 同一份文件里。**session 上从此只有内容，没有配置。**
 
-    modes: SessionModes = Field(default_factory=SessionModes)
-    """只剩 `time_driven` 一项。它改的是**触发源**——「这局故事没人说话时要不要
-    自己往前跑」，和 goal 的自动续跑是同一类东西，所以留在 session（S80）。"""
-
     initial_state: dict[str, Any] | None = None
     """**冻结下来的初始状态**（S67）。``None`` = 故事还没开始，现算。
 
@@ -65,8 +61,14 @@ class Session(BaseModel):
     active_leaf_id: str | None = None
     """活跃路径的叶节点。路径 = 根 → 此节点的一条链；state 沿该路径重放（S42）。"""
 
+    input_revision: int = 0
+    """已进入系统的顶层输入序号。输入一到达就递增，用来关闭上一轮编辑窗口。"""
+
+    editable_node_id: str | None = None
+    """当前唯一可编辑的上一轮节点。run 执行/挂起时为空；整轮失败时回到上一叶。"""
+
     goal_run: GoalRun | None = None
-    """当前 goal 的运行时状态（S92）：对话、计划与进度、花销、暂停与否。
+    """当前 goal 的运行时状态（S92）：产品记录、计划与进度、花销、暂停与否。
 
     **和 `meta.goal` 分开**：那个是用户配置（目标是什么、给多少预算），这个是
     跑起来之后的东西。混在一起的话"用户改了什么"和"系统跑出了什么"就分不开，

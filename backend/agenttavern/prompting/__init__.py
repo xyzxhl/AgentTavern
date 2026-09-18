@@ -15,8 +15,11 @@ from .assembler import (
     CALLS,
     PROMPT_FILES,
     Prompt,
+    PromptSnapshot,
     assemble,
     call_of,
+    capture_snapshot,
+    current_snapshot,
     enabled,
     fill,
     load,
@@ -31,6 +34,7 @@ from .assembler import (
     special_text,
     tool_description,
     tool_enabled,
+    using_snapshot,
 )
 from .lab import PromptSetup, prompts_as
 from .prompts import (
@@ -56,8 +60,11 @@ __all__ = [
     "PromptSetup",
     "STATE_INLINE_LIMIT",
     "Prompt",
+    "PromptSnapshot",
     "assemble",
+    "capture_snapshot",
     "call_of",
+    "current_snapshot",
     "director_prompt",
     "fold_depth",
     "enabled",
@@ -83,6 +90,7 @@ __all__ = [
     "state_recent_runs",
     "tool_description",
     "tool_enabled",
+    "using_snapshot",
     "upstream_runs",
     "writer_prompt",
 ]

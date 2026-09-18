@@ -190,8 +190,8 @@ context 的产品文案的一部分。归段追问以前是一段四百多字的
 | `stream` | 这个 agent 流不流 | `true` |
 | `extra` | **原样并进请求体**的额外参数 | `{}` |
 
-界面上是 agent 那一页的「调用」标签，**改完立刻生效**（`load` 的进程内缓存
-在写盘时清掉）。
+界面上是 agent 那一页的「调用」标签。保存立即更新服务配置，但每个 turn 在开始时冻结
+全部 agent / call 配置；运行中与草稿恢复都继续使用该快照，修改从下一个新 turn 生效。
 
 **`extra` 什么都不解释**：思考模式那类参数走这里——DeepSeek 是
 `thinking: {type: enabled}`，OpenAI o 系是 `reasoning_effort: "high"`，
@@ -219,7 +219,7 @@ Anthropic 是 `thinking: {budget_tokens: N}`。
 这台服务的部署方就是用户自己。换机器要改的东西因此多了五处。
 
 **验收** `test_every_prompt_file_carries_its_own_call_knobs` ·
-`test_the_knobs_are_editable_and_take_effect_at_once` ·
+`test_the_knobs_take_effect_on_the_next_turn` ·
 `test_a_blank_model_is_refused_at_the_call_not_silently_swapped` ·
 `test_streaming_is_per_agent` · `test_meta_carries_only_what_is_really_service_wide`
 

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -380,7 +381,52 @@ class Store:
         后者会 `create_worldbook`，而那之后任何一次列表都会去读条目。
         """
         self.migrate_kinds()
+        self._migrate_runtime_schema()
         return self._migrate_worldbooks()
+
+    def _migrate_runtime_schema(self) -> None:
+        """收敛 turn 生命周期相关 schema；启动时幂等执行。
+
+        - 删除未形成需求的 ``time_driven``；
+        - 给旧会话打开“上一轮”编辑窗口；
+        - 节点只留下跨轮产品记录，director 工具过程不再保留；
+        - goal 工具过程清空，下一次调用会从路径与权威 plan 重建产品记录。
+        """
+        for session_id in self.list_sessions():
+            repo = self.session(session_id)
+            raw = json.loads(repo.session_path.read_text(encoding="utf-8"))
+            changed = raw.pop("modes", None) is not None
+            if "input_revision" not in raw:
+                raw["input_revision"] = 0
+                changed = True
+            if "editable_node_id" not in raw:
+                raw["editable_node_id"] = (
+                    None if repo.draft_path.exists() else raw.get("active_leaf_id")
+                )
+                changed = True
+            goal_run = raw.get("goal_run")
+            if isinstance(goal_run, dict) and goal_run.get("conversation"):
+                goal_run["conversation"] = []
+                goal_run["seen_leaf_id"] = None
+                changed = True
+            if changed:
+                _write_raw(repo.session_path, raw)
+
+            for path in repo.nodes_dir.glob("*.json"):
+                node = json.loads(path.read_text(encoding="utf-8"))
+                old = node.pop("director_messages", None)
+                if old is None:
+                    continue
+                node["interjections"] = []
+                for message in old:
+                    if not isinstance(message, dict) or message.get("role") != "user":
+                        continue
+                    content = str(message.get("content") or "")
+                    if "<用户追加输入>" not in content:
+                        continue
+                    body = content.split("<用户追加输入>", 1)[1]
+                    node["interjections"].append(body.split("</用户追加输入>", 1)[0].strip())
+                _write_raw(path, node)
 
     def migrate_kinds(self) -> int:
         """条目的 `kind` 换过两次名，把旧值改成现在的（S65/S64）。返回改了几条。
@@ -502,3 +548,10 @@ def _lift_world_text(book: WorldbookRepository, meta: dict[str, Any]) -> None:
         body = (meta.get(field) or "").strip()
         if body:
             book.save_entry(WorldbookEntry(name=name, kind=EntryKind.WORLD, content=body))
+
+
+def _write_raw(path: Path, data: dict[str, Any]) -> None:
+    """迁移专用的原子 JSON 写入；不能经当前模型读取尚未迁移的旧形状。"""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, path)

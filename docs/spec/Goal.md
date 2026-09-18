@@ -23,10 +23,10 @@ goal_manager 是第四个 agent，跨整个 goal 生命周期累积一份**产�
 **规格** 四个工具：`plan`（首次拆**以及任何一轮就地重拆**）、`check`（更新成立情况）、
 `steer`（写下一条输入）、`finish`。收口条件是「这一次不再调用任何工具」。
 
-静态前缀跨整个 goal 生命周期不变，**每轮只追加一条产品记录**，并带上持久化的计划与
-进度状态。当前 turn 的 thinking、tool call/result 只在这次 loop 内存在；挂起时按 S61
-进草稿，turn 结束后不追加到 goal 历史。跨 turn 保留的是工具已经写入的权威 goal 状态，
-不是调用与回执的 transcript。
+静态前缀跨整个 goal 生命周期不变，**每轮只追加一条产品记录**。当前有效的 plan 与
+进度以权威状态单独持久化，并在每次 goal_manager 调用前投影到上下文末尾。当前 turn 的
+thinking、tool call/result 只在这次 loop 内存在；turn 结束后不追加到 goal 历史。跨 turn
+保留的是工具已经写入的权威 goal 状态，不是调用与回执的 transcript。
 
 **不做** plan-then-execute（三次干净调用）。
 
@@ -40,7 +40,7 @@ goal_manager 是第四个 agent，跨整个 goal 生命周期累积一份**产�
 **比干净上下文更容易往「已经达标」的方向读**。实测里它两次把一个逻辑上不可达的
 目标判成达成，靠的是给设定编一个解释。
 
-**验收** `test_the_prefix_is_built_once_and_each_turn_only_appends` · `test_a_round_ends_when_it_stops_calling_tools` · `test_a_round_that_never_stops_calling_tools_is_cut_off`；历史不含旧工具往返的断言待补，见 [TODO](../TODO.md)。
+**验收** `test_the_prefix_is_built_once_and_each_turn_only_appends` · `test_a_round_ends_when_it_stops_calling_tools` · `test_a_round_that_never_stops_calling_tools_is_cut_off` · `test_the_current_plan_is_injected_without_being_persisted` · `test_product_records_and_plan_survive_a_round_trip_through_disk`
 
 ### S93 · 拆出来的是中间状态，不是有先后的阶段
 
@@ -97,13 +97,15 @@ goal_manager 是第四个 agent，跨整个 goal 生命周期累积一份**产�
 接着跑。
 
 因此预算**可改**而目标描述**禁改**（对话是围着它建的），两者可改的时机恰好相反。
+goal_manager 的系统失败也暂停 goal：若故事节点已经原子提交，保留该节点，不把后置判定
+失败改写成故事 run 失败；首次规划/判定前先建立 `GoalRun`，保证暂停能持久化。
 
 **不做** 把「重新规划」当成一种结局；不做把「完全偏离」单列一种。
 
 **为什么** 完成与完全偏离**都交回控制权，但一个是达成了、一个是已经不可能达成了，
 用户的下一步动作完全不同**——所以必须把是哪一种传出去。而「重新规划」是动作不是结局。
 
-**验收** `test_finishing_comes_back_as_an_outcome` · `test_a_finished_goal_says_which_way_it_ended` · `test_a_spent_budget_is_a_pause_not_a_failure` · `test_a_spent_budget_pauses_instead_of_finishing` · `test_raising_the_budget_resumes_a_paused_goal`
+**验收** `test_finishing_comes_back_as_an_outcome` · `test_a_finished_goal_says_which_way_it_ended` · `test_a_spent_budget_is_a_pause_not_a_failure` · `test_a_spent_budget_pauses_instead_of_finishing` · `test_raising_the_budget_resumes_a_paused_goal` · `test_a_first_goal_failure_is_persisted_as_paused`
 
 ### S97 · 预算留空就是不设上限
 
@@ -232,18 +234,19 @@ goal 期间要判的是「这一步到底有没有发生」，而**细纲只说�
 
 **不做** 无条件续接。
 
-**验收** `test_switching_branches_rebuilds_instead_of_extending` · `test_the_conversation_survives_a_round_trip_through_disk`
+**验收** `test_switching_branches_rebuilds_instead_of_extending` · `test_product_records_and_plan_survive_a_round_trip_through_disk`
 
 ### S104 · goal 跑着时不允许切分支；进度挂 session 不挂节点
 
 **服务** [R26](../req/长任务.md)
 
-**规格** 对话与进度都挂在 session 上。
+**规格** 对话与进度都挂在 session 上。未暂停的 goal 存在时拒绝切换分支；暂停后可以
+切换，恢复时按 [S103](#s103) 从最终选择的路径重建产品记录。
 
 **为什么** 曾经让它跟着节点走是为了分支隔离，**而 goal 跑着的时候本来就不允许切分支**
 ——那份隔离没有用武之地。
 
-**验收** `test_a_paused_goal_neither_judges_nor_continues` · `test_abandoning_is_the_only_way_to_swap_a_goal` · `test_abandoning_during_judgement_leaves_nothing_behind`
+**验收** `test_an_active_goal_blocks_branch_switching` · `test_a_paused_goal_neither_judges_nor_continues` · `test_abandoning_is_the_only_way_to_swap_a_goal` · `test_abandoning_during_judgement_leaves_nothing_behind`
 
 ### S105 · goal_manager 要知道用户扮演谁
 

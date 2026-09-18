@@ -18,7 +18,6 @@ import { useSession } from "../store";
  * | | 不显示会怎样 |
  * |---|---|
  * | **进度** | 没有进度的等待和卡死分不出来（S144） |
- * | **降级** | 向量没建成时只能按关键词查，而用户不知道该去配 embeddings（S140） |
  * | **编码** | 猜了就要说出来；猜错的症状是"这份资料怎么查都查不到"（S153） |
  */
 export function CorpusLibrary(): JSX.Element {
@@ -388,12 +387,7 @@ function Card({
   );
 }
 
-/**
- * 建索引到哪一步了（S144），以及**降级了没有**（S140）。
- *
- * 降级这一条尤其要显示：向量那一路没建成时链路仍然能用，只是退回纯关键词
- * 匹配——**而那件事只报给用户不报给模型**，所以不显示在这里就等于没人知道。
- */
+/** 建索引到哪一步了（S144）。内部检索降级只进诊断 trace（S140）。 */
 function Build({ corpus }: { corpus: Corpus }): JSX.Element {
   const build = corpus.build ?? {};
   const state = build.state ?? "pending";
@@ -427,15 +421,7 @@ function Build({ corpus }: { corpus: Corpus }): JSX.Element {
 
   return (
     <p className="mt-1.5 text-[11px] text-dim">
-      <span className="text-fg">可用</span> · {total} 块 · 编码 {corpus.encoding || "—"} ·{" "}
-      {build.embedded ? (
-        "关键词 + 语义两路"
-      ) : (
-        <span className="text-accent">只能按关键词查</span>
-      )}
-      {!build.embedded && build.error && (
-        <span className="block text-accent">{build.error}</span>
-      )}
+      <span className="text-fg">可用</span> · {total} 块 · 编码 {corpus.encoding || "—"}
     </p>
   );
 }

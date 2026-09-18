@@ -1,8 +1,8 @@
 """一个 run 的编排。
 
-时序见 docs/design/Architecture.md §4。**director → writer 是静态 workflow，交接
-固定且单向**（S4）——编排层按固定顺序调用二者，中间没有回流、没有协商、
-没有重试循环。
+时序见 docs/spec/Architecture.md。没有用户插话时，director → writer → state_manager
+是固定单向 workflow（S4）。writer/state_manager 阶段收到插话是唯一的用户驱动回边：
+当前下游产物作废，同一 turn 回 director；agent 自身仍不协商、不回流。
 
 **run = node = 一份细纲 = 一份正文**，四者严格一一对应（S1）。
 """
@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 
 from ..agents.director import DirectorFailed, DirectorResult, run_director
 from ..agents.postrun import ask_segment_cut
-from ..agents.replay import without_reasoning
+from ..agents.replay import interjection_texts
 from ..agents.state_manager import run_state_manager
 from ..agents.summarize import MAX_SEGMENT_RUNS, summarize_text
 from ..agents.writer import run_writer
@@ -34,8 +34,8 @@ from ..models import (
     UserInput,
     new_id,
 )
+from ..prompting import capture_snapshot, current_snapshot, selected, special_on, using_snapshot
 from ..prompting import enabled as agent_enabled
-from ..prompting import selected, special_on
 from ..storage import SessionRepository
 from ..tools import AskUser, Inbox, RunContext, RunDelta, ToolRegistry
 from ..tracing import OnEvent, Tracer
@@ -57,6 +57,75 @@ async def execute_run(
     registry: ToolRegistry | None = None,
     *,
     user_input: UserInput | None = None,
+    appended_inputs: list[str] | None = None,
+    parent_id: str | None = None,
+    ask_user: AskUser | None = None,
+    on_trace: OnEvent | None = None,
+    inbox: Inbox | None = None,
+    developer: bool = False,
+    persist_trace: bool = False,
+    on_delta: RunDelta | None = None,
+    run_id: str | None = None,
+    embedder: EmbedderLike | None = None,
+    reranker: Reranker | None = None,
+) -> RunOutcome:
+    """在 turn 边界冻结全部提示词、choice、工具面与调用参数。"""
+    snapshot = current_snapshot()
+    if snapshot is None:
+        draft = repo.load_draft()
+        owned = draft is not None and draft.parent_id == parent_id
+        snapshot = (
+            draft.prompt_snapshot
+            if owned and draft is not None and draft.prompt_snapshot
+            else capture_snapshot()
+        )
+        with using_snapshot(snapshot):
+            return await _execute_run(
+                repo,
+                session,
+                gateway,
+                registry,
+                user_input=user_input,
+                appended_inputs=appended_inputs,
+                parent_id=parent_id,
+                ask_user=ask_user,
+                on_trace=on_trace,
+                inbox=inbox,
+                developer=developer,
+                persist_trace=persist_trace,
+                on_delta=on_delta,
+                run_id=run_id,
+                embedder=embedder,
+                reranker=reranker,
+            )
+    return await _execute_run(
+        repo,
+        session,
+        gateway,
+        registry,
+        user_input=user_input,
+        appended_inputs=appended_inputs,
+        parent_id=parent_id,
+        ask_user=ask_user,
+        on_trace=on_trace,
+        inbox=inbox,
+        developer=developer,
+        persist_trace=persist_trace,
+        on_delta=on_delta,
+        run_id=run_id,
+        embedder=embedder,
+        reranker=reranker,
+    )
+
+
+async def _execute_run(
+    repo: SessionRepository,
+    session: Session,
+    gateway: LLMGateway,
+    registry: ToolRegistry | None = None,
+    *,
+    user_input: UserInput | None = None,
+    appended_inputs: list[str] | None = None,
     parent_id: str | None = None,
     ask_user: AskUser | None = None,
     on_trace: OnEvent | None = None,
@@ -103,7 +172,7 @@ async def execute_run(
         repo.clear_draft()
         draft = None
 
-    stage = _resume_point(draft, user_input)
+    stage = _resume_point(draft, user_input, appended_inputs)
 
     ctx = RunContext(
         run_id=run_id,
@@ -136,7 +205,6 @@ async def execute_run(
     outline = draft.outline if draft is not None else ""
     prose = draft.prose if draft is not None else ""
     deviation = draft.deviation if draft is not None else None
-    turn_messages: list[Message] = []
     loop_messages: list[Message] = draft.messages if draft is not None else []
     rounds = draft.rounds if draft is not None else 0
     # 被打断那一轮的输入是**唯一不可再生的东西**，续跑时它仍然是这一轮的输入；
@@ -148,6 +216,7 @@ async def execute_run(
     if stage is RunStage.DIRECTOR:
         if inbox is not None:
             inbox.accepting = True
+            inbox.phase = RunStage.DIRECTOR.value
         try:
             director = await run_director(
                 ctx,
@@ -159,6 +228,7 @@ async def execute_run(
                 # `submit_outline` 连同它交出的细纲，都还在这几条消息里。
                 # 于是「上一次写的是什么」不必再单开一节说明：**它就在对话里**。
                 resume=draft,
+                appended_inputs=appended_inputs,
             )
         except asyncio.CancelledError:
             # 细纲还没成型，所以不落节点——但**推演本身留着**，存成草稿等下一条
@@ -180,10 +250,23 @@ async def execute_run(
                 inbox.accepting = False
 
         outline, prose, deviation = director.outline, "", None
-        turn_messages = director.turn_messages
         loop_messages, rounds = director.loop_messages, director.rounds
 
+        if inbox is not None and inbox.waiting:
+            _suspend(
+                ctx,
+                tracer,
+                RunStage.WRITER,
+                turn_input,
+                messages=loop_messages,
+                rounds=rounds,
+                outline=outline,
+            )
+            raise asyncio.CancelledError
+
     if stage is not RunStage.STATE:
+        if inbox is not None:
+            inbox.phase = RunStage.WRITER.value
         try:
             written = await run_writer(ctx, tracer, outline)
             prose, deviation = written.prose, written.deviation
@@ -201,6 +284,17 @@ async def execute_run(
                 outline=outline,
             )
             raise
+        if inbox is not None and inbox.waiting:
+            _suspend(
+                ctx,
+                tracer,
+                RunStage.WRITER,
+                turn_input,
+                messages=loop_messages,
+                rounds=rounds,
+                outline=outline,
+            )
+            raise asyncio.CancelledError
 
     # **状态维护后置**（S7）：读着刚写完的细纲和正文去记，而不是 director
     # 边推演边记。位置卡在 `save_node` **之前**——节点是原子的，细纲、正文、
@@ -208,6 +302,8 @@ async def execute_run(
     # 瞬时节点，那一刻沿路径重放状态的人（分支、`state_at`）会算错。
     # 代价是这一轮的结束晚一次模型调用，而用户此时已经看完正文了。
     if agent_enabled("state_manager"):
+        if inbox is not None:
+            inbox.phase = RunStage.STATE.value
         try:
             await _maintain_state(ctx, tracer, outline, prose)
         except asyncio.CancelledError:
@@ -225,6 +321,19 @@ async def execute_run(
                 deviation=deviation,
             )
             raise
+        if inbox is not None and inbox.waiting:
+            _suspend(
+                ctx,
+                tracer,
+                RunStage.STATE,
+                turn_input,
+                messages=loop_messages,
+                rounds=rounds,
+                outline=outline,
+                prose=prose,
+                deviation=deviation,
+            )
+            raise asyncio.CancelledError
 
     notes = sampling_flags(
         delta=ctx.staged_delta,
@@ -246,9 +355,8 @@ async def execute_run(
         prose=prose,
         deviation_report=deviation,
         state_delta=ctx.staged_delta,
-        # 推理段只活到本 run 结束（S62）——一轮推理有上万字，存下来会让持续
-        # 对话每两轮就撞预算，压缩变成每轮都发生，前缀反复失效。
-        director_messages=without_reasoning(turn_messages),
+        # 跨轮只有产品记录。reasoning 与工具对话仅在本轮/草稿恢复中存在。
+        interjections=interjection_texts(loop_messages),
     )
     repo.clear_draft()
 
@@ -307,7 +415,11 @@ async def execute_run(
     return RunOutcome(node=node, usage=tracer.usage, notes=notes)
 
 
-def _resume_point(draft: RunDraft | None, user_input: UserInput | None) -> RunStage:
+def _resume_point(
+    draft: RunDraft | None,
+    user_input: UserInput | None,
+    appended_inputs: list[str] | None = None,
+) -> RunStage:
     """这一轮从哪一段开始跑（S49）。
 
     **判据是生成内容的依赖关系**：state 依赖正文，正文依赖细纲，细纲依赖输入。
@@ -319,7 +431,7 @@ def _resume_point(draft: RunDraft | None, user_input: UserInput | None) -> RunSt
     """
     if draft is None:
         return RunStage.DIRECTOR
-    if user_input is not None and user_input.text.strip():
+    if appended_inputs or (user_input is not None and user_input.text.strip()):
         return RunStage.DIRECTOR
     return draft.stage
 
@@ -368,6 +480,7 @@ def _suspend(
             prose=prose,
             deviation=deviation,
             staged_delta=ctx.staged_delta,
+            prompt_snapshot=current_snapshot() or {},
         )
     )
     tracer.emit(
@@ -383,27 +496,16 @@ def _suspend(
 async def _maintain_state(ctx: RunContext, tracer: Tracer, outline: str, prose: str) -> None:
     """跑 state_manager，把增量写进 ``ctx.staged_delta``。
 
-    **失败不阻塞已产出的内容**（同归段）：这一轮就当没有状态变化，节点照落。
-    打断是另一回事——那是用户喊停，交给上层挂起（S49），所以 `CancelledError`
-    原样往上抛。
+    工具参数错误由 registry 作为 tool result 返回给 agent 自修复；模型调用、协议或
+    存储等系统失败不能伪装成“本轮没有状态变化”，而是让整个原子 run 失败。
     """
-    try:
-        await run_state_manager(
-            ctx,
-            ToolRegistry.for_state_manager(),
-            tracer,
-            outline=outline,
-            prose=prose,
-        )
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        tracer.emit(
-            TraceEventType.CROSS_CHECK,
-            Actor.ORCHESTRATOR,
-            f"状态维护失败，本轮不记增量：{type(exc).__name__}",
-            {"error": str(exc)},
-        )
+    await run_state_manager(
+        ctx,
+        ToolRegistry.for_state_manager(),
+        tracer,
+        outline=outline,
+        prose=prose,
+    )
 
 
 def _open_segment(repo: SessionRepository, leaf_id: str) -> list[Node]:

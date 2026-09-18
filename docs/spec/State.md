@@ -255,7 +255,7 @@ JSON 从根上消掉它：`[…]` 不是 `"…"`、`3` 不是 `"3"`、`{}` 不�
 
 **为什么** 一起给时"我改了结果，它却按指令存了"是**查不出来的那种错**。
 
-**验收** `test_diff_is_the_delta_that_turns_before_into_after` · `test_diff_only_mentions_what_changed` · `test_diff_expresses_a_deletion_as_a_null_leaf` · `test_diff_never_guesses_append` · `test_diff_creates_an_empty_branch_that_was_not_there` · `test_user_edit_rewrites_node_directly`；编辑窗口与禁止编辑更早节点的断言待补，见 [TODO](../TODO.md)。
+**验收** `test_diff_is_the_delta_that_turns_before_into_after` · `test_diff_only_mentions_what_changed` · `test_diff_expresses_a_deletion_as_a_null_leaf` · `test_diff_never_guesses_append` · `test_diff_creates_an_empty_branch_that_was_not_there` · `test_user_edit_rewrites_node_directly` · `test_editing_an_older_node_is_rejected`
 
 ### S41 · 编辑只改写上一 turn，不重算任何依赖
 
@@ -278,4 +278,4 @@ JSON 从根上消掉它：`[…]` 不是 `"…"`、`3` 不是 `"3"`、`{}` 不�
 历史，但原地修改会让已有摘要与缓存失真。上一 turn 的直接编辑仍可能造成细纲、正文、
 状态互相冲突，这个代价由用户承担。
 
-**验收** `test_user_edit_rewrites_node_directly`；编辑窗口的断言待补，见 [TODO](../TODO.md)。
+**验收** `test_user_edit_rewrites_node_directly` · `test_editing_an_older_node_is_rejected`

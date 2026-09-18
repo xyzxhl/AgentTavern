@@ -118,8 +118,8 @@ def test_switching_branches_rebuilds_instead_of_extending() -> None:
     body = _joined(run)
     assert "另一支的正文。" in body
     assert "第1轮的正文。" not in body, "被放弃那一支不该留在对话里"
-    # 重建丢掉工具调用的历史，但**计划与进度以投影的形式留着**。
-    assert "他先松口" in body and "[已成立]" in body
+    # 计划的权威独立保留；调用前再投影，不混进持久化产品记录。
+    assert run.plan is not None and run.plan.subgoals[0].done
 
 
 def test_before_the_goal_gets_outlines_and_during_gets_prose() -> None:
@@ -256,8 +256,7 @@ async def test_a_round_ends_when_it_stops_calling_tools(tmp_path: Path) -> None:
     assert step.next_input == "我把照片推过去。"
     assert step.finished is None
     assert run.plan is not None and len(run.plan.subgoals) == 2
-    # 新增的是「assistant + 两条 tool 结果」，那句收口的文本不在里面。
-    assert len(run.conversation) == before + 3
+    assert len(run.conversation) == before, "工具往返只活在这一次调用里"
     assert "先推到这里。" not in _joined(run)
 
 
@@ -283,8 +282,7 @@ async def test_a_round_that_never_stops_calling_tools_is_cut_off(tmp_path: Path)
 
     assert len(llm.requests) == 3, "撞上上限就得停，不能一直转"
     assert step.finished is None, "撞上限不是终态——下一轮接着判"
-    # 三轮各留下「assistant + 一条 tool 结果」，一条都没丢。
-    assert len(run.conversation) == before + 6
+    assert len(run.conversation) == before, "即使撞上上限也不把工具过程写回"
     assert run.plan is not None
 
 
@@ -328,19 +326,13 @@ def _repo(tmp_path: Path):
     return Store(tmp_path).create_session(Session())
 
 
-def test_the_conversation_survives_a_round_trip_through_disk(tmp_path: Path) -> None:
-    """对话跨 run 活着，所以它**必须能落盘再读回来**——包括 `tool_calls`。
-
-    goal 是跨进程的：服务重启之后那份对话还得接得上，否则「维持对话」只在
-    单个进程里成立。
-    """
+def test_product_records_and_plan_survive_a_round_trip_through_disk(tmp_path: Path) -> None:
+    """跨进程保留剧情产品记录与权威 plan，不保留工具执行流量。"""
     repo = _repo(tmp_path)
     session = repo.load_session()
     session.goal_run = GoalRun(
         conversation=[
             Message(role=Role.USER, content="第 1 轮"),
-            Message(role=Role.ASSISTANT, tool_calls=[ToolCall(id="c", name="plan", arguments={})]),
-            Message(role=Role.TOOL, content="ok", tool_call_id="c"),
         ],
         plan=GoalPlan(subgoals=[SubGoal(description="甲", done=True)]),
         spent_runs=2,
@@ -350,11 +342,25 @@ def test_the_conversation_survives_a_round_trip_through_disk(tmp_path: Path) -> 
 
     back = repo.load_session().goal_run
     assert back is not None
-    assert [m.role for m in back.conversation] == [Role.USER, Role.ASSISTANT, Role.TOOL]
-    assert back.conversation[1].tool_calls[0].name == "plan"
+    assert [m.role for m in back.conversation] == [Role.USER]
     assert back.plan is not None and back.plan.all_done
     assert back.spent_runs == 2
     assert json.loads(repo.session_path.read_text(encoding="utf-8"))["goal_run"]["spent_runs"] == 2
+
+
+async def test_the_current_plan_is_injected_without_being_persisted(tmp_path: Path) -> None:
+    llm = ScriptedLLM(text("先停在这里。"))
+    run = GoalRun(
+        conversation=[Message(role=Role.USER, content="产品记录")],
+        plan=GoalPlan(subgoals=[SubGoal(description="他先松口", done=True)]),
+    )
+
+    await advance_goal(llm.gateway(), Tracer(_repo(tmp_path), "run_0"), GOAL, run)
+
+    sent = llm.requests[0]["messages"]
+    joined = "\n".join(str(message.get("content") or "") for message in sent)
+    assert "他先松口" in joined and "已成立" in joined
+    assert [message.content for message in run.conversation] == ["产品记录"]
 
 
 def test_it_is_told_who_the_user_plays() -> None:

@@ -20,7 +20,6 @@ from ..models import (
     Node,
     Session,
     SessionMeta,
-    SessionModes,
     StateDelta,
     TraceEvent,
     TraceEventType,
@@ -62,12 +61,11 @@ from .runner import SessionRunner
 class SessionPatch(BaseModel):
     """**session 上只剩内容，没有配置**（S80）。
 
-    `control` 与 `capabilities` 已经删掉：控制维度与能力开关整体上调到了提示词层，
-    改它们走 `/prompts`。这里只剩标题、目标（`meta`）和触发源（`modes`）。
+    `control`、`capabilities` 与未形成需求的 `time_driven` 都不在 session schema。
+    控制维度与能力开关走 `/prompts`；这里只有标题与目标（`meta`）。
     """
 
     meta: SessionMeta | None = None
-    modes: SessionModes | None = None
 
 
 class Rename(BaseModel):
@@ -89,7 +87,8 @@ class Rename(BaseModel):
 class NodePatch(BaseModel):
     """用户直接编辑节点数据（R22）。
 
-    **直接改写，不做依赖检查**——乐观假设用户只改最新输出，此时本无下游。
+    入口先限制为当前路径的上一 turn，且要求没有执行中或挂起的 run；满足时才直接
+    改写。更远节点没有编辑入口，避免下游重算和细纲缓存破坏。
 
     状态那部分有两个视图，字段一一对应，见 `EditNode` 上的说明。
     """
@@ -140,6 +139,8 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
             await reranker.aclose()
 
     app = FastAPI(title="AgentTavern", lifespan=lifespan)
+    active_runners: dict[str, SessionRunner] = {}
+    active_connections: set[str] = set()
 
     # 提示词管理：正文、工具描述、附属提示词、渲染文案（R31）。
     # **单独一个模块**——它和 session / worldbook 不共享任何状态，读写的是
@@ -272,6 +273,9 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
     @app.patch("/sessions/{session_id}/nodes/{node_id}")
     def patch_node(session_id: str, node_id: str, patch: NodePatch) -> Node:
         repo = repo_of(session_id)
+        runner = active_runners.get(session_id)
+        if not _can_edit(repo, node_id, runner):
+            raise HTTPException(409, "只能在没有 run 执行或挂起时编辑上一轮")
         return _apply_node_patch(
             repo, node_id, patch, developer=resolved.developer, persist_trace=resolved.trace
         )
@@ -470,31 +474,39 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
             await websocket.close(code=4404)
             return
 
-        await websocket.accept()
+        if session_id in active_connections:
+            await websocket.close(code=4409, reason="这个本地会话已经有一个连接")
+            return
 
-        async def broadcast(message: ServerMessage) -> None:
-            await websocket.send_text(message.model_dump_json())
-
-        runner = SessionRunner(
-            repo,
-            active,
-            broadcast,
-            developer=resolved.developer,
-            persist_trace=resolved.trace,
-            embedder=embedder,
-            reranker=reranker,
-        )
-        runner.start()
-
-        session = repo.load_session()
-        await broadcast(
-            StateSnapshot(
-                values=repo.state_at(session.active_leaf_id).values,
-                leaf_id=session.active_leaf_id,
-            )
-        )
-
+        # 检查与占位之间不能有 await；否则两个同时握手的连接都能越过检查。
+        active_connections.add(session_id)
+        runner: SessionRunner | None = None
         try:
+            await websocket.accept()
+
+            async def broadcast(message: ServerMessage) -> None:
+                await websocket.send_text(message.model_dump_json())
+
+            runner = SessionRunner(
+                repo,
+                active,
+                broadcast,
+                developer=resolved.developer,
+                persist_trace=resolved.trace,
+                embedder=embedder,
+                reranker=reranker,
+            )
+            active_runners[session_id] = runner
+            runner.start()
+
+            session = repo.load_session()
+            await broadcast(
+                StateSnapshot(
+                    values=repo.state_at(session.active_leaf_id).values,
+                    leaf_id=session.active_leaf_id,
+                )
+            )
+
             while True:
                 raw = await websocket.receive_text()
                 await _handle(
@@ -508,7 +520,11 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
         except WebSocketDisconnect:
             pass
         finally:
-            await runner.aclose()
+            if runner is not None:
+                await runner.aclose()
+            if runner is not None and active_runners.get(session_id) is runner:
+                del active_runners[session_id]
+            active_connections.discard(session_id)
 
     return app
 
@@ -532,8 +548,8 @@ async def _handle(
         await runner.submit(message.text)
 
     elif isinstance(message, Interject):
-        # 没有 run 在跑（或已经进了 writer，那里没有操作边界）就回落到开新的一轮——
-        # 用户的话在任何情况下都不该被吞掉。
+        # 没有 run 才回落到下一 turn。writer/state 没有操作内边界，但 runner 会
+        # 在阶段边界让它们作废并回 director，仍属于当前 turn。
         if not runner.interject(message.text, interrupt=message.interrupt):
             await runner.submit(message.text)
 
@@ -547,15 +563,26 @@ async def _handle(
 
     elif isinstance(message, SwitchBranch):
         session = repo.load_session()
-        session.active_leaf_id = message.node_id
-        repo.save_session(session)
-        await broadcast(SessionUpdated(session=session))
-        # 切换分支必须同时切换状态（S42），否则"文本对、状态悄悄错"。
-        await broadcast(
-            StateSnapshot(values=repo.state_at(message.node_id).values, leaf_id=message.node_id)
+        goal_active = session.meta.goal is not None and (
+            session.goal_run is None or not session.goal_run.paused
         )
+        if runner.busy:
+            await broadcast(ServerError(message="当前 turn 还在运行，不能切换分支。"))
+        elif goal_active:
+            await broadcast(ServerError(message="目标运行中不能切换分支；先暂停或放弃目标。"))
+        else:
+            session.active_leaf_id = message.node_id
+            repo.save_session(session)
+            await broadcast(SessionUpdated(session=session))
+            # 切换分支必须同时切换状态（S42），否则"文本对、状态悄悄错"。
+            await broadcast(
+                StateSnapshot(values=repo.state_at(message.node_id).values, leaf_id=message.node_id)
+            )
 
     elif isinstance(message, EditNode):
+        if not _can_edit(repo, message.node_id, runner):
+            await broadcast(ServerError(message="只能在没有 run 执行或挂起时编辑上一轮"))
+            return
         try:
             patch = NodePatch(
                 outline=message.outline,
@@ -664,7 +691,7 @@ def _apply_node_patch(
     developer: bool = False,
     persist_trace: bool = False,
 ) -> Node:
-    """用户编辑直接改写节点数据（R22），**不做依赖检查**。
+    """用户编辑直接改写已经通过窗口校验的上一 turn 节点（R22）。
 
     此前曾主张"插入一个只含 delta 的新节点"以保护已提交节点的不可变性，
     该方案已否决——它为一个乐观假设下不存在的问题增加复杂度，
@@ -714,3 +741,13 @@ def _apply_node_patch(
 
 
 _EDIT_LABEL = {"outline": "细纲", "prose": "正文", "state": "状态增量"}
+
+
+def _can_edit(repo: SessionRepository, node_id: str, runner: SessionRunner | None = None) -> bool:
+    """编辑窗口只覆盖上一 turn，且任何执行中或挂起的 run 都会关闭它。"""
+    session = repo.load_session()
+    if runner is not None and runner.busy:
+        return False
+    if repo.load_draft() is not None:
+        return False
+    return session.editable_node_id == node_id and session.active_leaf_id == node_id

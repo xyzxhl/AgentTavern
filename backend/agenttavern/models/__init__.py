@@ -5,7 +5,6 @@ from .control import (
     GoalPlan,
     GoalRun,
     SessionMeta,
-    SessionModes,
     SubGoal,
 )
 from .corpus import BuildState, BuildStatus, Chunk, Corpus
@@ -34,7 +33,6 @@ __all__ = [
     "RunStatus",
     "Session",
     "SessionMeta",
-    "SessionModes",
     "StateDelta",
     "SubGoal",
     "TraceEvent",

@@ -802,7 +802,7 @@ def test_an_appended_input_is_wrapped_with_an_explanation() -> None:
     已经进行到一半的推演是什么关系。措辞在 `director.yaml` 的 `specials.append`
     里（R31：**一份文件 = 一个 agent 收到的全部文字**），不写死在 Python 里。
     """
-    from agenttavern.agents.replay import INTERJECTION_MARK, append_message
+    from agenttavern.agents.replay import append_message, interjection_mark
 
     message = append_message("等等，先别问他")
 
@@ -811,7 +811,7 @@ def test_an_appended_input_is_wrapped_with_an_explanation() -> None:
     # **记号由用户自己写在 body 里，`mark` 声明它是哪一串**（R31：装配器不再
     # 自动包标签）。两处对不上就当场报错——对不上的后果是插话在重放时被当成
     # 编排层的催促悄悄丢掉（同 P29）。
-    assert INTERJECTION_MARK in (message.content or "")
+    assert interjection_mark() in (message.content or "")
 
 
 def test_the_attached_prompts_live_with_their_agent() -> None:

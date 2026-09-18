@@ -11,9 +11,7 @@ import { useSession } from "../store";
  * 改完在 trace 里留一条 `USER_EDIT`（S47）：手改过的正文不能在回看时被当成
  * 模型的产出去归因。
  *
- * **改的只是这一轮，下游照常重放。** 那不是危险，那就是 event-sourced 的正常
- * 行为（S42/S43）——所以界面上不写"改历史会连锁"之类的警告，那只会让用户不敢
- * 用一个本来正常的功能。
+ * 编辑窗口只覆盖上一 turn，并在下一条顶层输入到达时关闭；不会修改历史节点。
  */
 export function NodeEditor({ node }: { node: Node }): JSX.Element {
   const editNode = useSession((s) => s.editNode);
@@ -130,9 +128,7 @@ export function NodeEditor({ node }: { node: Node }): JSX.Element {
         <button className="btn" onClick={() => edit(null)}>
           取消
         </button>
-        <span className="text-[10px] text-dim">
-          只改这一轮；后面几轮照常重放在它上面。
-        </span>
+        <span className="text-[10px] text-dim">只改上一轮；下一条输入到达后窗口关闭。</span>
       </div>
     </div>
   );

@@ -298,6 +298,10 @@ async def test_a_draft_from_another_branch_is_dropped(tmp_path: Path) -> None:
             parent_id=first.node.id,
         )
     assert repo.load_draft() is not None
+    stale = repo.load_draft()
+    assert stale is not None
+    stale.prompt_snapshot["director"]["model"] = "stale-draft-model"
+    repo.save_draft(stale)
 
     # 换一个父节点（回到根重开一支）——草稿必须被丢掉。
     other_llm = ScriptedLLM(*_turn("另一支。", "另一支正文"), state=_state("地点", "街上"))
@@ -311,6 +315,7 @@ async def test_a_draft_from_another_branch_is_dropped(tmp_path: Path) -> None:
     )
 
     context = str(other_llm.messages_of(0))
+    assert all(request["model"] != "stale-draft-model" for request in other_llm.requests)
     assert "作废" not in context
     assert "她走向里屋" not in context
     assert "作废" not in repo.state_at(other.node.id).values

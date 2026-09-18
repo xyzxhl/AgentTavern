@@ -5,12 +5,13 @@
 """
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
-from conftest import ScriptedLLM, text, tool
+from conftest import STATE_MARK, ScriptedLLM, text, tool
 
-from agenttavern.models import Actor, Session
+from agenttavern.models import Actor, Node, Session, UserInput
 from agenttavern.server.runner import SessionRunner
 from agenttavern.storage import Store
 
@@ -240,12 +241,12 @@ async def test_the_loop_is_cancellable_by_anyone_not_only_by_aclose(tmp_path: Pa
 # -- 插话的两个边缘（S50） -----------------------------------------------------
 
 
-async def test_guidance_left_in_the_inbox_becomes_the_next_turn(tmp_path: Path) -> None:
-    """这一轮已经没有操作边界了，落进信箱的话不能被吞掉。
+async def test_guidance_after_director_returns_to_director_in_the_same_turn(tmp_path: Path) -> None:
+    """writer/state 的插话在阶段边界回 director，不另开下一 turn。
 
     两种情形走同一条路：引导正好落在 `submit_outline` 上（它是终止点，直接返回，
     **走不到边界**），或者落在 writer 阶段（那是一次不可分的生成，本来就没有边界）。
-    用户的输入在任何情况下都不该消失，所以改开新的一轮。
+    用户的输入在任何情况下都不该消失；下游产物作废，原顶层输入仍是本轮输入。
 
     **在 writer 那次调用里推信箱**，因为那一刻同时满足两个条件：tool loop
     已经结束（信箱关了），而这一轮还没落地（`drain()` 还没发生）。
@@ -259,7 +260,7 @@ async def test_guidance_left_in_the_inbox_becomes_the_next_turn(tmp_path: Path) 
     runner, repo, _ = make_runner(tmp_path, llm)
 
     def push_while_the_turn_is_still_running() -> None:
-        # 只推第一轮那一次：第二轮也会走到 writer，再推一次就无限开新轮。
+        # 只推第一次 writer：回 director 后还会再走 writer，再推会无限回流。
         llm.on_writer_request = None
         inbox = runner._inbox
         assert inbox is not None, "run 在跑，信箱必须存在"
@@ -271,9 +272,11 @@ async def test_guidance_left_in_the_inbox_becomes_the_next_turn(tmp_path: Path) 
 
     await runner.submit("我推开门")
 
-    assert await _until(lambda: len(repo.all_nodes()) == 2), "落进信箱的话应该变成新的一轮"
-    inputs = [n.user_input.text for n in repo.all_nodes().values() if n.user_input]
-    assert "等等，让她去阳台" in inputs
+    assert await _until(lambda: len(repo.all_nodes()) == 1), "同一 turn 最终只落一个原子节点"
+    node = next(iter(repo.all_nodes().values()))
+    assert node.user_input is not None and node.user_input.text == "我推开门"
+    assert node.interjections == ["等等，让她去阳台"]
+    assert node.outline == "她走到阳台。"
 
     await runner.aclose()
 
@@ -290,3 +293,44 @@ async def test_interjecting_when_nothing_is_running_is_refused(tmp_path: Path) -
     assert runner.stop() is False
 
     await runner.aclose()
+
+
+async def test_a_failed_turn_reopens_the_previous_turn_for_editing(tmp_path: Path) -> None:
+    """输入到达立即关窗；真正整轮失败后，该输入无效，上一 turn 重新可编辑。"""
+
+    class BrokenState(ScriptedLLM):
+        def _handle(self, request):  # type: ignore[no-untyped-def]
+            if STATE_MARK in json.loads(request.content)["messages"][0].get("content", ""):
+                raise RuntimeError("状态端点炸了")
+            return super()._handle(request)
+
+    llm = BrokenState(
+        tool("submit_outline", outline="她再次推门。"),
+        text("门又响了一次。"),
+        auto_state=False,
+    )
+    runner, repo, sent = make_runner(tmp_path, llm)
+    previous = Node(
+        user_input=UserInput(text="我推开门"),
+        outline="她推开门。",
+        prose="门开了。",
+    )
+    repo.save_node(previous)
+    session = repo.load_session()
+    session.active_leaf_id = previous.id
+    session.editable_node_id = previous.id
+    repo.save_session(session)
+
+    await runner.submit("我再推一次")
+    assert repo.load_session().editable_node_id is None, "排队发生在新 turn 输入时，立刻关窗"
+    runner.start()
+
+    try:
+        assert await _until(lambda: any(type(m).__name__ == "RunFailed" for m in sent))
+        restored = repo.load_session()
+        assert restored.active_leaf_id == previous.id
+        assert restored.editable_node_id == previous.id
+        assert set(repo.all_nodes()) == {previous.id}, "失败 turn 不能留下伪节点"
+        assert repo.load_draft() is None, "整轮失败不是可恢复的挂起"
+    finally:
+        await asyncio.wait_for(runner.aclose(), timeout=2.0)

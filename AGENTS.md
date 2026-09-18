@@ -51,6 +51,8 @@ director -> writer -> state_manager -> goal_manager（仅有 goal 时）
 - 「用户扮演谁」属于 worldbook，不是 session 覆盖项；复用同一 worldbook 的 session
   共用同一个玩家角色。
 - trace 全局 append-only，不随分支切换；默认不落盘，开发者模式下按 run 完整落盘。
+- director 的跨 turn history 每轮只保留「顶层 user input → 按顺序的插话 → 细纲」；
+  goal 跨 turn 只保留产品记录与当前有效 plan。thinking、tool call/result 不进入两者。
 - 只持久化权威数据。缓存、索引、摘要和当前 state 都应能由其来源重建，不能反过来成为真相。
 
 ## 分支、输入与中断
@@ -81,6 +83,8 @@ director -> writer -> state_manager -> goal_manager（仅有 goal 时）
 - 外部 corpus 检索是明确的例外：它是尽力而为的增强，不承诺查全；“这次检索没找到”不能写成“资料里没有”。
 - 工具描述只写作用和参数格式。行为判据只保留在对应 YAML 中；同一判据不要在工具描述、提示词和代码里复制多份。
 - 可由模型修正的工具调用错误应作为工具结果返回，让当前 loop 恢复，不要把整轮直接抛掉。
+- state_manager 的模型调用、协议或存储失败使原子 run 整轮失败；不能降级成“空增量”落节点。
+- corpus 的检索降级只进诊断 trace，不进入模型回执，也不在正常用户界面逐次显示。
 
 ## 提示词与配置
 
@@ -92,6 +96,7 @@ director -> writer -> state_manager -> goal_manager（仅有 goal 时）
 - 未知 context、缺失变量、非法 role、无效 selected 等配置错误应尽早、明确失败，不能静默跳过或悄悄回退。
 - 模型、流式、额外调用参数与所有 choice 按 agent 存在 YAML 中，是服务级配置；
   不提供 `.env` 全局模型/流式兜底，也不提供 session 覆盖。
+- turn 开始时冻结全部 agent/call 配置；运行中与草稿恢复沿用快照，保存修改从下一 turn 生效。
 - 一次只改一个提示词、装配规则或参数。提示词实验要先量自然方差，再比较分布；同一批素材、固定上文、干净判定上下文，避免把噪声写成结论。
 
 ## 修改与验证纪律
@@ -100,6 +105,7 @@ director -> writer -> state_manager -> goal_manager（仅有 goal 时）
 - 改任何持久化 schema（字段、枚举值、目录形状）时，同一个改动必须加入迁移；迁移入口是 `Store.migrate()`。
 - `frontend/src/protocol.ts` 是由后端 Pydantic 协议生成的文件，不得手改。协议变化应先改 `backend/agenttavern/server/protocol.py`，再运行类型生成。
 - 写入继续保持单线程；文件替换保持原子。出站 WebSocket 消息统一同步入队，由单一发送者维持产生顺序。
+- 当前目标是单用户本地服务：同一 session 同时只允许一个 WebSocket/runner 连接。
 - 不把随机模型实验用于证明纯代码不变量。路径隔离、消息形状、状态重放等应使用确定性测试；创作质量必须保留人工评估。
 - 优化与排错按数据流从上游到下游：state 写入 -> 检索 -> director -> writer -> 可选能力。上游错误常会伪装成 writer 问题。
 

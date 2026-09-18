@@ -1,10 +1,10 @@
 """goal_manager：目标管理者（R24 / S92）。
 
-**它是第三个 agent，不是 director 顺手做的一步。** 叫「管理者」而不是「判定者」，
+**它是第四个 agent，不是 director 顺手做的一步。** 叫「管理者」而不是「判定者」，
 因为判定只是它几件事里的一件——它还拆阶段、核对进度、替用户写下一条输入。
 
-上下文只有目标、推进节奏、以及逐轮的剧情梗概。**它不读正文**（同 S5 的理由），
-也不读世界设定和状态——它管的是"推到哪儿了"，不是"这一轮怎么写"。
+上下文只有目标、推进节奏、当前计划，以及目标前的细纲历史和目标期间的逐轮正文。
+它不读世界设定和状态——它管的是"推到哪儿了"，不是"这一轮怎么写"。
 
 ## 一份跨 run 的长对话，不是三次干净调用
 
@@ -145,10 +145,10 @@ def turn_record(node: Node, index: int, interjections: list[str]) -> Message:
 
 
 def plan_snapshot(run: GoalRun) -> Message | None:
-    """恢复时注入的那条「当前计划与进度」。
+    """每次调用前注入的「当前计划与进度」。
 
-    重建对话会丢掉 goal_manager 自己那些工具调用的历史（它当时怎么想的），
-    但**计划和进度以投影的形式完整留着**——这正是"权威在投影不在对话"买到的。
+    goal_manager 自己的工具调用历史不会跨 turn 保留，但计划和进度以权威状态投影
+    完整留着——这正是"权威在投影不在对话"买到的。
     """
     if run.plan is None or not run.plan.subgoals:
         return None
@@ -168,9 +168,8 @@ def sync_conversation(
     恰好是**切点**那个（见下）。不满足就重建——那正是暂停期间用户切了分支的
     情形，而「以最终选择的分支为准」只有重建做得到：增量追加撤不回来（S103）。
 
-    重建丢掉的是 goal_manager 自己那些工具调用的历史，但计划与进度以投影的形式
-    完整留着（`plan_snapshot`），**代价只在恢复那一刻付一次**——之后又是增量，
-    静态前缀重新稳定下来。
+    持久层只存产品记录。当前计划不混进这条追加链，而是在每次模型调用前由
+    ``plan_snapshot`` 动态放到末尾；工具对话只在本次调用的临时消息里存在。
     """
     # **路径切成两段**（S93）：goal 之前给细纲（进静态前缀），之后给正文（逐条追加）。
     ids = [n.id for n in path]
@@ -193,9 +192,6 @@ def sync_conversation(
 
     if not resumable:
         run.conversation = _prefix(user_character, goal, before)
-        snapshot = plan_snapshot(run)
-        if snapshot is not None:
-            run.conversation.append(snapshot)
 
     for index in range(start, len(during)):
         run.conversation.append(
@@ -217,8 +213,8 @@ async def advance_goal(
 ) -> GoalStep:
     """跑一轮 goal_manager。**对话由调用方备好**（含这一轮新追加的那条记录）。
 
-    这里只负责：把对话发出去、执行工具、把新增的消息追加回 `run.conversation`。
-    进度与终态由工具写进 `GoalContext`。
+    这里只负责：把产品记录和当前 plan 投影发出去，并在本次调用内执行工具。
+    工具对话不写回 ``run.conversation``；进度与终态由工具写进 `GoalContext`。
 
     ``on_delta`` 是流式出口（S118/S126）。**它和 director、writer 一样是个
     agent**，凭什么它的思考就该藏起来——而它恰恰是最需要看的那个：目标迟迟不
@@ -228,6 +224,9 @@ async def advance_goal(
     registry = ToolRegistry.for_goal_manager()
     specs = registry.specs()
     messages = list(run.conversation)
+    snapshot = plan_snapshot(run)
+    if snapshot is not None:
+        messages.append(snapshot)
 
     tracer.emit(
         TraceEventType.CONTEXT_ASSEMBLED,
@@ -273,7 +272,6 @@ async def advance_goal(
         if ctx.finished is not None:
             break
 
-    run.conversation = messages
     outcome = (ctx.finished[0].value, ctx.finished[1]) if ctx.finished else None
     return GoalStep(next_input=ctx.next_input, finished=outcome)
 

@@ -29,10 +29,10 @@ from ..models import (
     UserInput,
     trim_dangling_tool_call,
 )
-from ..prompting import call_of, director_prompt, special_text, tool_enabled
+from ..prompting import call_of, current_snapshot, director_prompt, special_text, tool_enabled
 from ..tools import RunContext, ToolOutcome, ToolRegistry
 from ..tracing import Tracer
-from .replay import append_message, replay_messages, turn_messages
+from .replay import append_message, replay_messages
 
 MAX_ROUNDS = LIMITS.director.max_rounds
 """硬上限。撞上即强制收尾——tool 往返直接加在用户等待上（P21 已放弃流式）。"""
@@ -68,14 +68,6 @@ class DirectorResult:
     state 快照和新的并排出现。
     """
 
-    turn_messages: list[Message] = field(default_factory=list)
-    """**这一轮新增的那几条**，落在节点上供以后重放（S60）。
-
-    只存增量而不是整份对话：一条消息只属于一个节点，重放时沿路径拼接即可，
-    分支天然安全（S42）。生成后追问的那一问一答**不进这里**——它是维护动作，
-    留在上下文里只是噪声。
-    """
-
 
 async def run_director(
     ctx: RunContext,
@@ -84,6 +76,7 @@ async def run_director(
     user_input: UserInput | None,
     *,
     resume: RunDraft | None = None,
+    appended_inputs: list[str] | None = None,
     max_rounds: int = MAX_ROUNDS,
     soft_rounds: int = SOFT_ROUNDS,
 ) -> DirectorResult:
@@ -107,18 +100,16 @@ async def run_director(
     # `submit_outline` 之后，模型才读得出"你交的这份细纲，用户看了之后又说了话"，
     # 而不是"这一轮的输入换了一条"（S119）。
     said = user_input.text if user_input else None
-    appended = ""
+    appended: list[str] = list(appended_inputs or [])
     if resume is not None and user_input is not None:
-        appended, said = user_input.text, (resume.user_input.text if resume.user_input else None)
+        appended.insert(0, user_input.text)
+        said = resume.user_input.text if resume.user_input else None
 
     # **对话跨轮持续**（S60）：前情之前的部分跨轮不变，之前几轮接在后面，
     # 这一轮只追加变化的部分。前缀因此稳定，缓存打得中。
     #
-    # 之前几轮是**扁平化**过的（S61）：调了什么、返回了什么、细纲是什么，
-    # 压成 assistant 文本，不带 `tool_calls`，也不带推理。所以 director 看得见
-    # 自己上一轮**查过什么、写下了什么**，但看不见**为什么那么想**——推理只活到
-    # 产出它的那个 run 结束（S62）。这是笔账：一轮推理一万五千字，而决定本身
-    # 以细纲的形式完整留着。
+    # 之前几轮是产品历史（S61）：顶层输入、插话、细纲。工具往返与推理只活到
+    # 产出它们的 turn 结束；需要长期生效的结论必须进入细纲或 state。
     prompt = director_prompt(
         # **本 run 开始时的状态。** 这里原先写的是 `current_state`（叠加暂存增量），
         # 为的是续跑时模型别看见一份不含自己刚写下那笔的状态。director 不再写
@@ -132,15 +123,11 @@ async def run_director(
     )
     messages = prompt.messages
 
-    # 续跑的那几条**属于同一个节点**：这一轮最终提交时，它们和后面新增的一起
-    # 存进 `director_messages`，所以起点要划在草稿之前，不是新输入之前。
-    turn_start = prompt.starts["history"] + len(prior)
-
     # 草稿里的推演接上，用户新说的话再接在它之后。
     loop_start = len(messages)
     messages.extend(carried)
-    if appended:
-        messages.append(append_message(appended))
+    for text in appended:
+        messages.append(append_message(text))
 
     tracer.emit(
         TraceEventType.CONTEXT_ASSEMBLED,
@@ -152,7 +139,7 @@ async def run_director(
             "history_runs": len(history),
             "prior_messages": len(prior),
             "resumed_messages": len(carried),
-            "appended": bool(appended),
+            "appended": len(appended),
         },
     )
 
@@ -262,7 +249,6 @@ async def run_director(
                         rounds=round_index + 1,
                         messages=messages,
                         loop_messages=messages[loop_start:],
-                        turn_messages=turn_messages(messages, turn_start),
                     )
                 # 同一次响应里 submit_outline 之后的调用被忽略——它是终止点，
                 # 之后不该再有动作。
@@ -358,6 +344,7 @@ def _save_draft(
             user_input=UserInput(text=said) if said else user_input,
             messages=trim_dangling_tool_call(loop),
             rounds=round_index,
+            prompt_snapshot=current_snapshot() or {},
         )
     )
 

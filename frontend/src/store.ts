@@ -64,12 +64,7 @@ export interface SessionState {
 
   phase: RunPhase;
 
-  /** trace **按 run 分组**：`run_id` → 这一轮的全部事件。
-   *
-   * 过程是正文流的一部分（每一轮自己的"它做了什么"），不是一块全局日志——
-   * 所以不能只留"当前这一轮"。**`run_id` 就是 `node.id`**（run = node），
-   * 于是渲染某一轮时直接拿它的 id 来查。
-   */
+  /** 当前 turn 的 trace，按 run_id 分组。结束后清掉；历史完整记录只给开发者面板。 */
   traces: Record<string, TraceEvent[]>;
 
   /** 正在跑的那一轮：还没有节点，但已经有 run_id 和用户说的那句话。 */
@@ -86,9 +81,7 @@ export interface SessionState {
    * 拼成一大坨就分不出哪句是谁的了，而"是谁在想这件事"恰恰是查问题时的第一个
    * 问题。相邻的同一个 agent 合并成一段。
    *
-   * **正文那半是旁路，不是权威**——分片可能因为断线而丢，所以它只用来
-   * 「边写边看」，一等到 `run_finished` 就让位给节点里的正文。过程那半相反：
-   * 它在节点里没有对应物，扔掉就永远看不到了，所以落地之后照样留着。
+   * 正文是旁路，过程是本 turn 执行态；两者都在 `run_finished` 后清掉。
    */
   streaming: Record<string, { prose: string; process: Thought[] }>;
 
@@ -166,6 +159,7 @@ export const useSession = create<SessionState>((set, get) => {
           // 刚提交的那句话归到这一轮名下。自动续跑时没人打字，留空。
           live: { runId: message.run_id, input: s.pendingInput },
           pendingInput: "",
+          editing: null,
         }));
         break;
 
@@ -204,25 +198,12 @@ export const useSession = create<SessionState>((set, get) => {
         break;
 
       case "run_finished":
-        // 节点落地，那一轮的过程随节点一起收起——`traces` 按 run_id 存着，
-        // 而 `run_id` 就是 `node.id`，所以这里什么都不用搬。
         set((s) => ({
           phase: "idle",
           question: null,
           live: null,
-          // **正文到此为止，思考段留着**（S126）。
-          //
-          // 正文有权威版本——节点里那份，留两份只会不一致。思考段没有：它不在
-          // 节点里，也不在开发者模式之外的任何地方，扔掉就是永远看不到了。
-          // 而 goal_manager **是在这条消息之后才跑的**，它的分片挂在同一个
-          // run_id 上；这里整条抹掉的话，它的思考连落脚的地方都没有。
-          streaming: {
-            ...s.streaming,
-            [message.node.id ?? ""]: {
-              prose: "",
-              process: s.streaming[message.node.id ?? ""]?.process ?? [],
-            },
-          },
+          streaming: withoutKey(s.streaming, message.node.id ?? ""),
+          traces: withoutKey(s.traces, message.node.id ?? ""),
           // 同一个 id 就替换（重生成会落新节点，切分支会整条换掉）。
           path: upsert(s.path, message.node),
           // **采样标记留着**（P12/P12）：它们从不影响运行时行为，但"这一轮有
@@ -246,20 +227,28 @@ export const useSession = create<SessionState>((set, get) => {
         break;
 
       case "run_failed":
-        set({ phase: "idle", live: null, notice: `这一轮失败了：${message.reason}` });
+        set((s) => ({
+          phase: "idle",
+          live: null,
+          streaming: withoutKey(s.streaming, s.live?.runId ?? ""),
+          traces: withoutKey(s.traces, s.live?.runId ?? ""),
+          notice: `这一轮失败了：${message.reason}`,
+        }));
         break;
 
       case "run_interrupted":
         // **打断是挂起不是作废**（S48）。用户以为按的是"取消"，结果下一句话
         // 被接进了同一段推演——那是最难查的一类困惑，必须当场说清楚。
-        set({
+        set((s) => ({
           phase: "idle",
           live: null,
+          streaming: withoutKey(s.streaming, s.live?.runId ?? ""),
+          traces: withoutKey(s.traces, s.live?.runId ?? ""),
           resumable: message.resumable ?? false,
           notice: message.resumable
             ? "已打断。推演存成了草稿，下一条输入会接着它跑；想从头来请重新生成。"
             : "已打断。",
-        });
+        }));
         break;
 
       case "state":
@@ -311,7 +300,11 @@ export const useSession = create<SessionState>((set, get) => {
         //
         // **不在 send 之后自己拉一次**：WS 发出去和 HTTP GET 之间没有先后保证，
         // 那一拉可能落在服务端写盘之前，拿回旧的那份。
-        set({ session: message.session });
+        set((s) => ({
+          session: message.session,
+          editing:
+            s.editing && s.editing === message.session.editable_node_id ? s.editing : null,
+        }));
         break;
 
       case "goal_paused":
@@ -473,4 +466,11 @@ function upsert(path: Node[], node: Node): Node[] {
   const sibling = path.findIndex((n) => n.parent_id === node.parent_id);
   if (sibling >= 0) return [...path.slice(0, sibling), node];
   return [...path, node];
+}
+
+function withoutKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  if (!key || !(key in record)) return record;
+  const next = { ...record };
+  delete next[key];
+  return next;
 }

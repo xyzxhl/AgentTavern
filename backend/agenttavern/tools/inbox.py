@@ -13,7 +13,8 @@
 | **引导** | 让它做完 | 下一个边界 |
 | **打断** | 掐掉 | 立刻，就在被掐掉的地方 |
 
-「操作」指的是 director 的一次模型调用或一次工具调用。
+director 内的「操作」指一次模型调用或一次工具调用。writer/state_manager 没有更细的
+操作边界；落到这两段的插话会让该段产物作废，并在同一 turn 内回到 director。
 
 ## 为什么不能在任意时刻插
 
@@ -39,13 +40,14 @@ class Inbox:
         """有人要求掐掉在飞的那次操作。到边界后由 ``drain`` 清掉。"""
 
         self.accepting = False
-        """现在有没有人在看这个信箱。**只在 director 的 tool loop 期间为真。**
+        """director 的 tool loop 是否正在操作边界上监听。
 
-        writer 和 state_manager 都是一次不可分的生成，没有操作边界可插——进了
-        那两段之后打断只能取消整个 task，于是**那一段判为失败、产出作废**，
-        已完成的上游存进草稿等续跑（S49）。少了这个旗标，写正文时按停止就会
-        石沉大海：信号进了没人读的信箱。
+        writer 和 state_manager 是一次不可分的生成；插话由编排层在阶段边界接走，
+        让下游产物作废并回 director。少了阶段与这个旗标，信号会进入没人读取的
+        信箱，表现为用户的话石沉大海。
         """
+        self.phase = "idle"
+        """当前阶段。director 有操作边界；writer/state 的插话会在边界回 director。"""
 
     def push(self, text: str = "", *, interrupt: bool = False) -> None:
         """``interrupt=False`` 是引导，``True`` 是打断。

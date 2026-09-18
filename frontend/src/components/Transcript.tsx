@@ -41,12 +41,9 @@ export function Transcript(): JSX.Element {
             key={node.id}
             said={node.user_input?.text}
             simulated={node.user_input?.source === "simulated"}
-            events={traces[node.id ?? ""] ?? []}
+            events={[]}
             node={node}
             last={at === path.length - 1}
-            // **落地之后思考段还留着**（S126）：它不在节点里，扔掉就再也看不到了。
-            // goal_manager 更是在这一轮落地**之后**才跑的，它的思考只能挂在这儿。
-            thinking={streaming[node.id ?? ""]?.process}
           />
         ))}
 
@@ -87,7 +84,7 @@ function Turn({
   running?: boolean;
   /** 流式攒出来的正文。**只在这一轮还没落地时用**——节点一到就让位（S118）。 */
   streamed?: string;
-  /** 过程那半反过来：节点里没有它，落地之后照样留着（S126）。 */
+  /** 当前 turn 的执行过程；节点落地后不再传入。 */
   thinking?: import("../store").Thought[];
 }): JSX.Element {
   const editing = useSession((s) => s.editing);
@@ -233,6 +230,7 @@ function TurnControls({ node }: { node: Node }): JSX.Element {
   const siblings = useSession((s) => s.siblings[node.id ?? ""] ?? []);
   const path = useSession((s) => s.path);
   const phase = useSession((s) => s.phase);
+  const editable = useSession((s) => s.session?.editable_node_id);
   const switchBranch = useSession((s) => s.switchBranch);
   const regenerate = useSession((s) => s.regenerate);
   const edit = useSession((s) => s.edit);
@@ -272,7 +270,8 @@ function TurnControls({ node }: { node: Node }): JSX.Element {
       <Tap label="↻" title="重新生成这一轮" disabled={phase !== "idle"} onClick={reroll} />
       <Tap
         label="✎"
-        title="改细纲 / 正文 / 状态"
+        title={editable === node.id ? "改细纲 / 正文 / 状态" : "只能编辑上一轮"}
+        disabled={phase !== "idle" || editable !== node.id}
         onClick={() => edit(editing === node.id ? null : (node.id ?? null))}
       />
     </div>

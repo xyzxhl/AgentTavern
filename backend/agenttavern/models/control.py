@@ -19,9 +19,8 @@ session / worldbook / 服务三个层级：
 归 agent 管理的证据：它们从来不是独立的配置，是某条提示词、某个工具、某段
 context 的属性。
 
-于是 session 上只剩**内容**：标题、目标、节点树。`SessionModes.time_driven`
-是唯一留下来的开关，因为它改的是**触发源**——「这局故事没人说话时要不要自己
-往前跑」，和 goal 的自动续跑是同一类东西。
+于是 session 上只剩**内容**：标题、目标、节点树。尚未形成需求的触发模式不在
+schema 里占位；`time_driven` 已退回 Ideas。
 
 详见 docs/design/Configuration.md。
 """
@@ -151,11 +150,11 @@ class GoalRun(BaseModel):
     """
 
     conversation: list[Message] = Field(default_factory=list)
-    """goal_manager 的对话，**跨 run 持续到这个 goal 结束**。
+    """goal_manager 的产品记录，**跨 run 持续到这个 goal 结束**。
 
     静态前缀（任务说明 + 目标 + 节奏）在整个 goal 生命周期里不变，之后每轮只
-    追加一条「第 N 轮发生了什么」。**这才是维持对话真正买到的东西**——以前每次
-    都重发全量剧情梗概，梗概越来越长、前缀每轮失效。
+    追加一条「第 N 轮发生了什么」。模型的 reasoning 与 tool call/result 不写回；
+    当前生效计划在每次调用前由 ``plan`` 投影注入。
     """
 
     plan: GoalPlan | None = None
@@ -235,14 +234,3 @@ class SessionMeta(BaseModel):
     可以有好几个故事，两者必须分得开。"""
 
     goal: Goal | None = None
-
-
-class SessionModes(BaseModel):
-    """模式：改变触发源的东西。目前只有一项。"""
-
-    time_driven: bool = False
-    """时间驱动：没有用户输入时也触发生成。
-
-    与控制权等级不同——控制权管"跑多久停下来问一次"，
-    时间驱动管"没有用户输入时会不会跑"。两者可叠加。
-    """

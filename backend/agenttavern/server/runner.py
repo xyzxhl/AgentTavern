@@ -33,7 +33,7 @@ from ..models import (
     new_id,
 )
 from ..orchestration import execute_run
-from ..prompting import player_character
+from ..prompting import capture_snapshot, player_character, using_snapshot
 from ..storage import SessionRepository
 from ..tools import Inbox
 from ..tracing import Tracer
@@ -49,6 +49,7 @@ from .protocol import (
     RunInterrupted,
     RunStarted,
     ServerMessage,
+    SessionUpdated,
     StateSnapshot,
     Trace,
     UsageUpdate,
@@ -64,6 +65,8 @@ _DELTA_KINDS = ("content", "reasoning")
 class _Queued:
     text: str
     regenerate: bool = False
+    revision: int = 0
+    continuation: list[str] | None = None
     """重生成：挂在**当前叶的父**下，成为它的兄弟（S44）；普通输入挂在当前叶下。
 
     **这里不再带父节点 id**（S44）。以前带，是因为可以重生成任意历史节点，而那
@@ -115,10 +118,12 @@ class SessionRunner:
         self._queue: asyncio.Queue[_Queued | None] = asyncio.Queue()
         """``None`` 是**唤醒信号**（`nudge`），不是一条输入。见那里的说明。"""
         self._pending: list[_Queued] = []
+        self._resume_next: _Queued | None = None
         self._questions: dict[str, asyncio.Future[str]] = {}
         self._current: asyncio.Task[None] | None = None
         self._inbox: Inbox | None = None
         """当前 run 的插话信箱。**一个 run 一个**——上一轮没人认领的话不该漏到下一轮。"""
+        self._active_item: _Queued | None = None
 
         self._loop_task: asyncio.Task[None] | None = None
 
@@ -132,6 +137,7 @@ class SessionRunner:
         # UI 上会看到「本轮结束」排在「开始新的一轮」前面。
         self._out: asyncio.Queue[ServerMessage] = asyncio.Queue()
         self._sender_task: asyncio.Task[None] | None = None
+        self._deferred_goal_messages: list[ServerMessage] | None = None
 
         # goal 的预算计数**已经落盘**了（`GoalRun.spent_*`，S98）。它以前是这里的
         # 两个实例字段——进程重启就归零，于是 R24 那个用来兜住自主运行成本的上限
@@ -176,6 +182,31 @@ class SessionRunner:
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
 
+    @property
+    def busy(self) -> bool:
+        return self._current is not None and not self._current.done()
+
+    def can_edit(self, node_id: str) -> bool:
+        session = self._repo.load_session()
+        return not self.busy and session.editable_node_id == node_id
+
+    def _mark_editable(self, revision: int, node_id: str) -> None:
+        session = self._repo.load_session()
+        if session.input_revision != revision:
+            return
+        session.editable_node_id = node_id
+        self._repo.save_session(session)
+        self._emit_goal(SessionUpdated(session=session))
+
+    def _restore_editable(self, revision: int, previous_leaf: str | None) -> None:
+        """整轮失败使本次输入无效；没有更新输入排队时，上一轮重新可编辑。"""
+        session = self._repo.load_session()
+        if session.input_revision != revision:
+            return
+        session.editable_node_id = previous_leaf
+        self._repo.save_session(session)
+        self._emit(SessionUpdated(session=session))
+
     # -- 外部动作 -----------------------------------------------------------
 
     async def submit(
@@ -184,7 +215,11 @@ class SessionRunner:
         *,
         regenerate: bool = False,
     ) -> None:
-        item = _Queued(text=text, regenerate=regenerate)
+        session = self._repo.load_session()
+        session.input_revision += 1
+        session.editable_node_id = None
+        self._repo.save_session(session)
+        item = _Queued(text=text, regenerate=regenerate, revision=session.input_revision)
         self._pending.append(item)
         await self._queue.put(item)
         self._emit(QueueStatus(pending=[q.text for q in self._pending]))
@@ -233,9 +268,9 @@ class SessionRunner:
         """
         if self._current is None or self._current.done() or self._inbox is None:
             return False
-        if not self._inbox.accepting:
-            return False
         self._inbox.push(text, interrupt=interrupt)
+        if not self._inbox.accepting and interrupt:
+            self._current.cancel()
         return True
 
     def stop(self) -> bool:
@@ -251,6 +286,7 @@ class SessionRunner:
         """
         if self._current is None or self._current.done():
             return False
+        self._autocontinue_armed = False
         if self._inbox is not None and self._inbox.accepting:
             self._inbox.push(interrupt=True)
             return True
@@ -261,11 +297,16 @@ class SessionRunner:
 
     async def _loop(self) -> None:
         while True:
-            try:
-                item: _Queued | None = self._queue.get_nowait()
-            except asyncio.QueueEmpty:
-                # 队列空了才考虑 goal 驱动的自动续跑——用户输入优先（S108）。
-                item = None if self._should_autocontinue() else await self._queue.get()
+            item: _Queued | None
+            if self._resume_next is not None:
+                item = self._resume_next
+                self._resume_next = None
+            else:
+                try:
+                    item = self._queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    # 队列空了才考虑 goal 驱动的自动续跑——用户输入优先（S108）。
+                    item = None if self._should_autocontinue() else await self._queue.get()
 
             # `None` 有两个来源：队列空了而 goal 该自己开下一轮，或者 `nudge()`
             # 放进来的唤醒信号。**两者都要在这一刻再问一次**——目标可能在信号
@@ -287,16 +328,20 @@ class SessionRunner:
             # `asyncio.wait` 只等待、不传播子任务的取消，两个要求同时满足。
             await asyncio.wait({self._current})
 
-            # **这一轮结束时信箱里可能还压着话。** 最常见的一种：引导正好落在
-            # `submit_outline` 那次调用上——它是终止点，直接返回，走不到操作边界。
-            # 用户的输入在任何情况下都不该被吞掉，所以在这里改开新的一轮。
-            for leftover in self._inbox.drain() if self._inbox else []:
-                await self.submit(leftover)
+            leftovers = self._inbox.drain() if self._inbox else []
+            if self._current.cancelled() and leftovers:
+                # writer/state 没有操作内边界。插话先让当前阶段作废，再用同一 revision
+                # 自动续回 director；它仍属于当前 turn，不是排队的新 turn。
+                current = getattr(self, "_active_item", None)
+                revision = current.revision if current is not None else 0
+                continuation = _Queued(text="", revision=revision, continuation=leftovers)
+                self._resume_next = continuation
 
             if self._current.cancelled():
                 # 打断后推演多半已存成草稿（S48）——下一条输入会接着它跑，
                 # 不是从头重来。用户必须知道这件事，否则会以为自己按的是"取消"。
-                self._emit(RunInterrupted(resumable=self._repo.load_draft() is not None))
+                if not leftovers:
+                    self._emit(RunInterrupted(resumable=self._repo.load_draft() is not None))
             else:
                 # 兜底：任何漏网的异常都不能静默杀掉 session 循环——
                 # 那会让连接看起来还活着，但此后所有输入石沉大海。
@@ -315,7 +360,29 @@ class SessionRunner:
         return run.exhausted(goal) is None
 
     async def _execute(self, item: _Queued | None) -> None:
+        draft = self._repo.load_draft()
         session = self._repo.load_session()
+        parent_id = _parent_for(self._repo, session.active_leaf_id, item)
+        owned = draft is not None and draft.parent_id == parent_id
+        snapshot = (
+            draft.prompt_snapshot
+            if owned and draft is not None and draft.prompt_snapshot
+            else capture_snapshot()
+        )
+        with using_snapshot(snapshot):
+            await self._execute_frozen(item)
+
+    async def _execute_frozen(self, item: _Queued | None) -> None:
+        session = self._repo.load_session()
+        if item is None:
+            session.input_revision += 1
+            session.editable_node_id = None
+            self._repo.save_session(session)
+            revision = session.input_revision
+        else:
+            revision = item.revision
+        previous_leaf = session.active_leaf_id
+        self._active_item = item or _Queued(text="", revision=revision)
         # **id 提前生成**：目标开场时 goal_manager 要先说话，而那些记录属于
         # 它开出来的这一轮（S100）。
         run_id = new_id("run")
@@ -332,7 +399,21 @@ class SessionRunner:
             # 界面上那段时间什么都没有——而这一轮的记录已经在往外推了。
             self._run_id = run_id
             self._emit(RunStarted(run_id=run_id))
-            simulated = await self._open_goal(session, run_id) or simulated
+            try:
+                simulated = await self._open_goal(session, run_id) or simulated
+            except asyncio.CancelledError:
+                # director 尚未开始，因此没有可恢复草稿；这次自动输入没有形成 turn，
+                # 上一 turn 的编辑窗口应恢复。
+                self._pause_goal("用户停止了目标规划")
+                self._restore_editable(revision, previous_leaf)
+                raise
+            except Exception as exc:  # noqa: BLE001
+                self._autocontinue_armed = False
+                self._repo.clear_draft()
+                self._pause_goal(f"目标规划失败：{exc}")
+                self._restore_editable(revision, previous_leaf)
+                self._emit(RunFailed(reason=str(exc)))
+                return
             # 规划期间目标可能当场判完、撞上预算、或被用户放弃。
             if not self._should_autocontinue():
                 self._emit(RunInterrupted(resumable=False))
@@ -353,13 +434,14 @@ class SessionRunner:
                 # 眼里必须一模一样，否则它会对模拟输入区别对待。
                 user_input=(
                     UserInput(text=item.text)
-                    if item
+                    if item and item.continuation is None
                     else (
                         UserInput(text=simulated, source=InputSource.SIMULATED)
                         if simulated
                         else None
                     )
                 ),
+                appended_inputs=item.continuation if item else None,
                 # **父节点只有一个来源：出队那一刻的活跃叶**（S44）。
                 # 普通输入挂在它下面（延长），重生成挂在它的父下面（开兄弟）。
                 parent_id=_parent_for(self._repo, session.active_leaf_id, item),
@@ -375,17 +457,40 @@ class SessionRunner:
                 run_id=run_id,
             )
         except asyncio.CancelledError:
+            # 正常阶段取消会由编排层留下草稿，编辑窗口继续关闭。若取消早到连草稿
+            # 都没形成，则当前输入没有留下可恢复 turn，恢复上一轮。
+            if self._repo.load_draft() is None:
+                self._restore_editable(revision, previous_leaf)
             raise
         except Exception as exc:  # noqa: BLE001 — 单个 run 失败不该拖垮 session
             # 失败后暂停自动续跑：再跑一次多半还是失败，空转只会烧钱。
             # 用户的下一条输入会重新打开它。
             self._autocontinue_armed = False
+            self._repo.clear_draft()
+            self._restore_editable(revision, previous_leaf)
             self._emit(RunFailed(reason=str(exc)))
             return
 
         # 一轮正常结束——这才是「检查是否达标、未达标则开启下一轮」的触发点。
         self._autocontinue_armed = True
 
+        self._deferred_goal_messages = []
+        try:
+            await self._check_goal(outcome.node.id, outcome.usage)
+        except asyncio.CancelledError:
+            # 节点已经原子提交。此时停止的是目标判定/续跑，不回滚故事产出，
+            # 也绝不能让刚被停止的 goal 立刻自动开下一轮。
+            self._autocontinue_armed = False
+            self._pause_goal("用户停止了目标判定")
+        except Exception as exc:  # noqa: BLE001
+            # goal_manager 位于节点提交之后，无法再把它伪装成整个故事 run 的失败。
+            # 保留本轮产出、暂停目标，让用户决定是否恢复。
+            self._autocontinue_armed = False
+            self._pause_goal(f"目标判定失败：{exc}")
+
+        self._mark_editable(revision, outcome.node.id)
+        deferred = self._deferred_goal_messages
+        self._deferred_goal_messages = None
         self._emit(RunFinished(node=outcome.node, notes=outcome.notes))
         self._emit(
             UsageUpdate(
@@ -399,8 +504,8 @@ class SessionRunner:
                 leaf_id=outcome.node.id,
             )
         )
-
-        await self._check_goal(outcome.node.id, outcome.usage)
+        for message in deferred:
+            self._emit(message)
 
     async def _open_goal(self, session: Session, run_id: str) -> str | None:
         """**目标刚设上（或刚恢复）时，先让它规划一次**（S100）。返回开场那条输入。
@@ -419,6 +524,8 @@ class SessionRunner:
             return None
         run = session.goal_run or GoalRun(started_at_leaf_id=session.active_leaf_id)
         if run.paused:
+            return None
+        if session.goal_run is None and not self._save_goal_run(run):
             return None
 
         step, usage = await self._goal_turn(session, goal, run, run_id, session.active_leaf_id)
@@ -451,6 +558,8 @@ class SessionRunner:
             started_at_leaf_id=self._repo.load_node(leaf_id).parent_id
         )
         if run.paused:
+            return
+        if session.goal_run is None and not self._save_goal_run(run):
             return
 
         if self._goal_opening:
@@ -543,7 +652,7 @@ class SessionRunner:
             return
         # **每一轮都推一次进度**（S129）：中间状态被一条条划掉是用户最想看的东西，
         # 而它此前只写在盘上，界面要等到 goal 结束才会动。
-        self._emit(
+        self._emit_goal(
             GoalProgress(
                 subgoals=run.plan.subgoals if run.plan else [],
                 spent_runs=run.spent_runs,
@@ -553,7 +662,7 @@ class SessionRunner:
             )
         )
         if exhausted is not None:
-            self._emit(GoalPaused(reason=exhausted))
+            self._emit_goal(GoalPaused(reason=exhausted))
 
     def _emit_delta(self, actor: str, kind: str, text: str, run_id: str | None = None) -> None:
         """把一段分片推出去。**能力关掉时根本走不到这里**——`ctx.stream_to`
@@ -625,7 +734,24 @@ class SessionRunner:
         session.meta.goal = None
         session.goal_run = None
         self._repo.save_session(session)
-        self._emit(GoalFinished(outcome=outcome, reason=reason))
+        self._emit_goal(GoalFinished(outcome=outcome, reason=reason))
+
+    def _pause_goal(self, reason: str) -> None:
+        session = self._repo.load_session()
+        if session.meta.goal is None or session.goal_run is None:
+            return
+        session.goal_run.paused = True
+        session.goal_run.paused_reason = reason
+        self._repo.save_session(session)
+        self._emit_goal(SessionUpdated(session=session))
+        self._emit_goal(GoalPaused(reason=reason))
+
+    def _emit_goal(self, message: ServerMessage) -> None:
+        """goal 判定先跑完，生命周期结束消息仍保持在 goal 状态消息之前。"""
+        if self._deferred_goal_messages is not None:
+            self._deferred_goal_messages.append(message)
+        else:
+            self._emit(message)
 
     # -- ask_question -------------------------------------------------------
 

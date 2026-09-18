@@ -107,19 +107,7 @@ export type InputSource = "user" | "simulated";
 export type SubmittedAt = string;
 export type Outline1 = string;
 export type OutlineSummary = string | null;
-export type Role = "system" | "user" | "assistant" | "tool";
-export type Content = string | null;
-export type Id1 = string;
-export type Name = string;
-export type ArgumentsRaw = string;
-export type Arguments = {
-  [k: string]: unknown;
-} | null;
-export type ParseError = string | null;
-export type ToolCalls = ToolCall[];
-export type ToolCallId = string | null;
-export type ReasoningContent = string | null;
-export type DirectorMessages = Message[];
+export type Interjections = string[];
 export type ClosesSegment = boolean;
 export type SegmentSpan = number;
 export type Prose1 = string;
@@ -155,7 +143,7 @@ export type MaxTotalTokens2 = number | null;
 export type Type24 = "goal_paused";
 export type Reason2 = string;
 export type Type25 = "session_updated";
-export type Id2 = string;
+export type Id1 = string;
 export type CreatedAt1 = string;
 export type WorldbookId = string;
 export type CorpusIds = string[];
@@ -163,11 +151,24 @@ export type Title = string;
 export type Description2 = string;
 export type MaxRuns3 = number | null;
 export type MaxTotalTokens3 = number | null;
-export type TimeDriven = boolean;
 export type InitialState = {
   [k: string]: unknown;
 } | null;
 export type ActiveLeafId = string | null;
+export type InputRevision = number;
+export type EditableNodeId = string | null;
+export type Role = "system" | "user" | "assistant" | "tool";
+export type Content = string | null;
+export type Id2 = string;
+export type Name = string;
+export type ArgumentsRaw = string;
+export type Arguments = {
+  [k: string]: unknown;
+} | null;
+export type ParseError = string | null;
+export type ToolCalls = ToolCall[];
+export type ToolCallId = string | null;
+export type ReasoningContent = string | null;
 export type Conversation = Message[];
 export type Subgoals1 = SubGoal[];
 export type SpentRuns1 = number;
@@ -446,7 +447,7 @@ export interface Node {
   user_input?: UserInput | null;
   outline?: Outline1;
   outline_summary?: OutlineSummary;
-  director_messages?: DirectorMessages;
+  interjections?: Interjections;
   closes_segment?: ClosesSegment;
   segment_span?: SegmentSpan;
   prose?: Prose1;
@@ -464,27 +465,6 @@ export interface UserInput {
   text: Text3;
   source?: InputSource;
   submitted_at?: SubmittedAt;
-}
-export interface Message {
-  role: Role;
-  content?: Content;
-  tool_calls?: ToolCalls;
-  tool_call_id?: ToolCallId;
-  reasoning_content?: ReasoningContent;
-}
-/**
- * 模型发起的一次工具调用。
- *
- * ``arguments`` 在 OpenAI 格式里是 **JSON 字符串**，而模型时常输出不合法的 JSON。
- * 这里把解析结果和解析错误都留下——**参数错误是模型可恢复的错误**，应作为结构化
- * 的 tool result 回给它重试，而不是让整个 run 崩掉。
- */
-export interface ToolCall {
-  id: Id1;
-  name: Name;
-  arguments_raw?: ArgumentsRaw;
-  arguments?: Arguments;
-  parse_error?: ParseError;
 }
 /**
  * 一个节点被用户改过了（R22）。**回传整个节点，不回传"改了什么"。**
@@ -616,14 +596,15 @@ export interface SessionUpdated {
   session: Session;
 }
 export interface Session {
-  id?: Id2;
+  id?: Id1;
   created_at?: CreatedAt1;
   worldbook_id?: WorldbookId;
   corpus_ids?: CorpusIds;
   meta?: SessionMeta;
-  modes?: SessionModes;
   initial_state?: InitialState;
   active_leaf_id?: ActiveLeafId;
+  input_revision?: InputRevision;
+  editable_node_id?: EditableNodeId;
   goal_run?: GoalRun | null;
 }
 /**
@@ -661,12 +642,6 @@ export interface Goal {
   max_total_tokens?: MaxTotalTokens3;
 }
 /**
- * 模式：改变触发源的东西。目前只有一项。
- */
-export interface SessionModes {
-  time_driven?: TimeDriven;
-}
-/**
  * 一次 goal 从创建到结束期间的**运行时状态**（S92）。
  *
  * 和 `SessionMeta.goal` 分开：那个是**用户配置**（目标是什么、给多少预算），
@@ -685,6 +660,27 @@ export interface GoalRun {
   paused_reason?: PausedReason;
   started_at_leaf_id?: StartedAtLeafId;
   seen_leaf_id?: SeenLeafId;
+}
+export interface Message {
+  role: Role;
+  content?: Content;
+  tool_calls?: ToolCalls;
+  tool_call_id?: ToolCallId;
+  reasoning_content?: ReasoningContent;
+}
+/**
+ * 模型发起的一次工具调用。
+ *
+ * ``arguments`` 在 OpenAI 格式里是 **JSON 字符串**，而模型时常输出不合法的 JSON。
+ * 这里把解析结果和解析错误都留下——**参数错误是模型可恢复的错误**，应作为结构化
+ * 的 tool result 回给它重试，而不是让整个 run 崩掉。
+ */
+export interface ToolCall {
+  id: Id2;
+  name: Name;
+  arguments_raw?: ArgumentsRaw;
+  arguments?: Arguments;
+  parse_error?: ParseError;
 }
 /**
  * 把 goal 拆成的一串阶段（S93）。

@@ -6,7 +6,7 @@
 | | 用户想要 | 已完成的部分 |
 |---|---|---|
 | **重生成** | 换一个结果 | 不要了 |
-| **引导** | 在这个结果之后加一句 | 等它写完，再作为新的一轮 |
+| **引导** | 在这个结果之后加一句 | 等当前操作完成，在同一 turn 的边界追加 |
 | **打断** | 现在就插一句 | **要**——它只是被截在了半路 |
 
 打断唯一独有的东西是**时机**：它不等当前动作跑完，直接掐掉在飞的那次 API 调用
@@ -15,9 +15,9 @@
 ## 三个阶段，一条依赖链（S49）
 
 一个 run 是 `输入 → 细纲 → 正文 → state` 三段串行。**打断把当前阶段判为失败，
-它的产出作废**；已完成的上游产物存进草稿，恢复点由**下一次输入是不是空的**决定：
+它的产出作废**；已完成的上游产物存进草稿，恢复点由**是否带有本 turn 插话**决定：
 
-| 打断在 | 空输入 | 非空输入 |
+| 打断在 | 没有插话 | 带有插话 |
 |---|---|---|
 | director | 接着草稿续跑 | 追加进草稿续跑 |
 | writer | 只重跑 writer | **回 director** |
@@ -42,6 +42,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -103,6 +104,12 @@ class RunDraft(BaseModel):
     staged_delta: StateDelta = Field(default_factory=StateDelta)
     """state_manager 已经写下的增量。那几次 `state_write` 是**已经完成的动作**，
     和已经拿到的工具结果没有区别，重来一遍只是白花一次调用（同 S48）。
+    """
+
+    prompt_snapshot: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    """本 turn 开始时冻结的提示词与调用配置。
+
+    草稿可能跨请求恢复；不把快照一起留下，恢复后半轮就会混入用户刚改的新配置。
     """
 
     interrupted_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

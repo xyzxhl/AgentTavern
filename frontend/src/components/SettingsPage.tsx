@@ -86,7 +86,7 @@ export function SettingsPage(): JSX.Element {
             <p className="text-[11px] leading-snug text-dim">
               <b className="font-medium text-fg">模型、边写边显示、额外请求参数</b>
               不在这里——它们按 agent 各设一份，去「agent 提示词」那一页的
-              <b className="font-medium text-fg">调用</b>标签改，改完立刻生效（S159）。
+              <b className="font-medium text-fg">调用</b>标签改，从下一个 turn 生效（S159）。
             </p>
           </Group>
         </div>

@@ -4,7 +4,7 @@
 
 - **它看得见什么**（正文在、世界设定不在）——上下文切错了，隔离就没了。
 - **loop 怎么收口**（不再调用工具即结束，没有终止工具）。
-- **它坏掉时不拖累别人**（fail-open：这一轮不记增量，节点照落）。
+- **工具参数错误可恢复，系统失败则让原子 run 整轮失败**。
 """
 
 import asyncio
@@ -166,6 +166,24 @@ async def test_several_writes_accumulate_into_one_delta(tmp_path: Path) -> None:
     assert result.delta.append["林.知情"] == ["照片"]
 
 
+async def test_invalid_tool_arguments_return_to_the_agent_for_repair(tmp_path: Path) -> None:
+    """参数形状错误是可自愈的工具失败，不是 state_manager 的系统失败。"""
+    llm = ScriptedLLM(
+        tool("state_write", set="不是对象"),
+        tool("state_write", set={"地点": "客厅"}),
+        text("修好了。"),
+        auto_state=False,
+    )
+    ctx, tracer, reg = _ctx(tmp_path, llm)
+
+    result = await run_state_manager(ctx, reg, tracer, outline="她推门。", prose="门开了。")
+
+    assert result.delta.set == {"地点": "客厅"}
+    first_result = llm.messages_of(1)[-1]
+    assert first_result["role"] == "tool"
+    assert "参数" in first_result["content"] or "对象" in first_result["content"]
+
+
 async def test_an_empty_hand_means_nothing_changed(tmp_path: Path) -> None:
     """**E0 契约已作废**（「没变化也必须调用一次」）。
 
@@ -195,11 +213,8 @@ async def test_a_model_that_never_stops_hits_the_cap(tmp_path: Path) -> None:
 # -- 它坏掉时 -----------------------------------------------------------------
 
 
-async def test_a_failure_does_not_cost_the_turn(tmp_path: Path) -> None:
-    """fail-open：这一轮不记增量，**节点照落**（同归段失败）。
-
-    已经产出的细纲和正文比一份增量值钱得多，不该被状态维护拖下水。
-    """
+async def test_a_system_failure_fails_the_atomic_turn(tmp_path: Path) -> None:
+    """调用/协议故障不能伪装成“本轮没有状态变化”。"""
 
     class Broken(ScriptedLLM):
         def _handle(self, request):  # type: ignore[no-untyped-def]
@@ -214,17 +229,16 @@ async def test_a_failure_does_not_cost_the_turn(tmp_path: Path) -> None:
     )
     repo = Store(tmp_path).create_session(Session())
 
-    outcome = await execute_run(
-        repo,
-        repo.load_session(),
-        llm.gateway(),
-        ToolRegistry(),
-        user_input=UserInput(text="我推开门"),
-    )
+    with pytest.raises(Exception, match="Connection error"):
+        await execute_run(
+            repo,
+            repo.load_session(),
+            llm.gateway(),
+            ToolRegistry(),
+            user_input=UserInput(text="我推开门"),
+        )
 
-    assert outcome.node.outline == "她推开门。"
-    assert outcome.node.prose == "门开了。"
-    assert outcome.node.state_delta.is_empty()
+    assert repo.all_nodes() == {}
 
 
 async def test_an_interrupt_is_not_a_failure(tmp_path: Path) -> None:

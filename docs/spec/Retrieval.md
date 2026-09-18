@@ -266,7 +266,7 @@ turn 完成、明确放弃或整轮失败时，草稿中的执行记录随草稿
 开发者 trace 是例外：它可以 append-only 留下完整交换用于审计，但永远不作为后续模型
 context 的来源。
 
-**验收** `test_a_past_turn_carries_no_tool_calls_at_all` · `test_flattening_keeps_the_facts_and_drops_the_stale_state` · `test_an_interjection_survives_flattening_in_place`；草稿保留、完成即清除以及重生成不继承旧执行流量的断言待补，见 [TODO](../TODO.md)。
+**验收** `test_a_past_turn_carries_no_tool_calls_at_all` · `test_flattening_keeps_only_the_input_and_outline` · `test_an_interjection_survives_flattening_in_place` · `test_reasoning_and_tools_only_persist_in_a_draft`
 
 ### S62 · 推理段计入预算，但只在 run / 草稿内存在
 
@@ -283,7 +283,7 @@ context 的来源。
 
 预算只数正文而不数推理会**系统性低估**，且低估幅度随对话变长而增大。
 
-**验收** `test_reasoning_is_stripped_before_a_node_is_stored` · `test_reasoning_counts_toward_the_context_budget`
+**验收** `test_reasoning_and_tools_only_persist_in_a_draft` · `test_reasoning_counts_toward_the_context_budget`
 
 ### S157 · 折叠与展开是同一件事的两半，只有一份实现
 

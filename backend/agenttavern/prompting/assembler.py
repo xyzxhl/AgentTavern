@@ -58,9 +58,12 @@
 
 from __future__ import annotations
 
+import copy
 import functools
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -97,6 +100,10 @@ PROMPT_FILES = (*AGENTS, *CALLS)
 加一份就是加一个名字加一个文件。"""
 
 _root: Path | None = None
+PromptSnapshot = dict[str, dict[str, Any]]
+_active_snapshot: ContextVar[PromptSnapshot | None] = ContextVar(
+    "agenttavern_prompt_snapshot", default=None
+)
 
 
 def use_dir(path: Path | None) -> None:
@@ -112,7 +119,7 @@ def use_dir(path: Path | None) -> None:
     """
     global _root
     _root = path
-    load.cache_clear()
+    _load.cache_clear()
 
 
 def _dir() -> Path:
@@ -120,7 +127,7 @@ def _dir() -> Path:
 
 
 @functools.cache
-def load(name: str) -> dict[str, Any]:
+def _load(name: str) -> dict[str, Any]:
     """读一份提示词文件。**进程内只读一次**，它跨请求不变（写盘时清缓存）。
 
     顶层必须是映射。**「顶层直接是列表」那条特例已经删掉**——它是为片段文件
@@ -131,6 +138,36 @@ def load(name: str) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"{name}.yaml 顶层必须是映射")
     return data
+
+
+def load(name: str) -> dict[str, Any]:
+    """读取当前 turn 冻结的配置；没有活跃 turn 时读取磁盘缓存。"""
+    snapshot = _active_snapshot.get()
+    if snapshot is not None:
+        if name not in snapshot:
+            raise KeyError(f"冻结的提示词快照里没有 `{name}`")
+        return snapshot[name]
+    return _load(name)
+
+
+def capture_snapshot() -> PromptSnapshot:
+    """在 turn 边界复制全部 agent/call 配置。之后的保存只影响下一 turn。"""
+    return {name: copy.deepcopy(_load(name)) for name in PROMPT_FILES}
+
+
+def current_snapshot() -> PromptSnapshot | None:
+    """返回当前 turn 的快照；调用方只应把它持久化，不应原地修改。"""
+    return _active_snapshot.get()
+
+
+@contextmanager
+def using_snapshot(snapshot: PromptSnapshot) -> Iterator[None]:
+    """让当前异步上下文内的所有提示词读取命中同一份 turn 快照。"""
+    token = _active_snapshot.set(snapshot)
+    try:
+        yield
+    finally:
+        _active_snapshot.reset(token)
 
 
 def path_of(name: str) -> Path:
@@ -170,7 +207,7 @@ def save(name: str, data: Mapping[str, Any]) -> None:
     """
     text = yaml.dump(dict(data), Dumper=_Dumper, allow_unicode=True, sort_keys=False, width=10_000)
     path_of(name).write_text(text, encoding="utf-8")
-    load.cache_clear()
+    _load.cache_clear()
 
 
 def enabled(name: str) -> bool:

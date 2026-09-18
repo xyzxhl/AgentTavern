@@ -48,13 +48,16 @@ turn。turn 是逻辑位置，重生成只为它创建兄弟版本。每个完�
 **规格** state_manager 卡在**落盘之前**跑。细纲、正文、状态增量三样一起写进节点，
 不存在中间态。
 
+模型调用、协议或存储失败使整个 run 失败，不落一个缺状态增量的节点。工具参数或校验
+错误仍作为 tool result 返回 state_manager，让当前 loop 自行修正。
+
 **不做** 先落正文、后补增量。
 
 **为什么** 放到落盘之后会出现一个「有正文没增量」的瞬时节点，那一刻沿路径重放状态
 的人（切分支、看历史状态）会算错。代价是这一轮的结束晚一次模型调用，而用户此时
 已经看完正文了。
 
-**验收** `test_interrupt_during_state_keeps_outline_and_prose` · `test_staged_delta_is_not_persisted_until_run_ends`
+**验收** `test_interrupt_during_state_keeps_outline_and_prose` · `test_staged_delta_is_not_persisted_until_run_ends` · `test_a_system_failure_fails_the_atomic_turn` · `test_invalid_tool_arguments_return_to_the_agent_for_repair`
 
 ### S3 · director 是主 agent，writer 是从它身上拆下来的渲染器
 
@@ -67,15 +70,17 @@ writer **只承担文风**，不做任何规划。
 
 **验收** `test_director_never_sees_style_or_prose` · `test_style_and_prose_never_reach_the_director` · `test_each_side_gets_its_own_sections_and_none_of_the_others`
 
-### S4 · 交接是静态 workflow：固定、单向、无回流
+### S4 · 正常交接是静态 workflow；用户插话可使下游作废并回 director
 
 **服务** [R7](../req/推进剧情.md)
 
-**规格** 编排层按固定顺序调用。中间没有回流、没有协商、没有重试循环。
+**规格** 没有用户插话时，编排层按固定顺序调用，没有 agent 自发回流、协商或重试循环。
+writer / state 运行期间收到 turn 内插话时，当前下游产物作废，携带原输入、既有推演与
+插话回 director；这是用户控制流，不是 agent 动态 handoff。
 
-**不做** 让 writer 把结果退回 director 重议。
+**不做** 让 writer / state_manager 自己把结果退回 director 重议。
 
-**验收** `test_each_side_gets_its_own_sections_and_none_of_the_others`
+**验收** `test_each_side_gets_its_own_sections_and_none_of_the_others` · `test_guidance_after_director_returns_to_director_in_the_same_turn`
 
 ### S5 · writer 绝不能做成 director 的一个工具
 
@@ -114,6 +119,9 @@ writer **只承担文风**，不做任何规划。
 「细纲 → 成文 → 当时记下的」三元组、本轮细纲、本轮正文。工具只有
 `state_write` 和 `state_query`，**没有终止工具**——收口条件是「这一次不再调用任何工具」。
 
+工具调用参数不合法属于可恢复错误，回给 agent；agent 本身的调用、协议或存储故障属于
+整轮失败，不降级成空增量。
+
 **不做** 让 director 边推演边记状态。
 
 **为什么** 细纲常常留白（「他含糊地应了一句」），落实成具体那句话是 writer 的事。
@@ -123,7 +131,7 @@ writer **只承担文风**，不做任何规划。
 看不出留白处最后落成了什么，少了增量就没有示范——而这一节存在的全部理由就是让
 键名和值的形状不漂移。
 
-**验收** `test_it_reads_the_prose_it_just_wrote` · `test_the_write_side_belongs_to_the_state_manager_alone` · `test_the_director_cannot_touch_state`
+**验收** `test_it_reads_the_prose_it_just_wrote` · `test_the_write_side_belongs_to_the_state_manager_alone` · `test_the_director_cannot_touch_state` · `test_invalid_tool_arguments_return_to_the_agent_for_repair` · `test_a_system_failure_fails_the_atomic_turn`
 
 ### S8 · writer 输出偏离报告，不改写细纲
 
@@ -166,7 +174,7 @@ loop 边跑边追加的东西（模型回复、工具调用、工具结果、编
 
 **为什么** 这条线一划，「哪些提示词该进 YAML」就不再需要逐个争论。
 
-**验收** `test_reasoning_is_stripped_before_a_node_is_stored` · `test_empty_section_is_skipped_message_and_all`
+**验收** `test_reasoning_and_tools_only_persist_in_a_draft` · `test_empty_section_is_skipped_message_and_all`
 
 ### S11 · 工具清单不进消息
 

@@ -15,7 +15,6 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from ..llm.types import Message
 from .state import StateDelta
 
 
@@ -81,7 +80,7 @@ class Node(BaseModel):
     status: RunStatus = RunStatus.COMPLETE
 
     user_input: UserInput | None = None
-    """时间驱动模式或 goal 驱动的后续 run 可能没有用户输入。"""
+    """正常与 goal 驱动 turn 都会填写；可空是为旧数据与尚未装配完成的草稿兼容。"""
 
     # `control` **已删除**（R31/S80）：控制维度整体上调到提示词层之后，
     # 这个字段记的是一份全局配置的快照——每个节点存一遍同样的东西，而它既不
@@ -106,14 +105,11 @@ class Node(BaseModel):
     要么在等这一段结束。索引对它回退到"前 N 字 + 字数"，仍满足 P13。
     """
 
-    director_messages: list[Message] = Field(default_factory=list)
-    """这一轮给 director 的对话增量：用户消息、模型推理、工具调用与工具结果（S60）。
+    interjections: list[str] = Field(default_factory=list)
+    """本轮内用户按发生顺序插入的话（S50/S60）。
 
-    **只存增量，不存整份对话**——一条消息只属于一个节点，重放时沿路径拼接即可，
-    分支天然安全（S42）。
-
-    存它是为了让 director 的上下文**跨轮持续**：它看得见自己上一轮查过什么、
-    为什么那么写，比把历史重新渲染成一段文字信息量大得多。正文仍然从不进来（S5）。
+    跨轮只保留会进入后续剧情上下文的产品记录：顶层输入、插话与细纲。director 的
+    reasoning、tool call/result 只为本轮恢复而持久化在 ``RunDraft``，节点不保存。
     """
 
     closes_segment: bool = False
