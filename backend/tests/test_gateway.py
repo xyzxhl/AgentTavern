@@ -38,9 +38,14 @@ def gateway_returning(*responses: httpx2.Response, capture: list[dict[str, Any]]
     return LLMGateway(settings(), http_client=client)
 
 
-def ok(message: dict[str, Any], usage: dict[str, int] | None = None) -> httpx2.Response:
+def ok(
+    message: dict[str, Any],
+    usage: dict[str, int] | None = None,
+    *,
+    finish_reason: str | None = "stop",
+) -> httpx2.Response:
     body = {
-        "choices": [{"message": message, "finish_reason": "stop"}],
+        "choices": [{"message": message, "finish_reason": finish_reason}],
         "usage": usage or {"prompt_tokens": 10, "completion_tokens": 5},
     }
     return httpx2.Response(200, json=body)
@@ -189,6 +194,39 @@ async def test_empty_choices_raises() -> None:
     gw = gateway_returning(httpx2.Response(200, json={"choices": []}))
     with pytest.raises(LLMError, match="choices"):
         await gw.complete([Message(role=Role.USER, content="hi")], call=CALL)
+
+
+async def test_truncated_response_fails_instead_of_becoming_partial_output() -> None:
+    """`length` 是半份响应，必须让原子 run 失败，不能把截断正文或工具调用交下去。"""
+    gw = gateway_returning(ok({"content": "写到一半"}, finish_reason="length"))
+    with pytest.raises(LLMError, match="finish_reason=length"):
+        await gw.complete([Message(role=Role.USER, content="hi")], call=CALL)
+
+
+async def test_stream_ending_without_finish_reason_is_reported_as_interrupted() -> None:
+    """provider 在 thinking 后直接断流时，不能把 thinking 当成一次正常的空回答。"""
+    chunk = {
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"content": None, "reasoning_content": "还在想"},
+                "finish_reason": None,
+            }
+        ]
+    }
+    body = f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n"
+    gw = gateway_returning(
+        httpx2.Response(200, text=body, headers={"content-type": "text/event-stream"})
+    )
+    seen: list[tuple[str, str]] = []
+
+    with pytest.raises(LLMError, match="没有 finish_reason"):
+        await gw.complete(
+            [Message(role=Role.USER, content="hi")],
+            call=CALL,
+            on_delta=lambda kind, text: seen.append((kind, text)),
+        )
+    assert seen == [("reasoning", "还在想")]
 
 
 # -- reasoning_content（S62） -------------------------------------------------

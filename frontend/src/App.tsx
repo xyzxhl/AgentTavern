@@ -71,7 +71,9 @@ function Story(): JSX.Element {
   const go = useSession((s) => s.go);
   const refreshSessions = useSession((s) => s.refreshSessions);
   const refreshState = useSession((s) => s.refreshState);
+  const deleteSession = useSession((s) => s.deleteSession);
   const [devtools, setDevtools] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const worldbookName = books.find((c) => c.id === sessionId)?.worldbook_name;
   const spent = usage.tokensIn + usage.tokensOut;
@@ -81,6 +83,18 @@ function Story(): JSX.Element {
     await api.patchSession(sessionId, { meta: { title: next } });
     await refreshSessions();
     await refreshState();
+  }
+
+  async function remove(): Promise<void> {
+    if (!sessionId || !confirm(`删除会话「${title || "未命名"}」？这会删除它的全部剧情与 trace。`)) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      await deleteSession(sessionId);
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -124,6 +138,11 @@ function Story(): JSX.Element {
           >
             {compact(spent)} tok
           </span>
+        )}
+        {sessionId && (
+          <button className="btn" onClick={() => void remove()} disabled={deleting}>
+            {deleting ? "删除中…" : "删除会话"}
+          </button>
         )}
       </header>
 

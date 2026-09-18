@@ -34,6 +34,8 @@ from .goal import goal_tools
 def build_tools(
     worldinfo: list[WorldbookEntry] | None = None,
     corpora: list[Corpus] | None = None,
+    *,
+    has_state: bool = True,
 ) -> list[Tool[Any]]:
     """director 的工具面。
 
@@ -47,7 +49,7 @@ def build_tools(
     # `state_query` 是**按需展开**，可以单独关。关掉时 state 每轮全量注入——
     # 没有展开的路还隐藏长值，就成了有损筛选（P13）。
     # state_manager 整个关掉时它也没意义：查一份永远是空的状态。
-    if enabled("state_manager") and tool_enabled("director", "state_query"):
+    if has_state and enabled("state_manager") and tool_enabled("director", "state_query"):
         tools.append(state_query_tool("director"))
 
     # **三个展开工具各自按自己的开关注册**（S21/S157）：共用一份实现，
@@ -82,7 +84,7 @@ def build_tools(
     return tools
 
 
-def build_state_tools() -> list[Tool[Any]]:
+def build_state_tools(*, has_state: bool = True) -> list[Tool[Any]]:
     """state_manager 的工具面：**只有 state 那两个**（S7）。
 
     它不查历史、不展开设定、不问用户、也没有 `submit_outline`——它的活是把
@@ -93,7 +95,7 @@ def build_state_tools() -> list[Tool[Any]]:
     得有个地方承接；state_manager 的产物是那几次写入本身，写完就没事了。
     """
     tools: list[Tool[Any]] = [state_write_tool()]
-    if tool_enabled("state_manager", "state_query"):
+    if has_state and tool_enabled("state_manager", "state_query"):
         tools.append(state_query_tool("state_manager"))
     return tools
 
@@ -107,12 +109,14 @@ class ToolRegistry:
         cls,
         worldinfo: list[WorldbookEntry] | None = None,
         corpora: list[Corpus] | None = None,
+        *,
+        has_state: bool = True,
     ) -> ToolRegistry:
-        return cls(build_tools(worldinfo, corpora))
+        return cls(build_tools(worldinfo, corpora, has_state=has_state))
 
     @classmethod
-    def for_state_manager(cls) -> ToolRegistry:
-        return cls(build_state_tools())
+    def for_state_manager(cls, *, has_state: bool = True) -> ToolRegistry:
+        return cls(build_state_tools(has_state=has_state))
 
     @classmethod
     def for_goal_manager(cls) -> ToolRegistry:

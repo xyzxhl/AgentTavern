@@ -68,7 +68,7 @@ director 调 corpus_search(query)
 | 何时进上下文 | 可能每轮在场 | **只在被查到时** |
 
 塞进 worldbook 会撑爆它「条目正文 → worldinfo 每轮注入」那条投影，
-**得为它开特例**——而 [S65](Worldbook.md) 刚说过「用户扮演的角色不是第四类 kind」
+**得为它开特例**——而 [S65](Worldbook.md) 刚说过「用户扮演的角色不是独立 kind」
 正是为了避免特例。
 
 **验收** `test_a_corpus_can_be_attached_to_several_sessions` · `test_a_session_can_hold_several_corpora` · `test_deleting_a_corpus_in_use_says_who_is_affected_and_proceeds` · `test_deleting_a_corpus_detaches_it_from_every_session` · `test_detaching_leaves_the_corpus_itself_alone` · `test_attaching_a_corpus_that_does_not_exist_is_refused` · `test_a_dangling_corpus_id_does_not_break_the_run`

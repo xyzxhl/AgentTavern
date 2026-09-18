@@ -84,6 +84,11 @@ async def run_director(
     history = ctx.repo.path_to(ctx.parent_id) if ctx.parent_id else []
 
     prior = replay_messages(history, readable=tool_enabled("director", "history_read"))
+    # 开场白在第一个 turn 之前，属于故事的固定起点，但不是一个伪造节点（S168）。
+    # 以 assistant 历史消息放在所有 run 之前：director 能据此承接现场，仍不会读到
+    # 任何由 writer 生成的节点正文。
+    if session.opening:
+        prior.insert(0, Message(role=Role.ASSISTANT, content=session.opening))
 
     # **打断是挂起**（S48 / S49）：上次被截断处之前的推演原样接回来。
     #

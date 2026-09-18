@@ -163,7 +163,11 @@ async def _execute_run(
     # 工具面按各 agent YAML 里的开关组装（S80）：关掉的工具**不注册**，
     # 模型看不到。worldinfo 全部常驻时也不注册其工具——没有东西可展开。
     if registry is None:
-        registry = ToolRegistry.for_session(repo.worldbook(), repo.corpora())
+        registry = ToolRegistry.for_session(
+            repo.worldbook(),
+            repo.corpora(),
+            has_state=bool(repo.state_at(parent_id).values),
+        )
 
     # **打断是挂起**（S48）：上一次被截断的那一段在这里被接回来。
     # 认领的条件是父节点一致——不一致说明用户已经切到别的分支去了，接不上（S42）。
@@ -501,7 +505,7 @@ async def _maintain_state(ctx: RunContext, tracer: Tracer, outline: str, prose: 
     """
     await run_state_manager(
         ctx,
-        ToolRegistry.for_state_manager(),
+        ToolRegistry.for_state_manager(has_state=bool(ctx.current_state().values)),
         tracer,
         outline=outline,
         prose=prose,

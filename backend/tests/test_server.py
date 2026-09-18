@@ -52,7 +52,7 @@ def client_for(tmp_path: Path):
 
 
 def book_of(client, session_id: str) -> str:
-    """这个 session 开在哪份设定上（S63）。**建会话时会自动配一份空的。**"""
+    """这个 session 开在哪份设定上（S63）。"""
     return client.get(f"/sessions/{session_id}").json()["session"]["worldbook_id"]
 
 
@@ -101,6 +101,82 @@ def test_session_crud(client_for) -> None:
     detail = client.get(f"/sessions/{session['id']}").json()
     assert detail["path"] == []
     assert detail["state"] == {}
+
+
+def test_new_sessions_use_the_worldbook_name_and_avoid_collisions(client_for) -> None:
+    """所选 worldbook 是新会话的命名锚点，重名依次加编号（S162）。"""
+    client = client_for(happy_llm())
+    book = client.post("/worldbooks", json={"name": "旧城区"}).json()
+
+    sessions = [
+        client.post("/sessions", json={"worldbook_id": book["id"]}).json() for _ in range(3)
+    ]
+
+    assert [session["meta"]["title"] for session in sessions] == [
+        "旧城区",
+        "旧城区 2",
+        "旧城区 3",
+    ]
+    assert {session["worldbook_id"] for session in sessions} == {book["id"]}
+    assert client.post("/sessions", json={"worldbook_id": "wb_missing"}).status_code == 404
+
+
+def test_an_opening_is_optional_selected_and_frozen_when_the_session_is_created(client_for) -> None:
+    """开场白属于 worldbook，但选中后就是已经展示的故事起点（S168）。"""
+    client = client_for(happy_llm())
+    book = client.post("/worldbooks", json={"name": "旧城区"}).json()
+    opening = client.put(
+        f"/worldbooks/{book['id']}/entries",
+        json={"name": "雨夜", "kind": "opening", "content": "雨落在旧车站的铁皮顶上。"},
+    ).json()
+
+    card = next(
+        item for item in client.get("/worldbooks").json() if item["worldbook"]["id"] == book["id"]
+    )
+    assert card["openings"] == [{"id": opening["id"], "name": "雨夜"}]
+
+    plain = client.post("/sessions", json={"worldbook_id": book["id"]}).json()
+    assert plain["opening_id"] is None
+    assert plain["opening"] == ""
+
+    session = client.post(
+        "/sessions", json={"worldbook_id": book["id"], "opening_id": opening["id"]}
+    ).json()
+    assert session["opening"] == "雨落在旧车站的铁皮顶上。"
+
+    client.put(
+        f"/worldbooks/{book['id']}/entries",
+        json={**opening, "content": "后来改写的版本。"},
+    )
+    assert client.get(f"/sessions/{session['id']}").json()["session"]["opening"] == (
+        "雨落在旧车站的铁皮顶上。"
+    )
+    assert (
+        client.post(
+            "/sessions", json={"worldbook_id": book["id"], "opening_id": "wi_missing"}
+        ).status_code
+        == 404
+    )
+
+
+def test_deleting_a_session_closes_its_runner_without_deleting_its_worldbook(client_for) -> None:
+    """删除只收掉这局故事；被引用的一级资产仍保留（S163）。"""
+    client = client_for(happy_llm())
+    book = client.post("/worldbooks", json={"name": "旧城区"}).json()
+    session_id = client.post("/sessions", json={"worldbook_id": book["id"]}).json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        deleted = client.delete(f"/sessions/{session_id}")
+        assert deleted.status_code == 200
+        assert deleted.json() == {"deleted": session_id}
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_text()
+
+    assert client.get(f"/sessions/{session_id}").status_code == 404
+    assert client.get(f"/worldbooks/{book['id']}").status_code == 200
+    assert client.get("/sessions").json() == []
+    assert client.delete(f"/sessions/{session_id}").status_code == 404
 
 
 def test_missing_session_is_404(client_for) -> None:
@@ -212,11 +288,8 @@ def test_a_worldbook_can_open_several_sessions(client_for) -> None:
         assert book_of(client, sid) == book
 
 
-def test_a_new_session_gets_its_own_worldbook_when_none_is_named(client_for) -> None:
-    """**先开故事、边写边补设定**也要走得通（S63）。
-
-    要求先建 worldbook 才能开会话，等于在最没有想法的那一刻逼人做决定。
-    """
+def test_low_level_session_creation_without_a_worldbook_keeps_a_valid_reference(client_for) -> None:
+    """仓储/API 的空值兜底不暴露给 UI，但不能落下悬空引用。"""
     client = client_for(happy_llm())
     a, b = (client.post("/sessions").json()["id"] for _ in range(2))
 
@@ -655,6 +728,42 @@ def test_user_edit_rewrites_node_directly(client_for) -> None:
     assert client.get(f"/sessions/{session_id}").json()["state"]["地点"] == "阳台"
 
 
+def test_editing_user_input_changes_what_regeneration_uses(client_for) -> None:
+    """输入是 turn 的产品记录，也是重生成的起点；保存后不能再读回旧值（S164）。"""
+    llm = ScriptedLLM(
+        *one_run(outline="旧输入生成的细纲。"),
+        *one_run(outline="新输入生成的细纲。"),
+        state=[one_state("客厅"), one_state("阳台")],
+    )
+    client = client_for(llm)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "我推开门"}))
+        first = collect(ws, "run_finished")[-1]["node"]
+
+        ws.send_text(
+            json.dumps(
+                {
+                    "type": "edit_node",
+                    "node_id": first["id"],
+                    "user_input": "我敲门后等里面回应",
+                }
+            )
+        )
+        edited = collect(ws, "node_updated")[-1]["node"]
+        assert edited["user_input"]["text"] == "我敲门后等里面回应"
+        assert edited["user_input"]["submitted_at"] == first["user_input"]["submitted_at"]
+
+        ws.send_text(json.dumps({"type": "regenerate", "node_id": first["id"]}))
+        rerolled = collect(ws, "run_finished")[-1]["node"]
+
+    assert rerolled["id"] != first["id"]
+    assert rerolled["parent_id"] == first["parent_id"]
+    assert rerolled["user_input"]["text"] == "我敲门后等里面回应"
+
+
 def test_switching_back_to_a_regenerated_sibling_restores_its_state(client_for) -> None:
     """重生成之后**切回原来那一支**，状态跟着回去（S42）。
 
@@ -963,6 +1072,65 @@ def opening(next_input: str, *subgoals: str):
         ),
         text("先走这一步。"),
     ]
+
+
+def test_pausing_during_goal_opening_finishes_and_accounts_for_that_run(
+    client_for, tmp_path: Path
+) -> None:
+    """暂停只拦下一轮；已经开始的目标轮仍完成、核对并记账（S160）。"""
+    goal_repo = SessionRepository(tmp_path, "s-pause-current")
+    paused = False
+
+    def pause_once() -> None:
+        nonlocal paused
+        if paused:
+            return
+        paused = True
+        session = goal_repo.load_session()
+        assert session.goal_run is not None
+        session.goal_run.paused = True
+        session.goal_run.paused_reason = "用户暂停"
+        goal_repo.save_session(session)
+
+    llm = ScriptedLLM(
+        *opening("检查柜台。", "找到姓名线索"),
+        *one_run(outline="她检查柜台。", prose="她在账册上看见掌柜的全名。"),
+        tools(
+            ("check", {"reached": [1]}),
+            ("steer", {"next_input": "继续追查。"}),
+        ),
+        text("当前轮核对完毕。"),
+        *one_run(outline="不该自动开始的下一轮。"),
+        state=one_state(),
+        on_goal_request=pause_once,
+    )
+    client = client_for(llm)
+    session = Session(id="s-pause-current")
+    client.post("/sessions", json=session.model_dump(mode="json"))
+
+    with client.websocket_connect(f"/sessions/{session.id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(
+            json.dumps(
+                {
+                    "type": "set_goal",
+                    "description": "找到掌柜姓名",
+                    "max_runs": 3,
+                }
+            )
+        )
+        finished = collect(ws, "run_finished")[-1]
+        ws.send_text(json.dumps({"type": "不存在的类型"}))
+        assert "格式错误" in collect(ws, "error")[-1]["message"]
+
+    assert finished["node"]["prose"] == "她在账册上看见掌柜的全名。"
+    assert len(goal_repo.all_nodes()) == 1, "暂停后不能自动开下一轮"
+    run = goal_repo.load_session().goal_run
+    assert run is not None
+    assert run.paused is True
+    assert run.paused_reason == "用户暂停", "旧的 goal 副本不能覆盖刚写入的暂停"
+    assert run.spent_runs == 1, "已经落盘的目标轮必须记账"
+    assert run.plan is not None and run.plan.subgoals[0].done is True, "当前轮仍要完成目标核对"
 
 
 def test_setting_a_goal_plans_first_then_runs(client_for) -> None:
@@ -1981,23 +2149,25 @@ def test_unknown_session_websocket_is_rejected(client_for) -> None:
         ws.receive_text()
 
 
-def test_a_session_allows_only_one_live_socket(client_for) -> None:
-    """本地单用户拓扑下，同一 session 不能有两个 runner 同时写盘。"""
+def test_a_new_socket_takes_over_without_leaving_two_runners(client_for) -> None:
+    """刷新后的页面接管旧连接，但同一 session 仍只有一个 runner（S161）。"""
     client = client_for(happy_llm())
     session_id = client.post("/sessions").json()["id"]
 
     with client.websocket_connect(f"/sessions/{session_id}/ws") as first:
         first.receive_text()
-        with (
-            pytest.raises(WebSocketDisconnect) as rejected,
-            client.websocket_connect(f"/sessions/{session_id}/ws") as second,
-        ):
-            second.receive_text()
-        assert rejected.value.code == 4409
+        with client.websocket_connect(f"/sessions/{session_id}/ws") as second:
+            assert json.loads(second.receive_text())["type"] == "state"
+            with pytest.raises(WebSocketDisconnect) as replaced:
+                first.receive_text()
+            assert replaced.value.code == 4012
 
-    # 第一个连接释放后，登记也必须释放，不能把会话永久锁死。
-    with client.websocket_connect(f"/sessions/{session_id}/ws") as next_socket:
-        assert json.loads(next_socket.receive_text())["type"] == "state"
+            second.send_text(json.dumps({"type": "submit", "text": "刷新后继续"}))
+            assert collect(second, "run_finished")[-1]["node"]["user_input"]["text"] == "刷新后继续"
+
+    # 接管连接释放后，登记仍要释放，不能把会话永久锁死。
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as third:
+        assert json.loads(third.receive_text())["type"] == "state"
 
 
 def test_a_hand_edit_lands_in_the_trace(client_for) -> None:

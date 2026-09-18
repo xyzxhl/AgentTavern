@@ -22,6 +22,7 @@ from agenttavern.models import (
     RunStatus,
     Session,
     UserInput,
+    Worldbook,
     WorldbookEntry,
 )
 from agenttavern.orchestration import execute_run
@@ -68,6 +69,22 @@ async def test_the_run_hands_the_control_dimensions_to_the_tool_face(tmp_path: P
     assert "一轮内可以多次" in ask["function"]["description"], "low 档的措辞没发出去"
 
 
+async def test_first_run_with_empty_state_does_not_advertise_state_query(tmp_path: Path) -> None:
+    """空状态没有可展开对象；director 与 state_manager 都不该诱导模型白查（S21）。"""
+    llm = happy_llm()
+    repo = Store(tmp_path).create_session(Session())
+
+    await execute_run(repo, repo.load_session(), llm.gateway(), user_input=UserInput(text="我推门"))
+
+    director = next(
+        r for r in llm.requests if r.get("tools") and STATE_MARK not in str(r["messages"])
+    )
+    state_manager = next(r for r in llm.requests if STATE_MARK in str(r["messages"]))
+    for request in (director, state_manager):
+        names = {spec["function"]["name"] for spec in request.get("tools", [])}
+        assert "state_query" not in names
+
+
 async def test_full_run_produces_a_node(tmp_path: Path) -> None:
     llm = happy_llm()
     repo, session, gw, reg = setup(tmp_path, llm)
@@ -81,6 +98,35 @@ async def test_full_run_produces_a_node(tmp_path: Path) -> None:
     assert node.status is RunStatus.COMPLETE
     assert repo.load_node(node.id).prose == node.prose
     assert repo.load_session().active_leaf_id == node.id
+
+
+async def test_the_opening_precedes_the_first_turn_without_becoming_a_node(tmp_path: Path) -> None:
+    """开场是固定历史种子：director 承接现场，writer 承接文字，但它不是 run。"""
+    store = Store(tmp_path)
+    book = store.create_worldbook(Worldbook(name="旧城区"))
+    opening = book.save_entry(
+        WorldbookEntry(
+            name="雨夜",
+            kind=EntryKind.OPENING,
+            content="雨落在旧车站的铁皮顶上。",
+        )
+    )
+    repo = store.create_session(Session(worldbook_id=book.worldbook_id, opening_id=opening.id))
+    llm = happy_llm()
+
+    outcome = await execute_run(
+        repo,
+        repo.load_session(),
+        llm.gateway(),
+        ToolRegistry(),
+        user_input=UserInput(text="我推开门"),
+    )
+
+    director_messages = str(llm.messages_of(0))
+    assert "雨落在旧车站的铁皮顶上。" in director_messages, "director 要承接开场现场"
+    assert director_messages.count("雨落在旧车站的铁皮顶上。") == 1, "不能又混进 worldinfo"
+    assert "雨落在旧车站的铁皮顶上。" in str(llm.messages_of(1)), "writer 要承接开场正文"
+    assert repo.path_to(outcome.node.id) == [outcome.node], "开场不能伪装成第 0 个节点"
 
 
 async def test_state_lands_only_when_run_completes(tmp_path: Path) -> None:

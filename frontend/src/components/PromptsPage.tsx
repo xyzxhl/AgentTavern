@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
 
-import { api, type PromptCard, type PromptDoc, type PromptGroup, type Section } from "../api";
+import {
+  api,
+  type PromptCard,
+  type PromptDoc,
+  type PromptGroup,
+  type PromptSetCard,
+  type Section,
+} from "../api";
 import { type Page, useSession } from "../store";
+import { EditableTitle } from "./EditableTitle";
 import { JsonEditor } from "./JsonEditor";
 import { Pick, YesNo } from "./Pick";
 
@@ -41,26 +49,42 @@ export function PromptsPage({ group }: { group: PromptGroup }): JSX.Element {
   const picked = opened ?? FIRST[group];
 
   const [cards, setCards] = useState<PromptCard[]>([]);
+  const [sets, setSets] = useState<PromptSetCard[]>([]);
   const [doc, setDoc] = useState<PromptDoc | null>(null);
   const [tab, setTab] = useState<Tab>("context");
   const [problem, setProblem] = useState("");
   const [saved, setSaved] = useState(false);
+  const [dirty, setDirty] = useState(false);
   // **正在编辑的东西还不合法时，保存必须停下来。** 这里的「额外请求参数」是一段
   // JSON：解析不出来时它压根没进 `doc`，而按下保存会**把上一份原样写回去**，
   // 页头还写着「已保存」——用户以为自己那段改动生效了。同 S135：
   // 一个不出声的丢弃和失败没有区别。
   const [blocked, setBlocked] = useState<string | null>(null);
 
+  const activeSet = sets.find((item) => item.active);
+
+  async function reloadLibrary(): Promise<void> {
+    const [nextSets, nextCards] = await Promise.all([api.listPromptSets(), api.listPrompts()]);
+    setSets(nextSets);
+    setCards(nextCards);
+  }
+
   useEffect(() => {
-    void api.listPrompts().then(setCards);
+    void reloadLibrary().catch((err: unknown) => setProblem((err as Error).message));
   }, []);
 
   useEffect(() => {
     setDoc(null);
     setProblem("");
     setBlocked(null);
-    void api.getPrompt(picked).then(setDoc);
-  }, [picked]);
+    void api
+      .getPrompt(picked)
+      .then((next) => {
+        setDoc(next);
+        setDirty(false);
+      })
+      .catch((err: unknown) => setProblem((err as Error).message));
+  }, [picked, activeSet?.id]);
 
   // **草稿改在本地，保存才落盘。** 一边拖顺序一边每步都写盘的话，中途那些不
   // 成立的中间状态会被试装配拦下来，用户得到一串莫名其妙的报错。
@@ -70,6 +94,7 @@ export function PromptsPage({ group }: { group: PromptGroup }): JSX.Element {
     if (!doc) return;
     setDoc({ ...doc, data: { ...doc.data, ...next } });
     setSaved(false);
+    setDirty(true);
   }
 
   async function save(): Promise<void> {
@@ -83,7 +108,61 @@ export function PromptsPage({ group }: { group: PromptGroup }): JSX.Element {
     try {
       setDoc(await api.putPrompt(doc.name, doc.data));
       setSaved(true);
+      setDirty(false);
       setCards(await api.listPrompts());
+    } catch (err) {
+      setProblem((err as Error).message);
+    }
+  }
+
+  async function activate(id: string): Promise<void> {
+    if (id === activeSet?.id) return;
+    if (dirty && !confirm("当前提示词还有未保存修改。放弃修改并切换套装？")) return;
+    setProblem("");
+    setSaved(false);
+    try {
+      await api.activatePromptSet(id);
+      await reloadLibrary();
+    } catch (err) {
+      setProblem((err as Error).message);
+    }
+  }
+
+  async function duplicate(): Promise<void> {
+    if (!activeSet) return;
+    if (dirty && !confirm("当前提示词还有未保存修改。副本只包含已保存内容，仍要继续？")) return;
+    setProblem("");
+    setSaved(false);
+    try {
+      await api.copyPromptSet(activeSet.id);
+      await reloadLibrary();
+    } catch (err) {
+      setProblem((err as Error).message);
+    }
+  }
+
+  async function renameSet(name: string): Promise<void> {
+    if (!activeSet || activeSet.id === "default") return;
+    setProblem("");
+    try {
+      await api.renamePromptSet(activeSet.id, name);
+      await reloadLibrary();
+    } catch (err) {
+      setProblem((err as Error).message);
+    }
+  }
+
+  async function removeSet(): Promise<void> {
+    if (!activeSet || activeSet.id === "default") return;
+    if (dirty && !confirm("当前提示词还有未保存修改。删除套装会一并放弃这些修改，仍要继续？")) {
+      return;
+    }
+    if (!confirm(`删除提示词套装「${activeSet.name}」？当前进行中的 turn 不受影响。`)) return;
+    setProblem("");
+    setSaved(false);
+    try {
+      await api.deletePromptSet(activeSet.id);
+      await reloadLibrary();
     } catch (err) {
       setProblem((err as Error).message);
     }
@@ -100,7 +179,12 @@ export function PromptsPage({ group }: { group: PromptGroup }): JSX.Element {
           .map((card) => (
             <button
               key={card.name}
-              onClick={() => go(pageOf(group, card.name))}
+              onClick={() => {
+                if (dirty && !confirm("当前提示词还有未保存修改。放弃修改并打开另一份？")) {
+                  return;
+                }
+                go(pageOf(group, card.name));
+              }}
               className={`mb-0.5 block w-full rounded px-2 py-1.5 text-left transition-colors ${
                 card.name === picked ? "bg-ink-600" : "hover:bg-ink-700"
               }`}
@@ -119,6 +203,35 @@ export function PromptsPage({ group }: { group: PromptGroup }): JSX.Element {
       </nav>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="flex items-center gap-2 border-b border-line bg-ink-800 px-5 py-2">
+          <span className="text-[11px] text-dim">套装</span>
+          {activeSet && sets.length > 0 && (
+            <Pick<string>
+              value={activeSet.id}
+              options={sets.map((item) => [item.id, item.name])}
+              onChange={(id) => void activate(id)}
+            />
+          )}
+          <span className="mx-1 h-4 w-px bg-line" />
+          {activeSet?.id === "default" ? (
+            <span className="text-xs text-fg">默认</span>
+          ) : activeSet ? (
+            <EditableTitle
+              value={activeSet.name}
+              onCommit={(name) => void renameSet(name)}
+              className="text-xs text-fg"
+            />
+          ) : null}
+          <div className="flex-1" />
+          <button className="btn" onClick={() => void duplicate()} disabled={!activeSet}>
+            复制当前套装
+          </button>
+          {activeSet && activeSet.id !== "default" && (
+            <button className="btn" onClick={() => void removeSet()}>
+              删除套装
+            </button>
+          )}
+        </div>
         <header className="flex items-center gap-3 border-b border-line px-5 py-2.5">
           <span className="text-sm text-fg">{LABEL[picked] ?? picked}</span>
           <span className="font-mono text-[11px] text-dim">{picked}</span>

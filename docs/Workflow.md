@@ -121,7 +121,8 @@ user story  →  req  →  spec + test（同时）  →  code
 
 ### 提示词正文归用户
 
-`backend/agenttavern/prompting/*.yaml` 里的**提示词正文是用户手写的**。
+`backend/agenttavern/prompting/*.yaml` 与 `backend/agenttavern/prompting/sets/*/*.yaml`
+里的**提示词正文是用户手写的**。
 可以改这些文件的**结构**（`sections` 顺序、加一个 `choice`、改 `enabled`）和**文件头注释**，
 但**不要顺手把话说得更顺**。
 

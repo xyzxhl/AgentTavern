@@ -95,7 +95,7 @@ sections:
   source: history_outline
 tools:
   plan:
-    body: 建立或重建中间状态。**重建会清空进度**，全部从未成立算起。
+    body: 建立或重建中间状态。
   check:
     body: 更新中间状态的成立情况。只观察，不干预。
   steer:

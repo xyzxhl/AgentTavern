@@ -44,6 +44,8 @@ export interface WorldbookCard {
   worldbook: Worldbook;
   entries: number;
   sessions: string[];
+  /** 新故事可选的开场白；空数组表示直接从用户第一条输入开始（S168）。 */
+  openings: { id: string; name: string }[];
   /** 读不出来的那几条（S73）。**一条坏数据不该让整张列表 500**，但也不能
    * 悄悄跳过——用户得知道自己丢了什么。 */
   broken: string[];
@@ -81,6 +83,13 @@ export interface PromptCard {
 
 /** 提示词分两类（S147）：agent 是**一个角色**，call 是**一次动作**。 */
 export type PromptGroup = "agent" | "call";
+
+/** 一套完整提示词配置；切换是服务级动作，进行中的 turn 继续用冻结快照。 */
+export interface PromptSetCard {
+  id: string;
+  name: string;
+  active: boolean;
+}
 
 /** 一份提示词配置，加上**由 Python 生成的参数 schema**（只读）。
  *
@@ -127,6 +136,8 @@ export const api = {
   listSessions: () => json<SessionCard[]>("/sessions"),
   createSession: (session?: Partial<Session>) =>
     json<Session>("/sessions", { method: "POST", body: JSON.stringify(session ?? null) }),
+  deleteSession: (id: string) =>
+    json<{ deleted: string }>(`/sessions/${id}`, { method: "DELETE" }),
   patchSession: (id: string, patch: Record<string, unknown>) =>
     json<Session>(`/sessions/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   getSession: (id: string) =>
@@ -151,8 +162,8 @@ export const api = {
   // -- worldbook：**一级资产，不属于任何 session**（S63）--------------------
   //
   // 一份设定能开出好几个故事，所以它有自己的管理界面，不挂在某个会话下面。
-  // 条目分三类：`world` / `character` 的 `content` 进 worldinfo（静态设定），
-  // `state` 的 `values` 进初始状态（会变的部分）。
+  // 条目分四类：`world` / `character` 的 `content` 进 worldinfo（静态设定），
+  // `state` 的 `values` 进初始状态；`opening` 是新故事可选的固定开场。
   //
   // **改设定立刻对所有故事生效**，那是对的——这些是"这个世界是什么"，改它等于
   // 改角色卡。已经发生过的剧情所依赖的事实是另一回事：初始状态在**每局故事
@@ -228,6 +239,21 @@ export const api = {
   // 所以路径是 `/prompts` 而不是 `/agents`。
   //
   // 原样进原样出——前端不认识里面的结构，只按三类条目画界面。
+  listPromptSets: () => json<PromptSetCard[]>("/prompt-sets"),
+  copyPromptSet: (sourceId: string) =>
+    json<PromptSetCard>("/prompt-sets", {
+      method: "POST",
+      body: JSON.stringify({ source_id: sourceId }),
+    }),
+  renamePromptSet: (id: string, name: string) =>
+    json<PromptSetCard>(`/prompt-sets/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    }),
+  activatePromptSet: (id: string) =>
+    json<PromptSetCard>(`/prompt-sets/${id}/active`, { method: "PUT" }),
+  deletePromptSet: (id: string) =>
+    json<{ deleted: string; active: string }>(`/prompt-sets/${id}`, { method: "DELETE" }),
   listPrompts: () => json<PromptCard[]>("/prompts"),
   getPrompt: (name: string) => json<PromptDoc>(`/prompts/${name}`),
   /** 保存。**服务端先试装配再写盘**——装不出来回 422，正文里说是哪一节坏了。 */

@@ -12,6 +12,7 @@
 | 装什么 | |
 |---|---|
 | `worldbook_id` | 指向一份设定，**不内嵌拷贝** |
+| 选中的开场白 | 创建时复制；没有也完全合法；不占节点 |
 | 标题 | |
 | 目标 | 没有就是普通会话 |
 | 节点树 | 一个 run 一个节点 |
@@ -94,3 +95,46 @@ session 共用同一个玩家角色。
 这是 [S135](UI.md#s135) 的第三次：**一个不出声的成功和失败没有区别。**
 
 **验收** `test_changing_the_session_outside_a_run_is_pushed_back`
+
+### S161 · 同一 session 单连接，后来的页面接管旧连接
+
+**服务** —（本地单用户拓扑的连接契约）
+
+**规格** 同一 session 始终只有一个 runner。新的 WebSocket 到达时，服务端先关闭并收尾
+旧连接与旧 runner，再接受新连接；旧 handler 的延迟清理不得删掉新连接的登记。
+
+**不做** 并行保留两个 runner；不把第二个连接直接拒绝后留给页面永久断线。
+
+**为什么** 本项目面向本地单用户，刷新页面是正常恢复动作，不是需要保护的多用户竞争。
+直接拒绝新连接会让刷新恰好撞上旧连接清理窗口时永远停在“连接断开”，而旧页面已经不可用。
+
+**验收** `test_a_new_socket_takes_over_without_leaving_two_runners`
+
+### S162 · 新会话从所选 worldbook 得名并避让重名
+
+**服务** [R1](../req/开局与设定.md) [R50](../req/开局与设定.md)
+
+**规格** 用户侧的新建入口必须给出已有 worldbook 选择；创建出的 session 引用该
+`worldbook_id`，默认标题取 worldbook 名。标题已存在时从 2 开始取最小可用编号。
+
+**不做** 界面静默创建空 worldbook；不覆盖用户在创建后手工改过的标题。
+
+**为什么** 选择发生在创建前，避免开错世界；命名直接复用已有识别锚点，同时让同一
+worldbook 开出的多局故事在列表中仍可区分。
+
+**验收** `test_new_sessions_use_the_worldbook_name_and_avoid_collisions`
+
+### S163 · 删除会话只删除会话自己的数据
+
+**服务** [R49](../req/开局与设定.md)
+
+**规格** 当前故事页提供带确认的删除入口。服务端删除前收尾该 session 的连接与 runner，
+随后删除它的 session 目录；worldbook、corpus 及其它 session 不受影响。删除不存在的
+session 返回 404。
+
+**不做** 级联删除任何一级资产；不让仍在运行的旧 runner 在删除后继续写回。
+
+**为什么** session 是可丢弃的一局故事，worldbook/corpus 是可复用资产，两者生命周期
+不同。先关 runner 再删盘，才能避免目录被删除后旧任务又把它写回来。
+
+**验收** `test_deleting_a_session_closes_its_runner_without_deleting_its_worldbook`

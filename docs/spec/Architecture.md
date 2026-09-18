@@ -59,6 +59,22 @@ turn。turn 是逻辑位置，重生成只为它创建兄弟版本。每个完�
 
 **验收** `test_interrupt_during_state_keeps_outline_and_prose` · `test_staged_delta_is_not_persisted_until_run_ends` · `test_a_system_failure_fails_the_atomic_turn` · `test_invalid_tool_arguments_return_to_the_agent_for_repair`
 
+### S166 · provider 没有完整结束的响应使整轮失败
+
+**服务** [R9](../req/推进剧情.md) [R51](../req/开发者视角.md)
+
+**规格** OpenAI 兼容响应只有 `stop`、`tool_calls` 或兼容旧端点的 `function_call` 算完整。
+`length`、`content_filter`、其它非正常结束原因，以及流式连接结束却没有最终
+`finish_reason`，都抛成模型调用失败，由 runner 走原子整轮失败。
+
+**不做** 把截断的正文、半套工具调用或只有 thinking 的响应交给下游；也不在应用层
+自动重试整轮——SDK 对瞬时请求错误的重试与用户主动重试是两层不同语义。
+
+**为什么** thinking 后直接断流此前会被解析成一次合法的空回答，表象可能一路漂成
+director 不提交、writer 空正文，甚至只剩「连接关闭」，原始原因反而消失。
+
+**验收** `test_truncated_response_fails_instead_of_becoming_partial_output` · `test_stream_ending_without_finish_reason_is_reported_as_interrupted`
+
 ### S3 · director 是主 agent，writer 是从它身上拆下来的渲染器
 
 **服务** [R7](../req/推进剧情.md)

@@ -34,7 +34,7 @@
 director -> writer -> state_manager -> goal_manager（仅有 goal 时）
 ```
 
-- director 是主 agent，负责推演与细纲；它读细纲历史、worldinfo、state 与用户输入，但绝不读正文或文风。
+- director 是主 agent，负责推演与细纲；它读细纲历史、worldinfo、state、用户输入与用户编写的静态开场，但绝不读 writer 生成的节点正文或文风。
 - writer 是无工具的单次渲染调用，只把细纲落成正文；它不承担剧情规划。
 - state_manager 在正文完成后运行，是 state 的唯一模型写入者；director 只能查询 state。
 - goal_manager 只在长任务中存在，跨 run 维护目标产品记录与进度。不要让 goal 语义渗入 director；自主推进应通过模拟输入走和普通输入相同的生成路径。
@@ -48,6 +48,7 @@ director -> writer -> state_manager -> goal_manager（仅有 goal 时）
 - 当前 state 是“初始状态 + 当前路径上的节点增量”的重放结果，不是全局单例，也不是独立权威快照。切换分支必须同时切换并重放 state 与 history。
 - worldbook、corpus、session 都是一级资产：worldbook 与 corpus 可被多个 session 引用，session 只保存引用，不复制资产。
 - worldbook 的初始状态在第一轮开始时冻结进 session，成为所有分支的共同重放起点；其它静态设定每轮现读。
+- worldbook 的开场白是可选候选；创建 session 时明确选择并复制，显示在第一个 turn 前但不占节点。既有故事不随候选改写。
 - 「用户扮演谁」属于 worldbook，不是 session 覆盖项；复用同一 worldbook 的 session
   共用同一个玩家角色。
 - trace 全局 append-only，不随分支切换；默认不落盘，开发者模式下按 run 完整落盘。
@@ -88,11 +89,12 @@ director -> writer -> state_manager -> goal_manager（仅有 goal 时）
 
 ## 提示词与配置
 
-- `backend/agenttavern/prompting/*.yaml` 的提示词正文属于用户。除非任务明确要求，不要顺手润色、改写或“统一语气”。结构、顺序、开关和文件头说明可以按规格修改。
+- `backend/agenttavern/prompting/*.yaml` 与 `backend/agenttavern/prompting/sets/*/*.yaml` 的提示词正文属于用户。除非任务明确要求，不要顺手润色、改写或“统一语气”。结构、顺序、开关和文件头说明可以按规格修改。
 - 凡新增且可能进入后续 context 的**产品内容**，都必须有明确归属和可审查入口；
   不要在 Python/TypeScript 中新藏一份重复提示词。thinking、tool call/result 与运行时错误
   是只读执行记录，不在这项可编辑承诺内。
 - 一份 agent 文件描述该 agent 收到的全部可编排内容。`text`、`context`、`choice` 三类条目必须显式标型；一个 section 对应一条消息。
+- 提示词按完整套装管理，不做稀疏覆盖或跨套装继承。当前套装是服务级选择，在 turn 开始时随全部配置一起冻结。
 - 未知 context、缺失变量、非法 role、无效 selected 等配置错误应尽早、明确失败，不能静默跳过或悄悄回退。
 - 模型、流式、额外调用参数与所有 choice 按 agent 存在 YAML 中，是服务级配置；
   不提供 `.env` 全局模型/流式兜底，也不提供 session 覆盖。

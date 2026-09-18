@@ -97,6 +97,8 @@ class EditNode(BaseModel):
 
     type: Literal["edit_node"] = "edit_node"
     node_id: str
+    user_input: str | None = Field(default=None, title="EditedUserInput")
+    """替换这一 turn 的顶层输入文字；来源与提交时间保持不变（S164）。"""
     outline: str | None = None
     prose: str | None = None
 

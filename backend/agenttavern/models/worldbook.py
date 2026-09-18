@@ -24,7 +24,7 @@ class WorldbookMode(StrEnum):
 
 
 class EntryKind(StrEnum):
-    """条目分三类（S67 / S65）。
+    """条目分四类（S67 / S65 / S168）。
 
     早先是一条条目**同时**装静态设定和初始状态、共用一个 `mode`。拆开的理由是
     可见性天然不同步：一个角色的背景可能几百字、该按需展开，而他「在不在场」
@@ -50,6 +50,13 @@ class EntryKind(StrEnum):
     STATE = "state"
     """初始状态：一棵键值树。会变的东西——在哪、知道什么、和谁什么关系。"""
 
+    OPENING = "opening"
+    """开场白：新故事在第一个 turn 之前显示的一段可选正文（S168）。
+
+    它不是 worldinfo，也不是一个伪造的第 0 个节点。创建 session 时若用户选择了
+    一条开场白，就把正文复制进 session；之后 worldbook 里的修改只影响新故事。
+    """
+
 
 class WorldbookEntry(BaseModel):
     id: str = Field(default_factory=lambda: new_id("wi"))
@@ -58,7 +65,7 @@ class WorldbookEntry(BaseModel):
     kind: EntryKind = EntryKind.WORLD
 
     content: str = ""
-    """`WORLD` / `CHARACTER` 的正文。`STATE` 条目不用它。"""
+    """`WORLD` / `CHARACTER` / `OPENING` 的正文。`STATE` 条目不用它。"""
 
     voice: str = ""
     """角色的语言习惯。**只有 `CHARACTER` 用，而且只进 writer**（S3 那把刀）。
@@ -94,7 +101,7 @@ class WorldbookEntry(BaseModel):
     """
 
     mode: WorldbookMode = WorldbookMode.ALWAYS
-    """是否可展开。**两类条目都有**（S67）。
+    """是否可展开。worldinfo 与 state 使用；`OPENING` 忽略（S67/S168）。
 
     `LORE`：`ALWAYS` 全文进上下文，`ON_DEMAND` 只进索引、由模型 `worldinfo_read`。
     **若全部 `LORE` 条目都是 `ALWAYS`，worldinfo 工具不注册**——没有东西可展开，

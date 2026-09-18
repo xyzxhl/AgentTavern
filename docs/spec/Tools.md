@@ -56,7 +56,8 @@
 
 **规格** 关闭一项能力时，它的工具**根本不注册**，而不是注册了再拒绝。
 **没有对象可操作时同样不注册**：世界设定全是"一直在"时 `worldinfo_read` 不注册，
-一份外部资料都没挂时 `corpus_search` 不注册（[S145](Corpus.md)）。
+一份外部资料都没挂时 `corpus_search` 不注册（[S145](Corpus.md)），当前有效 state 为空时
+director 与 state_manager 都不注册 `state_query`；`state_write` 仍保留。
 
 **不做** 注册一个只会返回"该功能已关闭"的工具。
 
@@ -68,7 +69,7 @@
 是三个**——这正是不做成一个 `expand(域, 路径)` 的理由：历史关掉时它的展开工具
 要跟着消失，而一个统管三个域的大工具只能"注册着但有一半用不了"。
 
-**验收** `test_each_switch_removes_its_tools` · `test_worldinfo_tools_only_when_something_is_expandable`
+**验收** `test_each_switch_removes_its_tools` · `test_worldinfo_tools_only_when_something_is_expandable` · `test_state_query_is_hidden_when_there_is_no_state_to_expand` · `test_first_run_with_empty_state_does_not_advertise_state_query`
 
 ### S22 · 工具分「生成中调用」与「生成后调用」，后者绝不进 loop
 
@@ -194,6 +195,9 @@
 
 **规格** 判据（该记什么、判定从严到什么程度、怎么拆中间状态）**全在 YAML 提示词里**，
 描述里一个字都不重复。
+
+参数格式必须把实际顶层字段说清楚；例如 `state_write` 直接接收 `set`、`append`、`remove`，
+不接受再套一层 `arguments`，也不接受把整份参数编码成 JSON 字符串。
 
 **唯一的例外**是 `ask_question` 的调用积极性——它讲的是"这个工具该多积极地被调用"，
 那就该由工具自己说。

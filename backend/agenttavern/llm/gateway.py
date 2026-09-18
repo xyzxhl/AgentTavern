@@ -14,6 +14,7 @@ DeepSeek、本地 llama.cpp / vLLM。配置见 ``.env``。
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -22,6 +23,10 @@ from openai import APIError, AsyncOpenAI
 
 from ..config import Settings
 from .types import Call, LLMError, Message, ModelResponse, ToolCall, ToolSpec, Usage
+
+logger = logging.getLogger(__name__)
+
+_COMPLETE_REASONS = {"stop", "tool_calls", "function_call"}
 
 OnDelta = Callable[[str, str], None]
 """``(kind, text)``——``kind`` 是 ``"content"`` 或 ``"reasoning"``。
@@ -124,13 +129,56 @@ class LLMGateway:
         try:
             if on_delta is None:
                 response = await self._client.chat.completions.create(**payload)
-                return _parse(response)
-            return await self._consume(payload, on_delta)
+                parsed = _parse(response)
+            else:
+                parsed = await self._consume(payload, on_delta)
         except APIError as exc:
             # SDK 已按其策略重试过；到这里就是最终失败。包成本项目的错误类型，
             # 让上层不必认识 SDK 的异常层次。
             status = getattr(exc, "status_code", None)
+            logger.exception(
+                "llm_request_failed model=%s stream=%s status=%s",
+                call.model,
+                on_delta is not None,
+                status,
+            )
             raise LLMError(str(exc), status=status) from exc
+        except Exception:
+            logger.exception(
+                "llm_response_failed model=%s stream=%s", call.model, on_delta is not None
+            )
+            raise
+
+        try:
+            _require_complete(parsed)
+        except LLMError:
+            logger.warning(
+                "llm_response_incomplete model=%s stream=%s finish_reason=%r "
+                "content_chars=%s reasoning_chars=%s tool_calls=%s tokens_in=%s tokens_out=%s",
+                call.model,
+                on_delta is not None,
+                parsed.finish_reason,
+                len(parsed.content),
+                len(parsed.reasoning_content or ""),
+                len(parsed.tool_calls),
+                parsed.usage.tokens_in,
+                parsed.usage.tokens_out,
+            )
+            raise
+
+        logger.info(
+            "llm_response_complete model=%s stream=%s finish_reason=%s content_chars=%s "
+            "reasoning_chars=%s tool_calls=%s tokens_in=%s tokens_out=%s",
+            call.model,
+            on_delta is not None,
+            parsed.finish_reason,
+            len(parsed.content),
+            len(parsed.reasoning_content or ""),
+            len(parsed.tool_calls),
+            parsed.usage.tokens_in,
+            parsed.usage.tokens_out,
+        )
+        return parsed
 
     async def _consume(self, payload: dict[str, Any], on_delta: OnDelta) -> ModelResponse:
         """把流式分片攒回一个完整的 `ModelResponse`，边攒边把文字推出去。
@@ -202,6 +250,21 @@ def _usage_of(raw: Any) -> Usage:
         cache_hit=int(extra.get("prompt_cache_hit_tokens") or 0),
         cache_miss=int(extra.get("prompt_cache_miss_tokens") or 0),
     )
+
+
+def _require_complete(response: ModelResponse) -> None:
+    """拒绝把被截断或无结束标记的半份响应交给 agent。
+
+    OpenAI 兼容协议的完整终点只有正常停止或完整工具调用。尤其流式连接若在
+    reasoning 之后直接断开，会没有最终 ``finish_reason``；此前它会被当成一份
+    合法的空回答，真正原因因此丢失。
+    """
+    reason = response.finish_reason
+    if reason in _COMPLETE_REASONS:
+        return
+    if not reason:
+        raise LLMError("模型响应在没有 finish_reason 的情况下结束，可能是 provider 中途断流")
+    raise LLMError(f"模型响应未完整结束（finish_reason={reason}）")
 
 
 def _parse(response: Any) -> ModelResponse:

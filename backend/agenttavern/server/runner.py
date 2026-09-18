@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal, cast
@@ -54,6 +55,8 @@ from .protocol import (
     Trace,
     UsageUpdate,
 )
+
+logger = logging.getLogger(__name__)
 
 Broadcast = Callable[[ServerMessage], Awaitable[None]]
 
@@ -126,6 +129,10 @@ class SessionRunner:
         self._active_item: _Queued | None = None
 
         self._loop_task: asyncio.Task[None] | None = None
+        self._owner_loop: asyncio.AbstractEventLoop | None = None
+        self._close_task: asyncio.Task[None] | None = None
+        self._closing = False
+        """连接清理正在关闭 runner。只用于给取消写对原因，不改变取消传播语义。"""
 
         self._run_id: str = ""
         """当前这一轮的 id。**流式分片要带上它**——前端靠它把字归到正确的一轮
@@ -170,17 +177,46 @@ class SessionRunner:
 
     def start(self) -> None:
         if self._loop_task is None:
+            self._owner_loop = asyncio.get_running_loop()
             self._sender_task = asyncio.create_task(self._sender())
             self._loop_task = asyncio.create_task(self._loop())
 
     async def aclose(self) -> None:
-        if self._current is not None:
-            self._current.cancel()
-        for task in (self._loop_task, self._sender_task):
-            if task is not None:
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+        owner = self._owner_loop
+        if owner is not None and owner is not asyncio.get_running_loop():
+            # 正常服务里的连接共用一个事件循环；TestClient 等宿主则可能让两个
+            # WebSocket 分属不同循环。关闭动作必须回到 runner 自己的循环执行，
+            # 否则等待旧 task 会触发 "attached to a different loop"。
+            future = asyncio.run_coroutine_threadsafe(self.aclose(), owner)
+            await asyncio.wrap_future(future)
+            return
+
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close())
+        await self._close_task
+
+    async def _close(self) -> None:
+        self._closing = True
+        current = self._current
+        if current is not None:
+            current.cancel()
+
+        if self._loop_task is not None:
+            self._loop_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._loop_task
+
+        # `_check_goal` 会接住取消、保留已经提交的故事节点并暂停 goal。必须等它把
+        # 这段收尾做完，才能把单连接名额交给刷新后的页面；否则两个 runner 会短暂
+        # 同写一份 session。
+        if current is not None:
+            with contextlib.suppress(asyncio.CancelledError):
+                await current
+
+        if self._sender_task is not None:
+            self._sender_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._sender_task
 
     @property
     def busy(self) -> bool:
@@ -348,6 +384,12 @@ class SessionRunner:
                 exc = self._current.exception()
                 if exc is not None:
                     self._autocontinue_armed = False
+                    logger.error(
+                        "runner_task_failed session=%s run=%s",
+                        self._repo.load_session().id,
+                        self._run_id,
+                        exc_info=(type(exc), exc, exc.__traceback__),
+                    )
                     self._emit(RunFailed(reason=f"未预期的错误：{exc}"))
 
     def _should_autocontinue(self) -> bool:
@@ -374,6 +416,9 @@ class SessionRunner:
 
     async def _execute_frozen(self, item: _Queued | None) -> None:
         session = self._repo.load_session()
+        goal_active_at_start = session.meta.goal is not None and (
+            session.goal_run is None or not session.goal_run.paused
+        )
         if item is None:
             session.input_revision += 1
             session.editable_node_id = None
@@ -412,13 +457,18 @@ class SessionRunner:
                 self._repo.clear_draft()
                 self._pause_goal(f"目标规划失败：{exc}")
                 self._restore_editable(revision, previous_leaf)
+                logger.exception("goal_opening_failed session=%s run=%s", session.id, run_id)
                 self._emit(RunFailed(reason=str(exc)))
                 return
-            # 规划期间目标可能当场判完、撞上预算、或被用户放弃。
-            if not self._should_autocontinue():
+            # 规划期间目标可能当场判完或被用户放弃。用户按「暂停」只拦下一轮，
+            # **这轮已经从目标开场开始了**，仍要继续落完节点并在末尾核对（S160）。
+            # 不能拿 `_should_autocontinue()` 判这里：它会把「不再开下一轮」误当成
+            # 「当前轮也别写了」。
+            latest = self._repo.load_session()
+            if latest.meta.goal is None or latest.goal_run is None:
                 self._emit(RunInterrupted(resumable=False))
                 return
-            session = self._repo.load_session()
+            session = latest
 
         try:
             outcome = await execute_run(
@@ -468,6 +518,7 @@ class SessionRunner:
             self._autocontinue_armed = False
             self._repo.clear_draft()
             self._restore_editable(revision, previous_leaf)
+            logger.exception("run_failed session=%s run=%s", session.id, run_id)
             self._emit(RunFailed(reason=str(exc)))
             return
 
@@ -476,16 +527,21 @@ class SessionRunner:
 
         self._deferred_goal_messages = []
         try:
-            await self._check_goal(outcome.node.id, outcome.usage)
+            await self._check_goal(
+                outcome.node.id,
+                outcome.usage,
+                active_at_start=goal_active_at_start,
+            )
         except asyncio.CancelledError:
             # 节点已经原子提交。此时停止的是目标判定/续跑，不回滚故事产出，
             # 也绝不能让刚被停止的 goal 立刻自动开下一轮。
             self._autocontinue_armed = False
-            self._pause_goal("用户停止了目标判定")
+            self._pause_goal("连接中断，目标判定未完成" if self._closing else "用户停止了目标判定")
         except Exception as exc:  # noqa: BLE001
             # goal_manager 位于节点提交之后，无法再把它伪装成整个故事 run 的失败。
             # 保留本轮产出、暂停目标，让用户决定是否恢复。
             self._autocontinue_armed = False
+            logger.exception("goal_check_failed session=%s run=%s", session.id, outcome.node.id)
             self._pause_goal(f"目标判定失败：{exc}")
 
         self._mark_editable(revision, outcome.node.id)
@@ -533,7 +589,13 @@ class SessionRunner:
         self._settle_goal(goal, run, step, usage, count_run=False)
         return step.next_input
 
-    async def _check_goal(self, leaf_id: str, usage: Usage) -> None:
+    async def _check_goal(
+        self,
+        leaf_id: str,
+        usage: Usage,
+        *,
+        active_at_start: bool,
+    ) -> None:
         """goal_manager 在 **run 末**跑（R24/S92/S92）——与控制权（轮内）
         作用点不同。
 
@@ -557,7 +619,9 @@ class SessionRunner:
             # 这一轮的父节点上（S93）。
             started_at_leaf_id=self._repo.load_node(leaf_id).parent_id
         )
-        if run.paused:
+        # 一轮开始前已经暂停：这是用户自己写的，不判、不记目标预算（S104）。
+        # 一轮开始后才暂停：当前轮仍完整收尾、核对并记账，只是不再开下一轮（S160）。
+        if run.paused and not active_at_start:
             return
         if session.goal_run is None and not self._save_goal_run(run):
             return
@@ -574,9 +638,16 @@ class SessionRunner:
             self._save_goal_run(run)
             return
 
+        # 故事节点已经原子提交，这一轮的成本与轮数先记盘。goal_manager 随后即使
+        # 失败、被停止或连接断开，也不能留下「节点有了，goal 仍是 0/N」的分裂状态。
+        run.spent_runs += 1
+        run.spent_tokens += usage.tokens_in + usage.tokens_out
+        if not self._save_goal_run(run):
+            return
+
         step, spent = await self._goal_turn(session, goal, run, leaf_id, leaf_id)
         self._goal_input = step.next_input
-        self._settle_goal(goal, run, step, spent + usage, count_run=True)
+        self._settle_goal(goal, run, step, spent, count_run=False)
 
     async def _goal_turn(
         self,
@@ -612,6 +683,10 @@ class SessionRunner:
             run,
             self._repo.path_to(leaf_id) if leaf_id else [],
         )
+        # 产品记录在模型调用前就已经确定。先保存，连接若在判定途中断开，恢复后仍能
+        # 看见这轮正文，而不是只有 spent_runs 增了、产品记录却少一轮。
+        if not self._save_goal_run(run):
+            return GoalStep(), Usage()
         step = await advance_goal(
             self._gateway,
             tracer,
@@ -642,7 +717,7 @@ class SessionRunner:
         # 预算到顶**不是失败**，是暂停：用户可以把上限调大接着跑（S96）。
         # 对话原样留着，所以恢复时不用重新判一遍。
         exhausted = run.exhausted(goal)
-        if exhausted is not None:
+        if exhausted is not None and not run.paused:
             run.paused, run.paused_reason = True, exhausted
 
         if not self._save_goal_run(run):
@@ -714,6 +789,12 @@ class SessionRunner:
         session = self._repo.load_session()
         if session.meta.goal is None:
             return False
+        # 模型调用期间用户可以按暂停。`run` 是调用开始时拿到的副本；直接整份写回
+        # 会把刚落盘的暂停悄悄抹掉。显式暂停是并发更新里必须保留的那一位状态。
+        current = session.goal_run
+        if current is not None and current.paused:
+            run.paused = True
+            run.paused_reason = current.paused_reason
         session.goal_run = run
         self._repo.save_session(session)
         return True
@@ -740,8 +821,10 @@ class SessionRunner:
         session = self._repo.load_session()
         if session.meta.goal is None or session.goal_run is None:
             return
-        session.goal_run.paused = True
-        session.goal_run.paused_reason = reason
+        # 用户已经明确按过暂停时，不用连接清理或后置失败把原因改写成另一件事。
+        if not session.goal_run.paused:
+            session.goal_run.paused = True
+            session.goal_run.paused_reason = reason
         self._repo.save_session(session)
         self._emit_goal(SessionUpdated(session=session))
         self._emit_goal(GoalPaused(reason=reason))
@@ -777,9 +860,15 @@ class SessionRunner:
     async def _sender(self) -> None:
         while True:
             message = await self._out.get()
-            with contextlib.suppress(Exception):
+            try:
                 # 连接断了不该拖垮 runner——它还要把当前 run 跑完并落盘。
                 await self._broadcast(message)
+            except Exception:  # noqa: BLE001 — 断线栈是定位“只提示连接关闭”的关键
+                logger.exception(
+                    "websocket_send_failed session=%s message=%s",
+                    self._repo.load_session().id,
+                    message.type,
+                )
 
 
 def _parent_for(repo: SessionRepository, leaf_id: str | None, item: _Queued | None) -> str | None:

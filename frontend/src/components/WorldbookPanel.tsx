@@ -7,12 +7,13 @@ import { EditableTitle } from "./EditableTitle";
 import { JsonEditor } from "./JsonEditor";
 import { Pick, YesNo } from "./Pick";
 
-const KINDS = ["world", "character", "state"] as const;
+const KINDS = ["world", "character", "state", "opening"] as const;
 
 const KIND_LABEL: Record<EntryKind, string> = {
   world: "世界设定",
   character: "角色设定",
   state: "初始状态",
+  opening: "开场白",
 };
 
 const KIND_HINT: Record<EntryKind, string> = {
@@ -20,6 +21,8 @@ const KIND_HINT: Record<EntryKind, string> = {
   character:
     "一段正文 + 语言习惯。和世界设定分开，是因为角色比别的东西多一样只进 writer 的属性：他怎么说话。",
   state: "会变的东西：在哪、知道什么、和谁什么关系。它是这局故事第一帧的状态，之后由剧情推进改。",
+  opening:
+    "新故事在第一条用户输入之前显示的正文。它可选，不是第 0 个节点；创建故事时选中后会冻结在那局故事里。",
 };
 
 /**
@@ -29,8 +32,8 @@ const KIND_HINT: Record<EntryKind, string> = {
  * 所以这个组件**吃 `worldbookId` 而不是当前会话**：同一个界面既从故事里打开
  * （改这局开在的那个世界），也从设定库里打开（改任何一份）。
  *
- * 三类条目：世界设定（一段不受限制的文本）、角色设定（正文 + 语言习惯）、
- * 初始状态（一棵键值树）。**用户扮演的角色不是第四类**，它是角色设定加一个标记。
+ * 四类条目：世界设定、角色设定、初始状态与可选开场白。
+ * **用户扮演的角色不是第五类**，它是角色设定加一个标记。
  *
  * 静态与会变的分开，是因为可见性天然不同步——一个角色的背景可能几百字、该按需
  * 展开，而他「在不在场」必须每轮都在眼前；共用一个开关时只能迁就其中一个。
@@ -326,6 +329,7 @@ function Editor(props: EditorProps): JSX.Element {
   const kind = draft.kind ?? "world";
   const isState = kind === "state";
   const isCharacter = kind === "character";
+  const isOpening = kind === "opening";
 
   return (
     <div className="min-w-0 flex-1 overflow-y-auto px-6 py-5">
@@ -346,23 +350,25 @@ function Editor(props: EditorProps): JSX.Element {
           />
         </Field>
 
-        <Field
-          label="是否可展开"
-          hint={
-            isState
-              ? "常驻：整棵树每轮都在眼前。按需：深处只给项数，模型用 state_query 取。折到第几层在 agent 提示词那一页设，一处管全部（S67）。"
-              : "常驻：整段每轮进上下文。按需：只给名字和体量，模型用 worldinfo_read 按名字展开。全部条目都常驻时，展开工具根本不注册。"
-          }
-        >
-          <Pick<"always" | "on_demand">
-            value={draft.mode ?? "always"}
-            options={[
-              ["always", "常驻"],
-              ["on_demand", "按需展开"],
-            ]}
-            onChange={(mode) => setDraft({ ...draft, mode })}
-          />
-        </Field>
+        {!isOpening && (
+          <Field
+            label="是否可展开"
+            hint={
+              isState
+                ? "常驻：整棵树每轮都在眼前。按需：深处只给项数，模型用 state_query 取。折到第几层在 agent 提示词那一页设，一处管全部（S67）。"
+                : "常驻：整段每轮进上下文。按需：只给名字和体量，模型用 worldinfo_read 按名字展开。全部条目都常驻时，展开工具根本不注册。"
+            }
+          >
+            <Pick<"always" | "on_demand">
+              value={draft.mode ?? "always"}
+              options={[
+                ["always", "常驻"],
+                ["on_demand", "按需展开"],
+              ]}
+              onChange={(mode) => setDraft({ ...draft, mode })}
+            />
+          </Field>
+        )}
 
         {isCharacter && (
           <Field

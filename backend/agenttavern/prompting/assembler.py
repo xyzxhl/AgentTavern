@@ -60,7 +60,11 @@ from __future__ import annotations
 
 import copy
 import functools
+import json
+import os
 import re
+import shutil
+import uuid
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -100,6 +104,10 @@ PROMPT_FILES = (*AGENTS, *CALLS)
 加一份就是加一个名字加一个文件。"""
 
 _root: Path | None = None
+DEFAULT_PROMPT_SET = "default"
+_SET_ID = re.compile(r"ps_[0-9a-f]{12}")
+_ACTIVE_SET = ".active-set"
+_SET_MANIFEST = "set.json"
 PromptSnapshot = dict[str, dict[str, Any]]
 _active_snapshot: ContextVar[PromptSnapshot | None] = ContextVar(
     "agenttavern_prompt_snapshot", default=None
@@ -124,6 +132,141 @@ def use_dir(path: Path | None) -> None:
 
 def _dir() -> Path:
     return _root or _DIR
+
+
+def _atomic_text(path: Path, body: str) -> None:
+    """提示词配置也用临时文件替换，不能让读取撞见半份 YAML。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(body, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _set_dir(set_id: str) -> Path:
+    if set_id == DEFAULT_PROMPT_SET:
+        return _dir()
+    if _SET_ID.fullmatch(set_id) is None:
+        raise ValueError(f"非法的提示词套装 id：{set_id}")
+    return _dir() / "sets" / set_id
+
+
+def active_set_id() -> str:
+    """服务当前使用哪一套。缺少选择文件表示仓库自带的默认套装。"""
+    marker = _dir() / _ACTIVE_SET
+    if not marker.exists():
+        return DEFAULT_PROMPT_SET
+    set_id = marker.read_text(encoding="utf-8").strip()
+    if set_id == DEFAULT_PROMPT_SET:
+        return set_id
+    root = _set_dir(set_id)
+    if not root.is_dir():
+        raise ValueError(f"当前提示词套装不存在：{set_id}")
+    return set_id
+
+
+def prompt_sets() -> list[dict[str, Any]]:
+    """列出完整套装。默认文件仍在根目录，用户套装一套一个子目录（S169）。"""
+    active = active_set_id()
+    out: list[dict[str, Any]] = [
+        {"id": DEFAULT_PROMPT_SET, "name": "默认", "active": active == DEFAULT_PROMPT_SET}
+    ]
+    base = _dir() / "sets"
+    if not base.exists():
+        return out
+    for root in sorted(path for path in base.iterdir() if path.is_dir()):
+        if _SET_ID.fullmatch(root.name) is None:
+            continue
+        manifest = root / _SET_MANIFEST
+        try:
+            raw = json.loads(manifest.read_text(encoding="utf-8"))
+            name = str(raw["name"]).strip()
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError(f"提示词套装 {root.name} 的 set.json 损坏：{exc}") from exc
+        missing = [item for item in PROMPT_FILES if not (root / f"{item}.yaml").is_file()]
+        if missing:
+            raise ValueError(f"提示词套装 {name} 缺少：{', '.join(missing)}")
+        out.append({"id": root.name, "name": name, "active": root.name == active})
+    return out
+
+
+def create_prompt_set(name: str, *, source_id: str | None = None) -> dict[str, Any]:
+    """复制一套完整配置并立刻选中；不制造只覆盖部分文件的继承层。"""
+    source = source_id or active_set_id()
+    clean = name.strip()
+    if not clean:
+        raise ValueError("提示词套装名称不能为空")
+    taken = {item["name"] for item in prompt_sets()}
+    base = clean
+    suffix = 2
+    while clean in taken:
+        clean = f"{base} {suffix}"
+        suffix += 1
+
+    set_id = f"ps_{uuid.uuid4().hex[:12]}"
+    target = _set_dir(set_id)
+    target.mkdir(parents=True)
+    try:
+        for prompt in PROMPT_FILES:
+            _atomic_text(
+                target / f"{prompt}.yaml",
+                path_of(prompt, set_id=source).read_text(encoding="utf-8"),
+            )
+        _atomic_text(
+            target / _SET_MANIFEST,
+            json.dumps({"name": clean}, ensure_ascii=False, indent=2) + "\n",
+        )
+    except Exception:
+        shutil.rmtree(target, ignore_errors=True)
+        raise
+    set_active_set(set_id)
+    return {"id": set_id, "name": clean, "active": True}
+
+
+def rename_prompt_set(set_id: str, name: str) -> dict[str, Any]:
+    if set_id == DEFAULT_PROMPT_SET:
+        raise ValueError("默认套装不能改名")
+    clean = name.strip()
+    if not clean:
+        raise ValueError("提示词套装名称不能为空")
+    root = _set_dir(set_id)
+    if not root.is_dir():
+        raise KeyError(set_id)
+    if any(item["id"] != set_id and item["name"] == clean for item in prompt_sets()):
+        raise ValueError(f"已经有名为「{clean}」的提示词套装")
+    _atomic_text(
+        root / _SET_MANIFEST,
+        json.dumps({"name": clean}, ensure_ascii=False, indent=2) + "\n",
+    )
+    return {"id": set_id, "name": clean, "active": active_set_id() == set_id}
+
+
+def set_active_set(set_id: str) -> None:
+    root = _set_dir(set_id)
+    missing = [name for name in PROMPT_FILES if not (root / f"{name}.yaml").is_file()]
+    if missing:
+        raise KeyError(f"提示词套装 {set_id} 缺少：{', '.join(missing)}")
+    marker = _dir() / _ACTIVE_SET
+    if set_id == DEFAULT_PROMPT_SET:
+        marker.unlink(missing_ok=True)
+    else:
+        _atomic_text(marker, set_id + "\n")
+    _load.cache_clear()
+
+
+def delete_prompt_set(set_id: str) -> None:
+    if set_id == DEFAULT_PROMPT_SET:
+        raise ValueError("默认套装不能删除")
+    root = _set_dir(set_id)
+    if not root.is_dir():
+        raise KeyError(set_id)
+    # 删除当前套装时先让下一 turn 回到默认；已开始的 turn 持有内存快照，不受影响。
+    if active_set_id() == set_id:
+        set_active_set(DEFAULT_PROMPT_SET)
+    resolved = root.resolve()
+    base = (_dir() / "sets").resolve()
+    if resolved.parent != base:
+        raise ValueError(f"拒绝删除套装目录之外的路径：{resolved}")
+    shutil.rmtree(resolved)
 
 
 @functools.cache
@@ -170,8 +313,8 @@ def using_snapshot(snapshot: PromptSnapshot) -> Iterator[None]:
         _active_snapshot.reset(token)
 
 
-def path_of(name: str) -> Path:
-    return _dir() / f"{name}.yaml"
+def path_of(name: str, *, set_id: str | None = None) -> Path:
+    return _set_dir(set_id or active_set_id()) / f"{name}.yaml"
 
 
 class _Dumper(yaml.SafeDumper):
@@ -205,8 +348,15 @@ def save(name: str, data: Mapping[str, Any]) -> None:
     而且不会有任何地方说一声。所以那些理由现在住在 `README.md` 和代码里，
     YAML 只剩数据；`test_saving_a_prompt_file_changes_nothing` 钉着这条。
     """
-    text = yaml.dump(dict(data), Dumper=_Dumper, allow_unicode=True, sort_keys=False, width=10_000)
-    path_of(name).write_text(text, encoding="utf-8")
+    path = path_of(name)
+    material = dict(data)
+    # GET 后不改任何东西就按保存，磁盘必须真正不动。除了避免无意义 diff，这也让
+    # 用户手写的合法 YAML 排版不会仅因打开界面再保存一次而被格式化掉（S79）。
+    if path.exists() and yaml.safe_load(path.read_text(encoding="utf-8")) == material:
+        _load.cache_clear()
+        return
+    text = yaml.dump(material, Dumper=_Dumper, allow_unicode=True, sort_keys=False, width=10_000)
+    _atomic_text(path, text)
     _load.cache_clear()
 
 

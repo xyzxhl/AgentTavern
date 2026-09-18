@@ -22,7 +22,7 @@ from typing import Any
 
 import yaml
 
-from .assembler import _DIR, use_dir
+from .assembler import PROMPT_FILES, path_of, use_dir
 
 
 @dataclass(frozen=True)
@@ -129,7 +129,11 @@ def prompts_as(setup: PromptSetup) -> Iterator[None]:
 
     tmp = Path(tempfile.mkdtemp(prefix="prompts-"))
     try:
-        shutil.copytree(_DIR, tmp, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__"))
+        # 只复制**当前生效套装**的五份文件到临时根目录。用户选了自定义套装时，
+        # 继续复制整个 prompting/ 会连同 `.active-set` 一起带过去，而 `_apply`
+        # 改的是根目录默认文件——最终运行反而仍读未修改的自定义子目录。
+        for name in PROMPT_FILES:
+            shutil.copy2(path_of(name), tmp / f"{name}.yaml")
         setup._apply(tmp)
         use_dir(tmp)
         yield

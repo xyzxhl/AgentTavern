@@ -20,6 +20,7 @@
   "她掏出钥匙"，钥匙来自初始状态，把它删掉那一轮就凭空多了一把不存在的钥匙。
 - **静态设定**（`world` / `character` 条目、题材、尺度）跟着改，立刻生效。
   它们是"这个世界是什么"，改它就等于改角色卡——那本来就该对所有故事生效。
+- **开场白**在创建故事时选择并复制。之后改候选只影响新故事；已经展示的开头不变。
 """
 
 from __future__ import annotations
@@ -101,6 +102,24 @@ class WorldbookRepository:
             else:
                 good += 1
         return good, bad
+
+    def available_openings(self) -> list[WorldbookEntry]:
+        """给新建故事选择器用的开场白；坏文件由 ``survey`` 另行点名。
+
+        列表页不能因为一条旧格式数据整体 500（S73），所以这里与 ``survey`` 一样
+        宽容。真正创建 session 时仍按 id 严格重读并校验类型，不能用这份列表绕过。
+        """
+        if not self.entries_dir.exists():
+            return []
+        openings: list[WorldbookEntry] = []
+        for path in sorted(self.entries_dir.glob("*.json")):
+            try:
+                entry = read_model(path, WorldbookEntry)
+            except Exception:  # noqa: BLE001 — 具体坏文件已经由 survey 报给用户
+                continue
+            if entry.kind is EntryKind.OPENING:
+                openings.append(entry)
+        return sorted(openings, key=lambda entry: (entry.name, entry.id))
 
     def save_entry(self, entry: WorldbookEntry) -> WorldbookEntry:
         """写一条设定，**返回真正落盘的那一份**（名字可能被收敛过）。

@@ -178,6 +178,10 @@ def render_worldinfo(entries: list[WorldbookEntry], *, expandable: bool = True) 
     那个开头曾经顶着「摘要」的名字，而它其实是位置偏置最重的一种预览
     （开头原样保留、结尾完全消失）。
     """
+    # 初始状态和开场白都属于 worldbook，但不是 worldinfo：前者走状态树，后者在
+    # session 创建时冻结成历史起点。先收窄，避免开场正文又在设定区重复注入（S168）。
+    entries = [entry for entry in entries if entry.is_lore]
+
     # **关闭按需展开时，所有条目一律全文注入**——没有展开的路还只给索引，
     # 就成了模型看得见名字却永远拿不到内容的有损筛选（P13）。
     # 设定跨轮不变，全量注入的代价只付一次（它在缓存前缀里，S60）。

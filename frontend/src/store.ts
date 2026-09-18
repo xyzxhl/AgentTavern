@@ -70,6 +70,9 @@ export interface SessionState {
   /** 正在跑的那一轮：还没有节点，但已经有 run_id 和用户说的那句话。 */
   live: { runId: string; input: string } | null;
 
+  /** 整轮失败不是节点，但用户仍要看得到那条输入，并能从同一父节点重试。 */
+  failed: { input: string; reason: string } | null;
+
   /** 流式攒出来的字：`run_id` → `{ 正文, 过程 }`（S118）。
    *
    * **按来源分开，不按 kind 分**：`content` 分片几个 agent 都在发——director
@@ -137,7 +140,8 @@ export interface SessionState {
   disconnect: () => void;
   bootstrap: () => Promise<void>;
   refreshSessions: () => Promise<void>;
-  newSession: (worldbookId?: string) => Promise<void>;
+  newSession: (worldbookId: string, openingId?: string) => Promise<void>;
+  deleteSession: (sessionId: string) => Promise<void>;
   /** 把状态从服务端拉回来对齐。**改了 worldbook 的初始状态条目之后必须调**——
    * 故事开始之前它是现算的，改了会立刻改变当前 state，而 WS 那侧不会为此推消息。 */
   refreshState: () => Promise<void>;
@@ -156,6 +160,7 @@ export const useSession = create<SessionState>((set, get) => {
           phase: "running",
           notice: null,
           resumable: false,
+          failed: null,
           // 刚提交的那句话归到这一轮名下。自动续跑时没人打字，留空。
           live: { runId: message.run_id, input: s.pendingInput },
           pendingInput: "",
@@ -202,6 +207,7 @@ export const useSession = create<SessionState>((set, get) => {
           phase: "idle",
           question: null,
           live: null,
+          failed: null,
           streaming: withoutKey(s.streaming, message.node.id ?? ""),
           traces: withoutKey(s.traces, message.node.id ?? ""),
           // 同一个 id 就替换（重生成会落新节点，切分支会整条换掉）。
@@ -232,6 +238,7 @@ export const useSession = create<SessionState>((set, get) => {
           live: null,
           streaming: withoutKey(s.streaming, s.live?.runId ?? ""),
           traces: withoutKey(s.traces, s.live?.runId ?? ""),
+          failed: s.live?.input ? { input: s.live.input, reason: message.reason } : null,
           notice: `这一轮失败了：${message.reason}`,
         }));
         break;
@@ -330,6 +337,7 @@ export const useSession = create<SessionState>((set, get) => {
     phase: "idle",
     traces: {},
     live: null,
+    failed: null,
     streaming: {},
     pendingInput: "",
     question: null,
@@ -349,7 +357,7 @@ export const useSession = create<SessionState>((set, get) => {
       // 路径整条换掉，状态随之重放（S42）。这里只发消息——服务端回的那份
       // `state` 快照带着新的叶子 id，`apply` 认出来之后自己去把路径拉回来。
       get().send({ type: "switch_branch", node_id: nodeId });
-      set({ editing: null });
+      set({ editing: null, failed: null });
     },
 
     regenerate(nodeId) {
@@ -378,14 +386,57 @@ export const useSession = create<SessionState>((set, get) => {
       set({ sessions: await api.listSessions() });
     },
 
-    async newSession(worldbookId) {
-      // 不传就由服务端现配一份空设定（S63）：**先开故事、边写边补**也要走得通。
-      const created = await api.createSession(
-        worldbookId ? { worldbook_id: worldbookId } : undefined,
-      );
+    async newSession(worldbookId, openingId) {
+      // 用户入口必须明确选择 worldbook（S162）；底层的空值兼容不从界面暴露。
+      if (!worldbookId) throw new Error("请先选择一份世界书");
+      const created = await api.createSession({
+        worldbook_id: worldbookId,
+        opening_id: openingId || undefined,
+      });
       await get().refreshSessions();
       await get().connect(created.id ?? "");
       set({ page: { kind: "story" } });
+    },
+
+    async deleteSession(sessionId) {
+      try {
+        await api.deleteSession(sessionId);
+        const wasCurrent = get().sessionId === sessionId;
+        if (wasCurrent) get().disconnect();
+        const sessions = await api.listSessions();
+        set({ sessions });
+        if (!wasCurrent) return;
+
+        const next = sessions[0];
+        if (next) {
+          await get().connect(next.id);
+          set({ page: { kind: "story" } });
+          return;
+        }
+        set({
+          sessionId: null,
+          session: null,
+          path: [],
+          state: {},
+          siblings: {},
+          phase: "idle",
+          traces: {},
+          live: null,
+          failed: null,
+          streaming: {},
+          pendingInput: "",
+          question: null,
+          queue: [],
+          notes: {},
+          notice: null,
+          goal: null,
+          editing: null,
+          rerolling: false,
+          page: { kind: "story" },
+        });
+      } catch (err) {
+        set({ notice: `删除会话失败：${(err as Error).message}` });
+      }
     },
 
     async connect(sessionId) {
@@ -400,6 +451,7 @@ export const useSession = create<SessionState>((set, get) => {
         phase: "idle",
         traces: {},
         live: null,
+        failed: null,
         streaming: {},
         pendingInput: "",
         question: null,
@@ -438,7 +490,7 @@ export const useSession = create<SessionState>((set, get) => {
         return;
       }
       // 只有 `submit` 会开新的一轮；插话落在正在跑的那一轮里，不另起。
-      if (message.type === "submit") set({ pendingInput: message.text });
+      if (message.type === "submit") set({ pendingInput: message.text, failed: null });
     },
 
     dismissNotice: () => set({ notice: null }),

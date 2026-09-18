@@ -73,10 +73,14 @@ async def run_writer(ctx: RunContext, tracer: Tracer, outline: str) -> WriterRes
 
 
 def _recent_prose(ctx: RunContext) -> str:
-    if ctx.parent_id is None:
+    nodes: list[Node] = ctx.repo.path_to(ctx.parent_id) if ctx.parent_id else []
+    prose = [ctx.session.opening, *(n.prose for n in nodes)]
+    # 开场白与节点正文共用同一个上文窗口：首轮一定看得到，故事走远后自然退出，
+    # 不会永久占据 writer 的短程衔接上下文（S168）。
+    window = upstream_runs()
+    if window <= 0:
         return ""
-    nodes: list[Node] = ctx.repo.path_to(ctx.parent_id)[-upstream_runs() :]
-    return "\n\n".join(n.prose for n in nodes if n.prose)
+    return "\n\n".join(part for part in prose[-window:] if part)
 
 
 def _split_deviation(raw: str) -> tuple[str, str | None]:

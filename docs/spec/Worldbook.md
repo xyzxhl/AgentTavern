@@ -23,14 +23,15 @@ session 只存一个 `worldbook_id`。
 **规格** session 只存一个 `worldbook_id`，**不内嵌拷贝**。
 列表和面板都写着「几局故事在用」；删一份还有人用的设定**当场拒绝**（409）。
 
-创建路留**两条**：从设定库「在这上面开新故事」，和直接新建会话、系统配一份空设定。
+创建路留**两条入口**：从设定库「在这上面开新故事」直接带入当前设定，和会话列表的
+「新建」先选择一份已有设定。两条最终都显式指向同一个已有 `worldbook_id`。
 
-**不做** 每开一局就把设定复制一份；不做"必须先建设定才能开会话"。
+**不做** 每开一局就把设定复制一份；不做从界面新建会话时暗中配一份空设定。
 
 **为什么** 复制之后「改一次、所有故事都跟着」就没了，**而那正是把设定独立出来要买的
-东西**。要求先建设定，等于在最没有想法的那一刻逼人做决定。
+东西**。worldbook 已经是一级资产，暗中新增只会在设定库留下无法辨认的空壳。
 
-**验收** `test_a_worldbook_can_open_several_sessions` · `test_a_new_session_gets_its_own_worldbook_when_none_is_named`
+**验收** `test_a_worldbook_can_open_several_sessions` · `test_new_sessions_use_the_worldbook_name_and_avoid_collisions`
 
 ### S64 · 它只有条目，没有字段
 
@@ -52,9 +53,9 @@ session 只存一个 `worldbook_id`。
 
 **验收** `test_worldinfo_roundtrip` · `test_export_drops_the_id` · `test_renaming_a_worldbook_actually_renames_it`
 
-### S65 · 条目分三类，用户扮演的角色不是第四类
+### S65 · 条目分四类，用户扮演的角色不是第五类
 
-**服务** [R3](../req/开局与设定.md) [R4](../req/开局与设定.md)
+**服务** [R3](../req/开局与设定.md) [R4](../req/开局与设定.md) [R53](../req/开局与设定.md)
 
 **规格**
 
@@ -63,10 +64,11 @@ session 只存一个 `worldbook_id`。
 | `world` | 一段不受限制的文本：地方、组织、规矩、历史、题材、尺度 | —— |
 | `character` | 正文 + **语言习惯**（只进 writer） | `voice` · `is_player` |
 | `state` | 一棵嵌套的键值树，这局故事第一帧的状态 | `values` |
+| `opening` | 第一条用户输入前显示的候选开场正文 | —— |
 
 **用户扮演的角色是 `character` 加一个 `is_player`**，不是独立的一类。
 
-**不做** 第四种 kind；不做世界条目上的任何附加字段。
+**不做** 把用户扮演角色再拆成一种 kind；不做世界条目上的任何附加字段。
 
 **为什么** 凡是对角色成立的（正文、语言习惯、可展开）对它一样成立，
 它只多回答一个「用户是谁」。做成独立的一类，就得在**每一处** `character` 分支旁边
@@ -96,7 +98,7 @@ session 只存一个 `worldbook_id`。
 导入一份别人做的包同样能塞进两个。
 
 **验收** `test_only_one_character_can_be_the_player` · `test_demoting_the_player_leaves_everyone_alone` ·
-`test_the_player_is_a_character_not_a_fourth_kind`；多个 session 共用玩家角色且没有覆盖字段的
+`test_the_player_is_a_character_not_a_fifth_kind`；多个 session 共用玩家角色且没有覆盖字段的
 断言待补，见 [TODO](../TODO.md)。
 
 ### S67 · 静态条目按条展开，状态树按服务级深度折叠
@@ -128,12 +130,12 @@ session 只存一个 `worldbook_id`。
 
 **验收** `test_always_worldinfo_is_injected_on_demand_is_indexed` · `test_worldinfo_tools_only_when_something_is_expandable` · `test_the_fold_depth_comes_from_the_yaml_and_really_folds`
 
-### S68 · 设定的两路投影
+### S68 · 设定的三路投影
 
 **服务** [R3](../req/开局与设定.md)
 
-**规格** 条目正文 → worldinfo（静态，只有用户能改）；
-`state` 条目的值 → 初始状态（动态，剧情会改）。
+**规格** `world` / `character` 正文 → worldinfo（静态，只有用户能改）；
+`state` 的值 → 初始状态（动态，剧情会改）；`opening` 正文 → 新故事可选的固定开场。
 
 **为什么** **一条设定本身是混的**：角色卡里性格、说话习惯、背景是静态的，
 而他现在在哪、和谁什么关系、知道什么是会变的。
@@ -149,6 +151,25 @@ session 只存一个 `worldbook_id`。
 有效得多。**
 
 **验收** `test_state_entries_become_the_replay_base` · `test_deleting_a_state_entry_before_the_story_starts_takes_effect`
+
+### S168 · 开场白在创建故事时选择并冻结，不占节点
+
+**服务** [R53](../req/开局与设定.md)
+
+**规格** 一份 worldbook 可以有零到多条 `opening`。创建 session 时用户选择一条或明确
+不用；服务端按 id 校验它属于该 worldbook 且确为 `opening`，然后把正文复制到
+`Session.opening`。时间线把它显示在所有节点之前；director 把它当静态的 assistant
+历史种子，writer 把它算进正文上文窗口。它不进 worldinfo，也不参与按需展开。
+
+**不做** 强制至少一条；不随机挑一条；不把开场白造为第 0 个节点；不让既有 session
+跟着 worldbook 后续修改而改变已经展示过的开头。
+
+**为什么** 节点是一份完整 run 的原子结果，必须同时有细纲、正文与状态增量；静态开场
+没有这些。它又已经在创建时展示，继续现读会改写用户眼前已经发生的历史。开场由用户
+编写而非 writer 生成，因此 director 读取它不等于让节点正文回流。
+
+**验收** `test_an_opening_is_optional_selected_and_frozen_when_the_session_is_created` ·
+`test_the_opening_precedes_the_first_turn_without_becoming_a_node`
 
 ### S69 · 交换格式不带 id、不带任何会话配置
 

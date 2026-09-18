@@ -25,6 +25,19 @@ class Session(BaseModel):
     空串是**旧数据**：升级时会给它建一份自己的 worldbook（`Store.migrate`）。
     """
 
+    opening_id: str | None = None
+    """创建故事时选中的开场白条目。``None`` 表示不用开场白（S168）。
+
+    id 只用于说明来源；运行时使用下面冻结的 ``opening``，不会回头现读 worldbook。
+    """
+
+    opening: str = ""
+    """创建 session 时冻结的开场正文。它显示在第一个 turn 之前，但不是节点。
+
+    开场一旦展示就已经是故事历史的一部分；若继续按 worldbook 现读，后来编辑一条
+    开场白会让既有故事的开头凭空变化。缺字段的旧数据自然得到空串，不需要迁移。
+    """
+
     corpus_ids: list[str] = Field(default_factory=list)
     """这局故事挂了哪几份外部资料（S136）。**零到多份。**
 

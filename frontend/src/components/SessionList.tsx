@@ -1,3 +1,6 @@
+import { useState } from "react";
+
+import { api, type WorldbookCard } from "../api";
 import { type Page, useSession } from "../store";
 
 /**
@@ -15,10 +18,50 @@ export function SessionList(): JSX.Element {
   const go = useSession((s) => s.go);
   const connect = useSession((s) => s.connect);
   const newSession = useSession((s) => s.newSession);
+  const [choosing, setChoosing] = useState(false);
+  const [books, setBooks] = useState<WorldbookCard[]>([]);
+  const [selected, setSelected] = useState("");
+  const [selectedOpening, setSelectedOpening] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState("");
 
   function open(id: string): void {
     void connect(id);
     go({ kind: "story" });
+  }
+
+  async function beginCreate(): Promise<void> {
+    if (choosing) {
+      setChoosing(false);
+      return;
+    }
+    setBusy(true);
+    setProblem("");
+    try {
+      const found = await api.listWorldbooks();
+      setBooks(found);
+      setSelected(found[0]?.worldbook.id ?? "");
+      setSelectedOpening("");
+      setChoosing(true);
+    } catch (err) {
+      setProblem((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function create(): Promise<void> {
+    if (!selected) return;
+    setBusy(true);
+    setProblem("");
+    try {
+      await newSession(selected, selectedOpening || undefined);
+      setChoosing(false);
+    } catch (err) {
+      setProblem((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -68,10 +111,84 @@ export function SessionList(): JSX.Element {
 
       <div className="flex items-center justify-between pr-2">
         <span className="panel-title">会话</span>
-        <button className="btn" onClick={() => void newSession()}>
+        <button className="btn" onClick={() => void beginCreate()} disabled={busy}>
           新建
         </button>
       </div>
+
+      {choosing && (
+        <div className="mx-2 mb-2 rounded border border-line bg-ink-900 p-2">
+          {books.length ? (
+            <>
+              <label className="mb-1 block text-[10px] text-dim" htmlFor="new-session-worldbook">
+                选择世界书
+              </label>
+              <select
+                id="new-session-worldbook"
+                className="w-full rounded border border-line bg-ink-800 px-2 py-1 text-xs text-fg outline-none focus:border-dim"
+                value={selected}
+                onChange={(event) => {
+                  setSelected(event.target.value);
+                  setSelectedOpening("");
+                }}
+                disabled={busy}
+              >
+                {books.map((card) => (
+                  <option key={card.worldbook.id} value={card.worldbook.id}>
+                    {card.worldbook.name || "未命名"}
+                  </option>
+                ))}
+              </select>
+              {(books.find((card) => card.worldbook.id === selected)?.openings.length ?? 0) > 0 && (
+                <>
+                  <label className="mb-1 mt-2 block text-[10px] text-dim" htmlFor="new-session-opening">
+                    选择开场白（可不选）
+                  </label>
+                  <select
+                    id="new-session-opening"
+                    className="w-full rounded border border-line bg-ink-800 px-2 py-1 text-xs text-fg outline-none focus:border-dim"
+                    value={selectedOpening}
+                    onChange={(event) => setSelectedOpening(event.target.value)}
+                    disabled={busy}
+                  >
+                    <option value="">不用开场白</option>
+                    {(books.find((card) => card.worldbook.id === selected)?.openings ?? []).map(
+                      (opening) => (
+                        <option key={opening.id} value={opening.id}>
+                          {opening.name}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </>
+              )}
+              <div className="mt-2 flex gap-1.5">
+                <button className="btn" onClick={() => void create()} disabled={busy || !selected}>
+                  创建
+                </button>
+                <button className="btn" onClick={() => setChoosing(false)} disabled={busy}>
+                  取消
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-[11px] leading-snug text-dim">还没有世界书，请先新建或导入一份。</p>
+              <button
+                className="btn mt-2"
+                onClick={() => {
+                  setChoosing(false);
+                  go({ kind: "worldbooks" });
+                }}
+              >
+                去世界书管理
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {problem && <p className="mx-2 mb-2 text-[10px] leading-snug text-accent">{problem}</p>}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {sessions.length === 0 && <p className="px-1 py-2 text-xs text-dim">还没有会话</p>}

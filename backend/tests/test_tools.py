@@ -176,6 +176,15 @@ async def test_invalid_params_are_recoverable(reg, ctx) -> None:
     result = await call(reg, ctx, "ask_question", question="?", options=["只有一个"])
     assert result.is_error
 
+    wrapped = await call(
+        reg,
+        ctx,
+        "state_write",
+        arguments={"set": {"地点": "客厅"}},
+    )
+    assert wrapped.is_error, "多套一层 arguments 不能被静默当成空增量"
+    assert ctx.state_write_count == 0
+
 
 async def test_unknown_state_path_returns_what_is_available(reg, ctx) -> None:
     """查不到就把现有结构回给模型，顺带起到防键名漂移的作用。"""
@@ -509,9 +518,18 @@ def test_the_criteria_are_not_in_the_tool_description() -> None:
     代价说在明处：S34/S35 的判据现在**没有任何测试守着**，已记进 TODO。
     """
     tool_desc = next(t.description for t in build_state_tools() if t.name == "state_write")
-    assert len(tool_desc) < 60
+    assert len(tool_desc) < 120
     assert "约束类" not in tool_desc
     assert "悬置" not in tool_desc
+
+
+def test_state_write_parameters_are_direct_not_wrapped() -> None:
+    """工具描述要把参数外形说清，错误外壳则由 schema 拒绝并回给模型（S27/S28）。"""
+    tool = next(t for t in build_state_tools() if t.name == "state_write")
+    assert all(name in tool.description for name in ("set", "append", "remove", "arguments"))
+
+    schema = tool.spec().parameters
+    assert schema.get("additionalProperties") is False
 
 
 def test_state_entries_become_the_replay_base(tmp_path: Path) -> None:
@@ -611,6 +629,13 @@ def test_each_switch_removes_its_tools() -> None:
 
     assert "ask_question" in names_for(tools={"director": {"ask_question": True}})
     assert "ask_question" not in names_for(tools={"director": {"ask_question": False}})
+
+
+def test_state_query_is_hidden_when_there_is_no_state_to_expand() -> None:
+    """空状态没有查询对象：工具不注册，避免第一轮模型白调一次（S21）。"""
+    with using(agents={"state_manager": True}):
+        assert "state_query" not in ToolRegistry.for_session(has_state=False).names
+        assert {t.name for t in build_state_tools(has_state=False)} == {"state_write"}
 
 
 def test_worldinfo_tools_only_when_something_is_expandable() -> None:

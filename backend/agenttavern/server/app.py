@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import logging
+from contextlib import asynccontextmanager, suppress
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -12,6 +13,7 @@ from ..config import Settings, load_settings
 from ..corpus.build import sweep_stale
 from ..corpus.embed import Embedder
 from ..corpus.rerankers import reranker_from_settings
+from ..diagnostics import configure_service_logging
 from ..llm import LLMGateway
 from ..models import (
     Actor,
@@ -24,6 +26,7 @@ from ..models import (
     TraceEvent,
     TraceEventType,
     Tree,
+    UserInput,
     Worldbook,
     WorldbookBundle,
     WorldbookEntry,
@@ -56,6 +59,8 @@ from .protocol import (
     SwitchBranch,
 )
 from .runner import SessionRunner
+
+logger = logging.getLogger(__name__)
 
 
 class SessionPatch(BaseModel):
@@ -93,6 +98,7 @@ class NodePatch(BaseModel):
     状态那部分有两个视图，字段一一对应，见 `EditNode` 上的说明。
     """
 
+    user_input: str | None = None
     outline: str | None = None
     prose: str | None = None
     state_delta: StateDelta | None = None
@@ -109,6 +115,7 @@ class NodePatch(BaseModel):
 
 def create_app(settings: Settings | None = None, gateway: LLMGateway | None = None) -> FastAPI:
     resolved = settings or load_settings()
+    configure_service_logging(resolved.data_dir)
     store = Store(resolved.data_dir)
 
     # 注入的 gateway 直接持有；只有自建的那个才归应用管生命周期。
@@ -140,7 +147,7 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
 
     app = FastAPI(title="AgentTavern", lifespan=lifespan)
     active_runners: dict[str, SessionRunner] = {}
-    active_connections: set[str] = set()
+    active_connections: dict[str, WebSocket] = {}
 
     # 提示词管理：正文、工具描述、附属提示词、渲染文案（R31）。
     # **单独一个模块**——它和 session / worldbook 不共享任何状态，读写的是
@@ -170,6 +177,22 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
             raise HTTPException(404, f"session 不存在：{session_id}")
         return repo
 
+    async def close_live_session(
+        session_id: str, *, code: int = 4012, reason: str = "会话已由新的页面接管"
+    ) -> None:
+        """先停连接与 runner，再把这个 session 的写权交给接管者或删除动作。"""
+        previous_socket = active_connections.get(session_id)
+        previous_runner = active_runners.get(session_id)
+        if previous_socket is not None:
+            with suppress(Exception):
+                await previous_socket.close(code=code, reason=reason)
+        if previous_runner is not None:
+            await previous_runner.aclose()
+        if active_runners.get(session_id) is previous_runner:
+            active_runners.pop(session_id, None)
+        if active_connections.get(session_id) is previous_socket:
+            active_connections.pop(session_id, None)
+
     # -- 服务本身 ------------------------------------------------------------
 
     @app.get("/meta")
@@ -192,10 +215,13 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
     def create_session(session: Session | None = None) -> Session:
         """**返回落盘的那一份，不是传进来的那一份。**
 
-        没指定设定时 `create_session` 会现建一份并写进 `worldbook_id`（S63），
-        而它是在一个 `model_copy` 上写的——把入参原样回给客户端，那个字段就是空的。
+        用户界面按 S162 总会传所选 worldbook；低层调用没传时仓储仍会补一个有效引用。
+        补值与自动标题都发生在 `model_copy` 上，所以必须返回重新载入的落盘值。
         """
-        return store.create_session(session or Session()).load_session()
+        try:
+            return store.create_session(session or Session()).load_session()
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
 
     @app.get("/sessions")
     def list_sessions() -> list[dict[str, Any]]:
@@ -244,6 +270,15 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
         session = session.model_copy(update=update)
         repo.save_session(session)
         return session
+
+    @app.delete("/sessions/{session_id}")
+    async def delete_session(session_id: str) -> dict[str, str]:
+        """删除一局故事；它引用的 worldbook / corpus 都是一级资产，不级联（S163）。"""
+        repo_of(session_id)
+        await close_live_session(session_id, code=4011, reason="会话已删除")
+        if not store.delete_session(session_id):
+            raise HTTPException(404, f"session 不存在：{session_id}")
+        return {"deleted": session_id}
 
     # -- 节点与分支 ----------------------------------------------------------
 
@@ -347,6 +382,9 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
                     "worldbook": book.load(),
                     "entries": good,
                     "sessions": store.sessions_of(wid),
+                    "openings": [
+                        {"id": entry.id, "name": entry.name} for entry in book.available_openings()
+                    ],
                     # **坏的要说出来，不能悄悄跳过**：用户得知道自己丢了什么。
                     "broken": bad,
                 }
@@ -474,12 +512,12 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
             await websocket.close(code=4404)
             return
 
+        # 本地单用户下，新连接就是刷新后的页面。它接管旧连接，而不是被旧连接清理
+        # 的时间窗永久挡在门外；接管前先停掉旧 runner，仍然保证只有一个写者（S161）。
         if session_id in active_connections:
-            await websocket.close(code=4409, reason="这个本地会话已经有一个连接")
-            return
+            await close_live_session(session_id)
 
-        # 检查与占位之间不能有 await；否则两个同时握手的连接都能越过检查。
-        active_connections.add(session_id)
+        active_connections[session_id] = websocket
         runner: SessionRunner | None = None
         try:
             await websocket.accept()
@@ -517,14 +555,18 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
                     developer=resolved.developer,
                     persist_trace=resolved.trace,
                 )
-        except WebSocketDisconnect:
-            pass
+        except WebSocketDisconnect as exc:
+            logger.info("websocket_disconnected session=%s code=%s", session_id, exc.code)
+        except Exception:  # noqa: BLE001 — 连接边界必须把栈写进服务日志
+            logger.exception("websocket_failed session=%s", session_id)
+            raise
         finally:
             if runner is not None:
                 await runner.aclose()
             if runner is not None and active_runners.get(session_id) is runner:
                 del active_runners[session_id]
-            active_connections.discard(session_id)
+            if active_connections.get(session_id) is websocket:
+                active_connections.pop(session_id, None)
 
     return app
 
@@ -585,6 +627,7 @@ async def _handle(
             return
         try:
             patch = NodePatch(
+                user_input=message.user_input,
                 outline=message.outline,
                 prose=message.prose,
                 state_delta=message.state_delta,
@@ -705,6 +748,12 @@ def _apply_node_patch(
     """
     node = repo.load_node(node_id)
     touched: list[str] = []
+    if patch.user_input is not None:
+        if node.user_input is None:
+            node.user_input = UserInput(text=patch.user_input)
+        else:
+            node.user_input = node.user_input.model_copy(update={"text": patch.user_input})
+        touched.append("user_input")
     if patch.outline is not None:
         node.outline = patch.outline
         node.outline_summary = None  # 细纲变了，缓存的摘要作废
@@ -740,7 +789,12 @@ def _apply_node_patch(
     return node
 
 
-_EDIT_LABEL = {"outline": "细纲", "prose": "正文", "state": "状态增量"}
+_EDIT_LABEL = {
+    "user_input": "用户输入",
+    "outline": "细纲",
+    "prose": "正文",
+    "state": "状态增量",
+}
 
 
 def _can_edit(repo: SessionRepository, node_id: str, runner: SessionRunner | None = None) -> bool:

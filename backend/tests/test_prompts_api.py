@@ -81,7 +81,11 @@ def test_the_specials_and_the_rendering_strings_are_reachable(client) -> None:
     """
     data = client.get("/prompts/director").json()["data"]
 
-    assert "断在第几条之后" in data["specials"]["segment"]["sections"][0]["body"]
+    segment = data["specials"]["segment"]["sections"][0]["body"]
+    # 正文归用户，不钉具体措辞；这里只守住代码会填的两个变量和工具接线。
+    assert "{{open_runs}}" in segment
+    assert "{{listing}}" in segment
+    assert "close_segment" in segment
     assert data["rendering"]["worldinfo_expand"] == "用 worldinfo_read 按名字展开。"
     # 前情那两句同理：它们是折起来的那一段摆出来的话，其中一句还带着工具名。
     assert "history_read" in data["rendering"]["history_folded"]
@@ -140,28 +144,70 @@ def test_an_unknown_prompt_is_a_404(client) -> None:
     assert client.put("/prompts/nope", json={"data": {}}).status_code == 404
 
 
+def test_complete_prompt_sets_can_be_copied_switched_renamed_and_deleted(client) -> None:
+    """一套就是完整五份 YAML；切换不靠稀疏覆盖或 session 级选择（S169）。"""
+    assert client.get("/prompt-sets").json() == [{"id": "default", "name": "默认", "active": True}]
+
+    copied = client.post("/prompt-sets", json={"source_id": "default"}).json()
+    assert copied["active"] is True
+    assert copied["name"] == "默认 副本"
+
+    custom = client.get("/prompts/writer").json()["data"]
+    custom["sections"][1]["body"] = "只属于副本。"
+    assert client.put("/prompts/writer", json={"data": custom}).status_code == 200
+
+    assert client.put("/prompt-sets/default/active").status_code == 200
+    default = client.get("/prompts/writer").json()["data"]
+    assert default["sections"][1]["body"] != "只属于副本。"
+
+    assert client.put(f"/prompt-sets/{copied['id']}/active").status_code == 200
+    assert client.get("/prompts/writer").json()["data"]["sections"][1]["body"] == "只属于副本。"
+
+    renamed = client.patch(f"/prompt-sets/{copied['id']}", json={"name": "长篇慢节奏"}).json()
+    assert renamed["name"] == "长篇慢节奏"
+
+    deleted = client.delete(f"/prompt-sets/{copied['id']}").json()
+    assert deleted == {"deleted": copied["id"], "active": "default"}
+    assert client.get("/prompt-sets").json() == [{"id": "default", "name": "默认", "active": True}]
+
+
+def test_switching_prompt_sets_does_not_change_an_existing_turn_snapshot(client) -> None:
+    """套装选择是服务级的，但已经开始的 turn 只认开始时那份完整快照（S169）。"""
+    from agenttavern.prompting import call_of, capture_snapshot, using_snapshot
+
+    default_model = call_of("writer").model
+    copied = client.post("/prompt-sets", json={"source_id": "default"}).json()
+    custom = client.get("/prompts/writer").json()["data"]
+    custom["model"] = "只属于自定义套装的模型"
+    assert client.put("/prompts/writer", json={"data": custom}).status_code == 200
+    frozen = capture_snapshot()
+
+    assert client.put("/prompt-sets/default/active").status_code == 200
+    assert call_of("writer").model == default_model
+    with using_snapshot(frozen):
+        assert call_of("writer").model == "只属于自定义套装的模型"
+
+    assert client.delete(f"/prompt-sets/{copied['id']}").status_code == 200
+
+
 def test_saving_a_prompt_file_changes_nothing() -> None:
-    """**从界面存一次，这五份文件一个字节都不该变**（S79）。
+    """**内容未改时从界面存一次，文件一个字节都不该变**（S79）。
 
     这不是洁癖。保存那条路走 `yaml.safe_dump`，**转一圈之后注释全没了**，
     而且不会有任何地方说一声。这几份文件的头部曾经各带着几十行「这一份为什么
     这么摆」——用户去「调用」标签换一下模型，那几十行就消失了。
 
-    所以那些理由搬进了 `prompting/README.md` 和读它们的那段代码，YAML 只剩数据。
-    这条测试挡住两件事：**注释偷偷长回来**，以及**手写的格式和落盘的格式不一样**
-    （多行字符串写不写成 `|` 块就是一例——不写的话一段八百字的提示词会变成一行，
-    那份文件从此没法手改）。
+    所以那些理由搬进了 `prompting/README.md` 和读它们的那段代码。服务端先比较
+    解析后的内容；相同就不写盘。这也保护用户合法的手工排版，不会仅因按一次保存
+    被统一格式重排。
     """
-    import yaml
-
-    from agenttavern.prompting.assembler import _Dumper, path_of
+    from agenttavern.prompting import load, save
+    from agenttavern.prompting.assembler import path_of
 
     for name in PROMPT_FILES:
         raw = path_of(name).read_text(encoding="utf-8")
-        again = yaml.dump(
-            yaml.safe_load(raw), Dumper=_Dumper, allow_unicode=True, sort_keys=False, width=10_000
-        )
-        assert again == raw, f"{name}.yaml 存一次就会变形——多半是又写了注释"
+        save(name, load(name))
+        assert path_of(name).read_text(encoding="utf-8") == raw, f"{name}.yaml 空保存却被改写"
 
 
 # -- S159 调用旋钮：模型、流式、额外请求参数 -----------------------------------

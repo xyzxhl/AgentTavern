@@ -15,9 +15,11 @@ import { Process, splitAtProse } from "./Process";
  * 读者的注意力拽到"这一轮本来打算写什么"上去。要看细纲展开过程里那一条。
  */
 export function Transcript(): JSX.Element {
+  const opening = useSession((s) => s.session?.opening ?? "");
   const path = useSession((s) => s.path);
   const traces = useSession((s) => s.traces);
   const live = useSession((s) => s.live);
+  const failed = useSession((s) => s.failed);
   const streaming = useSession((s) => s.streaming);
   const phase = useSession((s) => s.phase);
   const bottom = useRef<HTMLDivElement>(null);
@@ -27,12 +29,18 @@ export function Transcript(): JSX.Element {
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [path.length, liveSteps.length, flowing?.prose.length, phase]);
+  }, [path.length, liveSteps.length, flowing?.prose.length, failed, phase]);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-3xl px-6 py-8">
-        {path.length === 0 && phase === "idle" && (
+        {opening && (
+          <article className="prose-body mb-8">
+            <Markdown>{opening}</Markdown>
+          </article>
+        )}
+
+        {path.length === 0 && phase === "idle" && !failed && !opening && (
           <p className="text-sm text-dim">说点什么开始这个故事。</p>
         )}
 
@@ -58,9 +66,37 @@ export function Transcript(): JSX.Element {
           />
         )}
 
+        {failed && <FailedTurn input={failed.input} reason={failed.reason} />}
+
         <div ref={bottom} />
       </div>
     </div>
+  );
+}
+
+/** 失败的 turn 不落节点，但不能从时间线上消失；原输入可从同一叶子重新提交。 */
+function FailedTurn({ input, reason }: { input: string; reason: string }): JSX.Element {
+  const phase = useSession((s) => s.phase);
+  const send = useSession((s) => s.send);
+
+  return (
+    <article className="mb-8 rounded border border-red-900/60 bg-red-950/20 px-4 py-3">
+      <div className="mb-2 flex items-baseline gap-2">
+        <span className="select-none text-dim">›</span>
+        <p className="min-w-0 flex-1 whitespace-pre-wrap text-sm text-dim">{input}</p>
+      </div>
+      <div className="flex items-center gap-3 text-xs text-red-300">
+        <span className="min-w-0 flex-1">这一轮失败了：{reason}</span>
+        <button
+          className="btn shrink-0"
+          disabled={phase !== "idle"}
+          onClick={() => send({ type: "submit", text: input })}
+          title="从当前故事节点重新提交同一条输入"
+        >
+          ↻ 重新生成
+        </button>
+      </div>
+    </article>
   );
 }
 
@@ -270,7 +306,7 @@ function TurnControls({ node }: { node: Node }): JSX.Element {
       <Tap label="↻" title="重新生成这一轮" disabled={phase !== "idle"} onClick={reroll} />
       <Tap
         label="✎"
-        title={editable === node.id ? "改细纲 / 正文 / 状态" : "只能编辑上一轮"}
+        title={editable === node.id ? "改输入 / 细纲 / 正文 / 状态" : "只能编辑上一轮"}
         disabled={phase !== "idle" || editable !== node.id}
         onClick={() => edit(editing === node.id ? null : (node.id ?? null))}
       />

@@ -135,3 +135,20 @@ writer 写的才是正文。**不按来源分开攒，界面就会把「我先�
 根本表达不了——而那正是这个旋钮最常见的用法。
 
 **验收** `test_prose_arrives_in_pieces_while_it_is_written` · `test_the_final_node_is_still_the_authority` · `test_the_agents_after_the_writer_stream_too` · `test_streaming_is_per_agent`
+
+### S165 · 服务诊断日志常开、限量、不记内容
+
+**服务** [R51](../req/开发者视角.md)
+
+**规格** 服务启动后写 `<DATA_DIR>/logs/service.log`（默认 `data/logs/service.log`），
+单文件 5 MiB，保留 3 份轮转备份。
+记录模型调用的模型名、流式标记、`finish_reason`、内容/思考字符数、工具调用数、token
+统计，以及 runner / WebSocket 边界的异常栈。
+
+**不做** 记录 prompt、正文、thinking 原文、工具参数和 API key。完整内容由开发者 trace
+承担；服务日志与开发者模式无关，默认常开。
+
+**为什么** trace 由 run 内部产生；若连接或生命周期边界先坏掉，可能连最后一条失败事件
+都推不出去。此时只能靠一条独立且持久的低敏感日志辨别 provider 截断与本地断线。
+
+**验收** `test_service_log_is_persisted_and_rotatable`

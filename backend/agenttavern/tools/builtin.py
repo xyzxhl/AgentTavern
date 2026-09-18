@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..disclosure import expand, keys_of
 from ..models import StateDelta, WorldbookMode
@@ -122,6 +122,8 @@ async def _state_query(ctx: RunContext, params: ExpandParams) -> ToolResult:
 
 
 class StateWriteParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     set: dict[str, Any] = Field(
         default_factory=dict,
         description="覆盖写，**深合并**：只动你提到的那几个键，同层别的原样留着。"

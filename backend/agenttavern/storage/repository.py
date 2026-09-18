@@ -28,6 +28,7 @@ from ..models import (
     Node,
     RunDraft,
     Session,
+    SessionMeta,
     StateDelta,
     TraceEvent,
     Worldbook,
@@ -276,14 +277,42 @@ class Store:
         return SessionRepository(self.root, session_id)
 
     def create_session(self, session: Session) -> SessionRepository:
-        """**没指定设定就现建一份空的**（S63）。
+        """保存 session，并为低层调用补齐一个有效 worldbook 引用。
 
-        允许「先开故事、边写边补设定」——要求先建 worldbook 才能开会话，等于
-        在最没有想法的那一刻逼人做决定。
+        用户界面按 S162 必须先选择已有 worldbook；这里的空值分支只给迁移、bench
+        和直接仓储调用兜底，不是第二个用户入口。
         """
         if not session.worldbook_id:
             book = self.create_worldbook(Worldbook())
             session = session.model_copy(update={"worldbook_id": book.worldbook_id})
+        book = self.worldbook(session.worldbook_id)
+        if not book.exists():
+            raise ValueError(f"设定不存在：{session.worldbook_id}")
+
+        # 开场白在**会话创建时**就展示，因此此刻复制正文；它不像世界设定那样
+        # 每轮现读，也不像初始状态那样等第一轮才冻结（S168）。没有选择完全合法。
+        if session.opening_id:
+            opening = book.load_entry(session.opening_id)
+            if opening is None or opening.kind is not EntryKind.OPENING:
+                raise ValueError(f"开场白不存在：{session.opening_id}")
+            session = session.model_copy(update={"opening": opening.content})
+        else:
+            # 不接受调用方另塞一份没有 worldbook 来源的正文；内容入口只有开场条目。
+            session = session.model_copy(update={"opening": ""})
+
+        # 新建时 worldbook 名就是现成的识别锚点。只替换模型默认的「未命名」；
+        # 显式给过标题的导入/测试数据仍按原样保存（S162）。
+        if session.meta.title == SessionMeta().title:
+            base = book.load().name.strip() or SessionMeta().title
+            taken = {self.session(sid).load_session().meta.title for sid in self.list_sessions()}
+            title = base
+            suffix = 2
+            while title in taken:
+                title = f"{base} {suffix}"
+                suffix += 1
+            session = session.model_copy(
+                update={"meta": session.meta.model_copy(update={"title": title})}
+            )
         repo = self.session(session.id)
         repo.save_session(session)
         return repo
@@ -293,6 +322,15 @@ class Store:
         if not sessions_dir.exists():
             return []
         return sorted(p.name for p in sessions_dir.iterdir() if (p / "session.json").exists())
+
+    def delete_session(self, session_id: str) -> bool:
+        """删除一局故事自己的目录，不级联删除它引用的一级资产（S163）。"""
+        # 先用枚举结果收窄目标；不能把路由参数直接拼成递归删除路径。
+        if session_id not in self.list_sessions():
+            return False
+        repo = self.session(session_id)
+        shutil.rmtree(repo.dir)
+        return True
 
     # -- worldbook ----------------------------------------------------------
 

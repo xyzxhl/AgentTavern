@@ -826,8 +826,12 @@ def test_the_attached_prompts_live_with_their_agent() -> None:
     assert {"append", "nudge", "nudge_final", "converge", "segment", "no_input"} <= set(specials)
     assert special_body("director", "nudge"), "空回催促的措辞得在 YAML 里"
     # 归段追问以前是 `postrun.py` 里一段四百多字的 Python 字符串——**模型每轮
-    # 都会读到它，而它从界面完全够不着**（R31 那次审计新发现的）。
-    assert "断在第几条之后" in special_body("director", "segment")
+    # 都会读到它，而它从界面完全够不着**（R31 那次审计新发现的）。正文归用户，
+    # 所以这里只钉代码要填的变量与工具接线，不钉某一句怎么说。
+    segment = special_body("director", "segment")
+    assert "{{open_runs}}" in segment
+    assert "{{listing}}" in segment
+    assert "close_segment" in segment
 
 
 def test_the_tool_list_is_not_a_message() -> None:
@@ -851,7 +855,7 @@ def test_the_tool_list_is_not_a_message() -> None:
 # -- 角色设定（S65） -----------------------------------------------------------
 
 
-def test_the_player_is_a_character_not_a_fourth_kind() -> None:
+def test_the_player_is_a_character_not_a_fifth_kind() -> None:
     """**用户扮演的角色是一般角色的子类**（S65）。
 
     凡是对角色成立的（正文、语言习惯、可展开），对它一样成立；它只是多回答一个

@@ -5,8 +5,8 @@ import type { Node, StateDelta } from "../protocol";
 import { useSession } from "../store";
 
 /**
- * 直接改一轮的产出（R22）。**细纲 / 正文 / 状态摆在同一处**——它们是同一个节点
- * 的三个面，分到三个地方去改，用户就得先知道"这一轮"是由这三样组成的。
+ * 直接改一轮的产品记录（R20）。**输入 / 细纲 / 正文 / 状态摆在同一处**——它们
+ * 都会进入后续上下文，分到几个地方去改只会让同一轮出现多个入口。
  *
  * 改完在 trace 里留一条 `USER_EDIT`（S47）：手改过的正文不能在回看时被当成
  * 模型的产出去归因。
@@ -18,6 +18,7 @@ export function NodeEditor({ node }: { node: Node }): JSX.Element {
   const edit = useSession((s) => s.edit);
   const sessionId = useSession((s) => s.sessionId);
 
+  const [userInput, setUserInput] = useState(node.user_input?.text ?? "");
   const [outline, setOutline] = useState(node.outline ?? "");
   const [prose, setProse] = useState(node.prose ?? "");
 
@@ -40,12 +41,14 @@ export function NodeEditor({ node }: { node: Node }): JSX.Element {
   function save(): void {
     const patch: {
       nodeId: string;
+      user_input?: string;
       outline?: string;
       prose?: string;
       state_delta?: StateDelta;
       state_result?: Record<string, unknown>;
     } = { nodeId: node.id ?? "" };
 
+    if (userInput !== (node.user_input?.text ?? "")) patch.user_input = userInput;
     if (outline !== (node.outline ?? "")) patch.outline = outline;
     if (prose !== (node.prose ?? "")) patch.prose = prose;
 
@@ -68,6 +71,14 @@ export function NodeEditor({ node }: { node: Node }): JSX.Element {
 
   return (
     <div className="mt-4 rounded border border-line bg-ink-800 p-3">
+      <Field label="用户输入" hint="修改后再重生成，会以这里保存的文字为起点">
+        <textarea
+          className="h-20 w-full resize-y rounded border border-line bg-ink-900 px-2 py-1.5 text-xs leading-relaxed text-fg outline-none focus:border-dim"
+          value={userInput}
+          onChange={(e) => setUserInput(e.target.value)}
+        />
+      </Field>
+
       <Field label="细纲" hint="director 写的，writer 照着它写正文">
         <textarea
           className="h-32 w-full resize-y rounded border border-line bg-ink-900 px-2 py-1.5 text-xs leading-relaxed text-fg outline-none focus:border-dim"

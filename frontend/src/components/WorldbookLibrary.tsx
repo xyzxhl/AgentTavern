@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { api, type WorldbookCard } from "../api";
-import type { Worldbook, WorldbookBundle } from "../protocol";
+import type { WorldbookBundle } from "../protocol";
 import { useSession } from "../store";
 import { EditableTitle } from "./EditableTitle";
 import { WorldbookPanel } from "./WorldbookPanel";
@@ -12,14 +12,15 @@ import { WorldbookPanel } from "./WorldbookPanel";
  * 所以它有自己的入口，而不是只能从某局故事里点进去。一份设定能开出好几局故事，
  * 那件事在这里必须看得见——列表上写着「几局在用」，删之前也拦得住。
  *
- * 从这里开新故事是「先有世界，再有故事」那条路；反过来（先开故事、系统配一份
- * 空设定、边写边补）也走得通，那条在会话列表上。**两条都要留**：要求先建设定
- * 才能开会话，等于在最没有想法的那一刻逼人做决定。
+ * 从这里开新故事会直接带入当前 worldbook；会话列表的「新建」则先给同一批
+ * worldbook 选择。两处都明确选择，不暗中制造一份空资产（S162）。
  */
 export function WorldbookLibrary(): JSX.Element {
   const [cards, setCards] = useState<WorldbookCard[]>([]);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
+  const [starting, setStarting] = useState<string | null>(null);
+  const [opening, setOpening] = useState("");
   const file = useRef<HTMLInputElement>(null);
   const newSession = useSession((s) => s.newSession);
   // **要打开哪一份写在路由上**，不写在这个组件的局部状态里——头部那个
@@ -88,8 +89,14 @@ export function WorldbookLibrary(): JSX.Element {
     });
   }
 
-  async function start(book: Worldbook): Promise<void> {
-    await guard(() => newSession(book.id ?? undefined));
+  async function start(card: WorldbookCard): Promise<void> {
+    const id = card.worldbook.id ?? "";
+    if (card.openings.length && starting !== id) {
+      setStarting(id);
+      setOpening("");
+      return;
+    }
+    await guard(() => newSession(id, opening || undefined));
   }
 
   /** **点标题就地改**（S134 的同一条判据）：不再是「改名按钮 + 浏览器弹窗」。 */
@@ -148,7 +155,7 @@ export function WorldbookLibrary(): JSX.Element {
         <div className="mx-auto max-w-2xl space-y-2">
           {cards.length === 0 && (
             <p className="text-sm text-dim">
-              还没有设定。新建一份，或者直接开一局故事——系统会给它配一份空的，边写边补。
+              还没有设定。先新建或导入一份，再从它开始故事。
             </p>
           )}
 
@@ -190,7 +197,7 @@ export function WorldbookLibrary(): JSX.Element {
               </p>
 
               <div className="mt-2.5 flex flex-wrap gap-1.5">
-                <button className="btn" onClick={() => void start(card.worldbook)}>
+                <button className="btn" onClick={() => void start(card)}>
                   在这上面开新故事
                 </button>
                 <button className="btn" onClick={() => setEditing(card.worldbook.id ?? null)}>
@@ -200,6 +207,34 @@ export function WorldbookLibrary(): JSX.Element {
                   删除
                 </button>
               </div>
+              {starting === card.worldbook.id && card.openings.length > 0 && (
+                <div className="mt-2 rounded border border-line bg-ink-800 p-2">
+                  <label className="mb-1 block text-[10px] text-dim" htmlFor={`opening-${card.worldbook.id}`}>
+                    选择开场白（可不选）
+                  </label>
+                  <select
+                    id={`opening-${card.worldbook.id}`}
+                    className="w-full rounded border border-line bg-ink-900 px-2 py-1 text-xs text-fg outline-none focus:border-dim"
+                    value={opening}
+                    onChange={(event) => setOpening(event.target.value)}
+                  >
+                    <option value="">不用开场白</option>
+                    {card.openings.map((candidate) => (
+                      <option key={candidate.id} value={candidate.id}>
+                        {candidate.name}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="mt-2 flex gap-1.5">
+                    <button className="btn" onClick={() => void start(card)} disabled={busy}>
+                      创建
+                    </button>
+                    <button className="btn" onClick={() => setStarting(null)} disabled={busy}>
+                      取消
+                    </button>
+                  </div>
+                </div>
+              )}
             </article>
           ))}
 

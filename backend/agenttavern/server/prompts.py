@@ -22,7 +22,19 @@ from pydantic import BaseModel
 
 from ..llm import Message, Role
 from ..models.corpus import Corpus
-from ..prompting import AGENTS, PROMPT_FILES, assemble, load, save
+from ..prompting import (
+    AGENTS,
+    PROMPT_FILES,
+    active_set_id,
+    assemble,
+    create_prompt_set,
+    delete_prompt_set,
+    load,
+    prompt_sets,
+    rename_prompt_set,
+    save,
+    set_active_set,
+)
 from ..tools import build_state_tools, build_tools, goal_tools
 
 
@@ -30,6 +42,17 @@ class PromptDoc(BaseModel):
     """一份提示词配置的完整内容。**原样进原样出**——它就是那份 YAML。"""
 
     data: dict[str, Any]
+
+
+class PromptSetCreate(BaseModel):
+    """复制完整套装；不做稀疏 override，避免生效内容要跨目录追继承链。"""
+
+    name: str = ""
+    source_id: str | None = None
+
+
+class PromptSetRename(BaseModel):
+    name: str
 
 
 def _params() -> dict[str, dict[str, Any]]:
@@ -92,7 +115,7 @@ def _dry_run(name: str, data: dict[str, Any]) -> None:
         )
 
 
-def _render_samples(name: str, data: dict[str, Any]) -> None:
+def _render_samples(name: str, data: dict[str, Any], *, required: set[str] | None = None) -> None:
     """`rendering` 里的每一条也过一遍：**缺一条就是运行时 KeyError**。
 
     它们量小但每轮都进上下文，而且是在渲染函数深处取的——删掉一条不会有任何
@@ -101,13 +124,71 @@ def _render_samples(name: str, data: dict[str, Any]) -> None:
     table = data.get("rendering")
     if table is not None and not isinstance(table, dict):
         raise TypeError("rendering 必须是映射")
-    for key in load(name).get("rendering") or {}:
+    required = required if required is not None else set(load(name).get("rendering") or {})
+    for key in required:
         if key not in (table or {}):
             raise KeyError(f"rendering 少了 `{key}`——它在代码里有调用点，删掉会在运行时报错")
 
 
 def router() -> APIRouter:
     api = APIRouter()
+
+    @api.get("/prompt-sets")
+    def list_prompt_sets() -> list[dict[str, Any]]:
+        try:
+            return prompt_sets()
+        except ValueError as exc:
+            raise HTTPException(500, str(exc)) from exc
+
+    @api.post("/prompt-sets")
+    def copy_prompt_set(doc: PromptSetCreate) -> dict[str, Any]:
+        try:
+            source = doc.source_id or active_set_id()
+            source_card = next(item for item in prompt_sets() if item["id"] == source)
+            name = doc.name.strip() or f"{source_card['name']} 副本"
+            return create_prompt_set(name, source_id=source)
+        except StopIteration as exc:
+            raise HTTPException(404, f"提示词套装不存在：{doc.source_id}") from exc
+        except (KeyError, OSError, TypeError, ValueError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @api.patch("/prompt-sets/{set_id}")
+    def rename_set(set_id: str, doc: PromptSetRename) -> dict[str, Any]:
+        try:
+            return rename_prompt_set(set_id, doc.name)
+        except KeyError as exc:
+            raise HTTPException(404, f"提示词套装不存在：{set_id}") from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @api.put("/prompt-sets/{set_id}/active")
+    def activate_set(set_id: str) -> dict[str, Any]:
+        """切换前把五份都试装配；成功后仅影响下一 turn 的快照（S169）。"""
+        before = active_set_id()
+        required = {name: set(load(name).get("rendering") or {}) for name in PROMPT_FILES}
+        try:
+            set_active_set(set_id)
+            for name in PROMPT_FILES:
+                data = load(name)
+                _render_samples(name, data, required=required[name])
+                _dry_run(name, data)
+        except KeyError as exc:
+            set_active_set(before)
+            raise HTTPException(404, f"提示词套装不存在或不完整：{exc}") from exc
+        except (OSError, TypeError, ValueError) as exc:
+            set_active_set(before)
+            raise HTTPException(422, f"这套配置装配不出来：{exc}") from exc
+        return next(item for item in prompt_sets() if item["id"] == set_id)
+
+    @api.delete("/prompt-sets/{set_id}")
+    def delete_set(set_id: str) -> dict[str, str]:
+        try:
+            delete_prompt_set(set_id)
+        except KeyError as exc:
+            raise HTTPException(404, f"提示词套装不存在：{set_id}") from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {"deleted": set_id, "active": active_set_id()}
 
     @api.get("/prompts")
     def list_prompts() -> list[dict[str, Any]]:

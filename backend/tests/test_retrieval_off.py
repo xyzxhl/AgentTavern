@@ -93,7 +93,7 @@ def test_compacted_history_is_gone_for_good_when_read_is_off() -> None:
     off = _compacted(readable=False)
 
     assert "她进店，他锁了门。" in off, "摘要必须留着"
-    assert "取不回来" in off, "要说清原文没了，否则模型会以为还能查"
+    assert "第一轮" not in off, "原文必须真的隐去"
     assert "history_read" not in off, "不能广告一个没注册的工具"
 
     on = _compacted(readable=True)

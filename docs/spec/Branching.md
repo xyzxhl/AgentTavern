@@ -221,6 +221,22 @@ WebSocket handler 挂死。加旗标区分"是谁在取消"只是把不死性从
 
 **验收** `test_stop_cancels_only_the_run_not_the_loop` · `test_the_loop_is_cancellable_by_anyone_not_only_by_aclose` · `test_aclose_returns_while_a_run_is_in_flight` · `test_aclose_returns_when_idle`
 
+### S164 · 上一 turn 的 user input 可编辑，重生成读取修改后的值
+
+**服务** [R17](../req/回头与改写.md) [R20](../req/回头与改写.md)
+
+**规格** 上一 turn 的编辑窗口把 `user_input.text` 与细纲、正文、状态放在同一个编辑器。
+保存只替换文本，保留输入来源与提交时间。之后重生成该版本时，服务端从节点权威数据读取
+当前 `user_input.text`，用它创建兄弟版本。
+
+**不做** 编辑输入时自动重算当前节点；不从 trace、缓存或旧请求恢复原输入；不修改
+更早 turn 的输入。
+
+**为什么** user input 会进入后续 context，也是重生成的起点。允许改产出却不能改起点，
+会迫使用户用一份已经知道错误的输入反复重 roll。
+
+**验收** `test_editing_user_input_changes_what_regeneration_uses`
+
 ---
 
 ## 未定

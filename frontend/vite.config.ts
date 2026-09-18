@@ -26,6 +26,7 @@ export default defineConfig({
       "/worldbooks": { target: "http://127.0.0.1:8000", changeOrigin: true },
       "/corpora": { target: "http://127.0.0.1:8000", changeOrigin: true },
       "/prompts": { target: "http://127.0.0.1:8000", changeOrigin: true },
+      "/prompt-sets": { target: "http://127.0.0.1:8000", changeOrigin: true },
       "/meta": { target: "http://127.0.0.1:8000", changeOrigin: true },
     },
   },
