@@ -76,9 +76,6 @@ sections:
   runs: 3
 - type: context
   role: user
-  source: outline
-- type: context
-  role: user
   source: prose
 tools:
   state_write:
@@ -91,5 +88,4 @@ rendering:
   state_empty: （尚无记录）
   state_long: （{{chars}} 字，用 state_query 展开）
   state_deeper: （{{count}} 项，用 state_query 展开）
-  delta_empty: （本轮无变化）
   recent_empty: （这是第一轮，前面没有可参照的记录。）

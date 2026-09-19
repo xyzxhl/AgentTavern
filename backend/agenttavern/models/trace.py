@@ -41,7 +41,7 @@ class TraceEventType(StrEnum):
     OUTLINE_SUBMITTED = "outline_submitted"
     PROSE_PRODUCED = "prose_produced"
 
-    # `CONTRACT_CHECK` **已删除**：它记的是 E0（`submit_outline` 之前必须写过一次
+    # `CONTRACT_CHECK` **已删除**：它记的是 E0（提交细纲之前必须写过一次
     # `state_write`），而 director 卸下 `state_write` 之后那条契约自然作废（S7）。
     # 留一个谁都发不出来的事件类型，等于让 schema 承诺一件代码不做的事。
     CROSS_CHECK = "cross_check"
@@ -111,11 +111,10 @@ class TraceEvent(BaseModel):
 
 
 class AttributionClass(StrEnum):
-    """归因五类（S12）。归因的可行性是 director/writer 拆分的副产品——
+    """归因六类（S12）。归因的可行性是 director/writer 拆分的副产品——
     中间量物化了才分得清"规划错了"和"执行错了"。
 
-    这五类都能从 trace 直接判定，因为每一步的输入输出都物化了，
-    且细纲是散文、可直接与正文比对。
+    其中五类有可供 AI 对照的参照物；writer 文风失败仍需人工判断。
     """
 
     DIRECTOR_RETRIEVAL = "director_retrieval"
@@ -132,3 +131,6 @@ class AttributionClass(StrEnum):
 
     WRITE_OMISSION = "write_omission"
     """增量与正文不符 → 改写入契约。"""
+
+    WRITE_REDUNDANCY = "write_redundancy"
+    """增量写入了不该进入 state 的内容 → 改记录门槛与既有 state 注入。"""

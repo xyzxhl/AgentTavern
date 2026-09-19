@@ -63,8 +63,7 @@ segment:
 
 sampling:
   # 采样标记的阈值。**从不影响运行时行为**（P12/P12），只是把可疑样本挑出来送审，
-  # 所以这两个数偏松偏紧都不会弄坏产出，只影响送审量。
-  expansion_min_ratio: 1.6
+  # 所以这个数偏松偏紧都不会弄坏产出，只影响送审量。
   state_value_max_chars: 60
 
 windows:
@@ -73,7 +72,7 @@ windows:
   # 给 writer 几轮正文上文。它只用来接住语气，长程记忆是 director 的事。
 
   state_recent_runs: 3
-  # 给 state_manager 几轮「细纲 → 成文 → 当时记下的」示范。
+  # 给 state_manager 几轮正文上文；当前全量 state 另行注入。
   # **这是整个系统里最贵的一段上下文**：滑动窗口，每轮全变，一点缓存都吃不到。
   # 实测 `data` 场景取 3 时它占掉全场 42% 的 input token。
 

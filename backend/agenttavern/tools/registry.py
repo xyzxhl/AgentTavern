@@ -24,7 +24,6 @@ from .builtin import (
     history_read_tool,
     state_query_tool,
     state_write_tool,
-    submit_tool,
     worldinfo_read_tool,
 )
 from .corpus import corpus_tool
@@ -39,12 +38,12 @@ def build_tools(
 ) -> list[Tool[Any]]:
     """director 的工具面。
 
-    ``submit_outline`` 永远存在——它是 loop 的唯一终止点（S4）。
+    所有工具都只服务推演；director 用不带工具调用的最终输出交付细纲（S174）。
 
     **`state_write` 不在这里**（S7）：状态维护后置成了独立的 state_manager，
     见 `build_state_tools`。director 只读状态。
     """
-    tools: list[Tool[Any]] = [submit_tool()]
+    tools: list[Tool[Any]] = []
 
     # `state_query` 是**按需展开**，可以单独关。关掉时 state 每轮全量注入——
     # 没有展开的路还隐藏长值，就成了有损筛选（P13）。
@@ -87,12 +86,11 @@ def build_tools(
 def build_state_tools(*, has_state: bool = True) -> list[Tool[Any]]:
     """state_manager 的工具面：**只有 state 那两个**（S7）。
 
-    它不查历史、不展开设定、不问用户、也没有 `submit_outline`——它的活是把
+    它不查历史、不展开设定、不问用户——它的活是把
     这一轮的细纲和正文折成几个键值，需要的东西都已经在上下文里。
 
     **没有终止工具是有意的**：loop 的出口是"这一次不再调用任何工具"。
-    director 需要 `submit_outline` 是因为它要交付一件**产物**，交付这个动作本身
-    得有个地方承接；state_manager 的产物是那几次写入本身，写完就没事了。
+    director 同样以无工具的最终输出收口；state_manager 的产物则是之前那些写入本身。
     """
     tools: list[Tool[Any]] = [state_write_tool()]
     if has_state and tool_enabled("state_manager", "state_query"):
@@ -120,12 +118,15 @@ class ToolRegistry:
 
     @classmethod
     def for_goal_manager(cls) -> ToolRegistry:
-        """goal_manager 的工具面：`plan` / `check` / `steer` / `finish`（S95/S94）。
+        """goal_manager 的工具面：四个目标动作，加正文历史展开。
 
         **不吃开关**——goal 要么在跑要么不在，没有中间档；这四个是它全部的
         表达方式，缺一个就有话说不出来。
         """
-        return cls(goal_tools())
+        tools = goal_tools()
+        if tool_enabled("goal_manager", "history_read"):
+            tools.append(history_read_tool("goal_manager"))
+        return cls(tools)
 
     @property
     def names(self) -> list[str]:

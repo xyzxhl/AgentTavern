@@ -98,8 +98,8 @@ session 只存一个 `worldbook_id`。
 导入一份别人做的包同样能塞进两个。
 
 **验收** `test_only_one_character_can_be_the_player` · `test_demoting_the_player_leaves_everyone_alone` ·
-`test_the_player_is_a_character_not_a_fifth_kind`；多个 session 共用玩家角色且没有覆盖字段的
-断言待补，见 [TODO](../TODO.md)。
+`test_the_player_is_a_character_not_a_fifth_kind` ·
+`test_sessions_sharing_a_worldbook_share_the_player_character`
 
 ### S67 · 静态条目按条展开，状态树按服务级深度折叠
 
@@ -164,9 +164,9 @@ session 只存一个 `worldbook_id`。
 **不做** 强制至少一条；不随机挑一条；不把开场白造为第 0 个节点；不让既有 session
 跟着 worldbook 后续修改而改变已经展示过的开头。
 
-**为什么** 节点是一份完整 run 的原子结果，必须同时有细纲、正文与状态增量；静态开场
+**为什么** 节点是一份完整 run 的原子结果，必须同时有正文与状态增量；静态开场
 没有这些。它又已经在创建时展示，继续现读会改写用户眼前已经发生的历史。开场由用户
-编写而非 writer 生成，因此 director 读取它不等于让节点正文回流。
+编写并在创建 session 时冻结；它与节点正文一样是双方的连续性依据，但本身不占节点。
 
 **验收** `test_an_opening_is_optional_selected_and_frozen_when_the_session_is_created` ·
 `test_the_opening_precedes_the_first_turn_without_becoming_a_node`
@@ -233,7 +233,7 @@ session 只存一个 `worldbook_id`。
 它会把一份半懂的数据导进来，用户以为成了，几轮之后才发现有东西不对，
 **而那时已经分不清是导入丢的还是模型写坏的**。
 
-**验收** —（缺，见 [TODO.md](../TODO.md)）
+**验收** `test_an_unknown_format_is_refused_instead_of_read_best_effort`
 
 ### S72 · 一条坏条目不能让整个设定库列不出来
 

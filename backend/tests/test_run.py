@@ -33,7 +33,7 @@ from agenttavern.tracing import Tracer
 
 def happy_llm(prose: str = "门轴发出一声长长的呻吟。") -> ScriptedLLM:
     return ScriptedLLM(
-        tool("submit_outline", outline="她推开门，屋里坐着陈。"),
+        text("她推开门，屋里坐着陈。"),
         text(prose),
         state=dict(set={"地点": "客厅", "林": {"在场": True}, "陈": {"在场": True}}),
     )
@@ -92,7 +92,8 @@ async def test_full_run_produces_a_node(tmp_path: Path) -> None:
     outcome = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
     node = outcome.node
 
-    assert node.outline == "她推开门，屋里坐着陈。"
+    assert outcome.outline == "她推开门，屋里坐着陈。"
+    assert "outline" not in node.model_dump(), "细纲只活在当前 run，不进入节点"
     assert node.prose == "门轴发出一声长长的呻吟。"
     assert node.state_delta.set["地点"] == "客厅"
     assert node.status is RunStatus.COMPLETE
@@ -130,7 +131,7 @@ async def test_the_opening_precedes_the_first_turn_without_becoming_a_node(tmp_p
 
 
 async def test_state_lands_only_when_run_completes(tmp_path: Path) -> None:
-    """暂存的增量随节点一并落盘——细纲与增量同时抵达，节点是原子的（S20）。"""
+    """暂存的增量随正文一并落盘，节点是原子的（S20）。"""
     llm = happy_llm()
     repo, session, gw, reg = setup(tmp_path, llm)
 
@@ -143,7 +144,7 @@ async def test_second_run_builds_on_the_first(tmp_path: Path) -> None:
     first = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
 
     llm2 = ScriptedLLM(
-        tool("submit_outline", outline="两人走到阳台。"),
+        text("两人走到阳台。"),
         text("风把窗帘掀起来。"),
         state=dict(set={"地点": "阳台"}),
     )
@@ -159,22 +160,19 @@ async def test_second_run_builds_on_the_first(tmp_path: Path) -> None:
     assert second.node.parent_id == first.node.id
     assert repo.state_at(second.node.id).values["地点"] == "阳台"
 
-    # 第二轮的 director 应当看到第一轮的细纲，而**看不到**第一轮的正文（S5）。
-    # 对话跨轮持续之后（S60），细纲在重放的消息里（上一轮的 submit_outline 调用），
-    # 不再在 system prompt 里——**这个断言因此比原来更强**：它现在检查的是
-    # director 收到的**全部**上下文，而不只是开头那一段。
+    # 第二轮 director 只以第一轮最终正文作为叙事事实，不保留临时细纲。
     everything = str(llm2.messages_of(0))
-    assert "她推开门，屋里坐着陈。" in everything
-    assert "门轴" not in everything
+    assert "门轴" in everything
+    assert "她推开门，屋里坐着陈。" not in everything
 
 
-async def test_writer_sees_prose_upstream_director_does_not(tmp_path: Path) -> None:
-    """writer 读正文上文以保证衔接——这正是 S3 那一刀能切开的原因。"""
+async def test_writer_and_director_both_receive_authoritative_prose_history(tmp_path: Path) -> None:
+    """两者用途不同，但历史事实来源统一为正文。"""
     repo, session, gw, reg = setup(tmp_path, happy_llm())
     first = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
 
     llm2 = ScriptedLLM(
-        tool("submit_outline", outline="两人走到阳台。"),
+        text("两人走到阳台。"),
         text("风把窗帘掀起来。"),
     )
     await execute_run(
@@ -186,14 +184,15 @@ async def test_writer_sees_prose_upstream_director_does_not(tmp_path: Path) -> N
         parent_id=first.node.id,
     )
 
-    writer_messages = str(llm2.messages_of(2))
+    assert "门轴" in str(llm2.messages_of(0))
+    writer_messages = str(llm2.messages_of(1))
     assert "门轴" in writer_messages
 
 
 async def test_deviation_report_is_extracted(tmp_path: Path) -> None:
     """writer 不改写细纲，只报告实质增删（S8）。"""
     llm = ScriptedLLM(
-        tool("submit_outline", outline="她推开门。"),
+        text("她推开门。"),
         text("门开了。\n---偏离---\n补了一句她的犹豫。"),
     )
     repo, session, gw, reg = setup(tmp_path, llm)
@@ -264,7 +263,7 @@ async def test_interrupt_during_writer_drops_the_half_written_prose(tmp_path: Pa
     阶段当成了产出：下一轮会接着那半句往下写，而用户按停止恰恰是因为不想要它。
     细纲留着，它是上游、已经写完了。
     """
-    llm = CancelWriter(tool("submit_outline", outline="她推开门。"))
+    llm = CancelWriter(text("她推开门。"))
     repo, session, gw, reg = setup(tmp_path, llm)
 
     with pytest.raises(asyncio.CancelledError):
@@ -282,16 +281,14 @@ async def test_interrupt_during_writer_drops_the_half_written_prose(tmp_path: Pa
 
 async def test_an_empty_input_reruns_only_the_writer(tmp_path: Path) -> None:
     """空输入 = 「刚才那步没跑完，接着跑」——细纲不重写，director 根本不启动。"""
-    repo, session, gw, reg = setup(
-        tmp_path, CancelWriter(tool("submit_outline", outline="她推开门。"))
-    )
+    repo, session, gw, reg = setup(tmp_path, CancelWriter(text("她推开门。")))
     with pytest.raises(asyncio.CancelledError):
         await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
 
     resume = ScriptedLLM(text("门轴响了一声。"), state=dict(set={"地点": "客厅"}))
     outcome = await execute_run(repo, repo.load_session(), resume.gateway(), reg)
 
-    assert outcome.node.outline == "她推开门。", "细纲原样用，没有重写"
+    assert outcome.outline == "她推开门。", "细纲原样用，没有重写"
     assert outcome.node.prose == "门轴响了一声。"
     assert outcome.node.user_input is not None
     assert outcome.node.user_input.text == "我推开门", "被打断那一轮的输入不可再生"
@@ -308,14 +305,12 @@ async def test_a_new_input_goes_back_to_the_director(tmp_path: Path) -> None:
     判据是生成内容的依赖关系：用户又说了话，细纲就可能要改，那正文和 state
     都不作数了。
     """
-    repo, session, gw, reg = setup(
-        tmp_path, CancelWriter(tool("submit_outline", outline="她推开门。"))
-    )
+    repo, session, gw, reg = setup(tmp_path, CancelWriter(text("她推开门。")))
     with pytest.raises(asyncio.CancelledError):
         await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
 
     resume = ScriptedLLM(
-        tool("submit_outline", outline="她停在门口，没有推。"),
+        text("她停在门口，没有推。"),
         text("她的手停在门板上。"),
     )
     outcome = await execute_run(
@@ -326,10 +321,10 @@ async def test_a_new_input_goes_back_to_the_director(tmp_path: Path) -> None:
         user_input=UserInput(text="等等，她其实没推开"),
     )
 
-    assert outcome.node.outline == "她停在门口，没有推。"
+    assert outcome.outline == "她停在门口，没有推。"
 
     # **旧细纲不必另开一节说明——它就在接回来的对话里。**上一次那句
-    # `submit_outline` 连同它交出的细纲一起被草稿带了过来，所以 director
+    # director 的最终文本连同细纲一起被草稿带了过来，所以 director
     # 看得见自己写过什么，也看得见当时的输入。
     context = str(resume.messages_of(0))
     assert "她推开门。" in context, "旧细纲要在，不能让它假装没写过"
@@ -346,7 +341,7 @@ async def test_interrupt_during_state_keeps_outline_and_prose(tmp_path: Path) ->
                 raise asyncio.CancelledError
             return super()._handle(request)
 
-    llm = Stopped(tool("submit_outline", outline="她推开门。"), text("门轴响了。"))
+    llm = Stopped(text("她推开门。"), text("门轴响了。"))
     repo, session, gw, reg = setup(tmp_path, llm)
 
     with pytest.raises(asyncio.CancelledError):
@@ -373,7 +368,7 @@ async def test_absent_character_gaining_knowledge_is_not_flagged(tmp_path: Path)
     通过转述、书信、监听获得。硬做只会得到假警报，而假警报比不检查更糟。
     """
     llm = ScriptedLLM(
-        tool("submit_outline", outline="她推开门。"),
+        text("她推开门。"),
         text("门开了。"),
         state=dict(set={"林.在场": True}, append={"陈.知情": ["林起疑了"]}),
     )
@@ -387,7 +382,7 @@ async def test_absent_character_gaining_knowledge_is_not_flagged(tmp_path: Path)
 
 async def test_long_prose_with_empty_delta_is_flagged(tmp_path: Path) -> None:
     llm = ScriptedLLM(
-        tool("submit_outline", outline="她推开门。"),
+        text("她推开门。"),
         text("很长的一段正文。" * 60),
     )
     repo, session, gw, reg = setup(tmp_path, llm)
@@ -396,22 +391,18 @@ async def test_long_prose_with_empty_delta_is_flagged(tmp_path: Path) -> None:
     assert any("遗漏" in n for n in outcome.notes)
 
 
-async def test_prose_barely_longer_than_outline_is_flagged(tmp_path: Path) -> None:
-    """正文/细纲长度比是**隔离是否生效**最廉价的指标（S14）。
-
-    比值贴近 1 说明 writer 在照抄——通常是因为 director 越界写了描写，
-    正文侧已无事可做。这不是质量判断，只是把样本挑出来送审（P12/P12）。
-    """
+async def test_outline_prose_length_ratio_is_not_judged_by_code(tmp_path: Path) -> None:
+    """细纲与正文的长度关系是内容质量判断，不再由阈值生成采样标记（S14）。"""
     outline = "她推开门，屋里坐着陈。" * 10
     llm = ScriptedLLM(
-        tool("submit_outline", outline=outline),
+        text(outline),
         text(outline + "又一句。"),
         state=dict(set={"地点": "客厅"}),
     )
     repo, session, gw, reg = setup(tmp_path, llm)
 
     outcome = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
-    assert any("照抄" in n for n in outcome.notes)
+    assert not any("照抄" in n for n in outcome.notes)
 
 
 async def test_state_value_stuffed_with_a_biography_is_flagged(tmp_path: Path) -> None:
@@ -421,7 +412,7 @@ async def test_state_value_stuffed_with_a_biography_is_flagged(tmp_path: Path) -
     代码判断不了"这条该不该记"，只能报告"这个值不像一条约束"。
     """
     llm = ScriptedLLM(
-        tool("submit_outline", outline="她推开门，屋里坐着陈。"),
+        text("她推开门，屋里坐着陈。"),
         text("蓝布帘子垂在门框里，颜色褪得发白。" * 8),
         state=dict(set={"许平": "已故男子，照片中的另一人；名字由陈屿说出；与陈屿相识；死因未明"}),
     )
@@ -444,7 +435,7 @@ async def test_collapsing_a_list_into_a_string_is_flagged(tmp_path: Path) -> Non
         values={"沈砚": {"随身": ["青锋剑", "止血符 ×2"], "灵石": 3}},
     )
     llm = ScriptedLLM(
-        tool("submit_outline", outline="他把灵石倒在柜台上。"),
+        text("他把灵石倒在柜台上。"),
         text("三块灵石滚落台面，叮叮响了几声。" * 6),
         state=dict(set={"沈砚": {"随身": "青锋剑、止血符 ×4", "灵石": "1"}}),
     )
@@ -457,7 +448,7 @@ async def test_collapsing_a_list_into_a_string_is_flagged(tmp_path: Path) -> Non
 
 
 def _script(runs: int, outline: str, *tail, closes: list[int] | None = None, followup: bool = True):
-    """每轮的调用序列：state_write / submit_outline / writer（/ 归段追问）。
+    """每轮的调用序列：state_write / director 最终文本 / writer（/ 归段追问）。
 
     追问**每轮都发生**——判定在生成时，不等它滑出窗口（S58）。
 
@@ -470,7 +461,7 @@ def _script(runs: int, outline: str, *tail, closes: list[int] | None = None, fol
     for i in range(runs):
         body += [
             tool("state_write", set={"地点": "客厅"}),
-            tool("submit_outline", outline=outline),
+            text(outline),
             text("门开了。"),
         ]
         if followup:
@@ -506,7 +497,7 @@ async def test_segment_closes_when_the_director_says_it_closed(tmp_path: Path) -
 
     end = repo.path_to(parent)[-1]
     assert end.closes_segment, "结尾标记在生成时当场打上"
-    assert end.outline_summary == "她进了店，陈在屋里。"
+    assert end.prose_summary == "她进了店，陈在屋里。"
     assert end.segment_span == runs, "摘要要记住自己覆盖了几轮"
 
 
@@ -571,6 +562,26 @@ async def test_the_followup_prompt_comes_from_the_yaml(tmp_path: Path) -> None:
     assert any("改过的追问：断不断？" in c for c in sent), "发出去的必须是 YAML 那一份"
 
 
+async def test_the_segment_followup_receives_each_complete_prose(tmp_path: Path) -> None:
+    """归段靠正文末尾判断收束，不能只给每轮开头的固定长度预览（S22）。"""
+    ending = "这场谈判到这里明确结束。"
+    prose = "他们仍在桌边交涉。" * 30 + ending
+    llm = ScriptedLLM(
+        tool("state_write", set={"地点": "客厅"}),
+        text("谈判结束。"),
+        text(prose),
+        close_segment(0),
+        auto_close=None,
+    )
+    repo, session, gw, reg = setup(tmp_path, llm)
+
+    await execute_run(repo, session, gw, reg)
+
+    followup = str(llm.requests[-1]["messages"][-1].get("content") or "")
+    assert prose in followup
+    assert ending in followup
+
+
 async def test_open_run_count_resets_at_the_previous_close(tmp_path: Path) -> None:
     """追问要带上**这一段已经开了几轮**，而那是"上一个结尾之后有多少轮"。
 
@@ -601,7 +612,7 @@ async def test_open_segment_waits_another_run(tmp_path: Path) -> None:
     repo, session, gw, reg = setup(tmp_path, llm)
     parent = await _drive(repo, session, gw, reg, runs)
 
-    assert all(n.outline_summary is None for n in repo.path_to(parent))
+    assert all(n.prose_summary is None for n in repo.path_to(parent))
 
 
 async def test_every_segment_goes_through_summarize(tmp_path: Path) -> None:
@@ -620,7 +631,7 @@ async def test_every_segment_goes_through_summarize(tmp_path: Path) -> None:
     repo, session, gw, reg = setup(tmp_path, llm)
     parent = await _drive(repo, session, gw, reg, runs)
 
-    assert repo.path_to(parent)[-1].outline_summary == "她进了店。"
+    assert repo.path_to(parent)[-1].prose_summary == "她进了店。"
 
 
 async def test_manual_close_does_not_ask_the_model(tmp_path: Path) -> None:
@@ -654,13 +665,13 @@ async def test_manual_close_does_not_ask_the_model(tmp_path: Path) -> None:
     try:
         parent = await _drive(repo, session, gw, reg, runs)
         # 关掉之后不追问，所以什么也没归段
-        assert all(n.outline_summary is None for n in repo.path_to(parent))
+        assert all(n.prose_summary is None for n in repo.path_to(parent))
     finally:
         assembler.use_dir(None)
 
     end = await close_segment(repo, gw, parent, Tracer(repo, parent), forced=True)
     assert end is not None
-    assert end.outline_summary == "四轮压成这一句。"
+    assert end.prose_summary == "四轮压成这一句。"
     assert end.segment_span == runs
 
 
@@ -689,7 +700,7 @@ async def test_backfill_failure_does_not_fail_the_run(tmp_path: Path) -> None:
     parent = await _drive(repo, session, gateway, reg, runs)
 
     assert gateway.calls > 0, "应当真的尝试过"
-    assert all(n.outline_summary is None for n in repo.path_to(parent))
+    assert all(n.prose_summary is None for n in repo.path_to(parent))
 
 
 async def test_a_bare_key_shadowing_a_namespaced_one_is_flagged(tmp_path: Path) -> None:
@@ -706,7 +717,7 @@ async def test_a_bare_key_shadowing_a_namespaced_one_is_flagged(tmp_path: Path) 
         values={"沈砚": {"冷却": "御剑斩剩3回合"}},
     )
     llm = ScriptedLLM(
-        tool("submit_outline", outline="他又催了一次剑。"),
+        text("他又催了一次剑。"),
         text("剑没有起来。" * 10),
         state=dict(set={"冷却": "御剑斩剩2回合"}),
     )
@@ -727,7 +738,7 @@ async def test_sibling_keys_under_different_owners_are_not_flagged(tmp_path: Pat
         values={"林昭": {"知情": ["照片"]}},
     )
     llm = ScriptedLLM(
-        tool("submit_outline", outline="他记住了她。"),
+        text("他记住了她。"),
         text("他看着她走出去。" * 8),
         state=dict(append={"陈屿": {"知情": ["她来过"]}}),
     )
@@ -740,7 +751,7 @@ async def test_sibling_keys_under_different_owners_are_not_flagged(tmp_path: Pat
 
 async def test_ordinary_state_values_are_not_flagged(tmp_path: Path) -> None:
     llm = ScriptedLLM(
-        tool("submit_outline", outline="她推开门，屋里坐着陈。"),
+        text("她推开门，屋里坐着陈。"),
         text("蓝布帘子垂在门框里，颜色褪得发白。" * 8),
         state=dict(set={"许平.生死": "已死", "陈屿.在场": True}),
     )
@@ -748,18 +759,6 @@ async def test_ordinary_state_values_are_not_flagged(tmp_path: Path) -> None:
 
     outcome = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
     assert not any("拆成几个键" in n for n in outcome.notes)
-
-
-async def test_properly_expanded_prose_is_not_flagged(tmp_path: Path) -> None:
-    llm = ScriptedLLM(
-        tool("submit_outline", outline="她推开门，屋里坐着陈。"),
-        text("蓝布帘子垂在门框里，颜色褪得发白。" * 8),
-        state=dict(set={"地点": "客厅"}),
-    )
-    repo, session, gw, reg = setup(tmp_path, llm)
-
-    outcome = await execute_run(repo, session, gw, reg, user_input=UserInput(text="我推开门"))
-    assert not any("照抄" in n for n in outcome.notes)
 
 
 # -- trace -------------------------------------------------------------------
@@ -807,7 +806,7 @@ async def test_going_back_to_the_director_starts_the_round_count_over(tmp_path: 
     """
     repo, session, gw, reg = setup(
         tmp_path,
-        CancelWriter(tool("submit_outline", outline="她推开门。")),
+        CancelWriter(text("她推开门。")),
         Session(),
     )
     with pytest.raises(asyncio.CancelledError):
@@ -816,7 +815,7 @@ async def test_going_back_to_the_director_starts_the_round_count_over(tmp_path: 
     draft = repo.load_draft()
     assert draft is not None and draft.rounds > 0, "director 那一轮确实用掉了额度"
 
-    resume = ScriptedLLM(tool("submit_outline", outline="她停在门口。"), text("她没有推。"))
+    resume = ScriptedLLM(text("她停在门口。"), text("她没有推。"))
     outcome = await execute_run(
         repo,
         repo.load_session(),
@@ -825,7 +824,7 @@ async def test_going_back_to_the_director_starts_the_round_count_over(tmp_path: 
         user_input=UserInput(text="等等，她其实没推开"),
         persist_trace=True,
     )
-    assert outcome.node.outline == "她停在门口。"
+    assert outcome.outline == "她停在门口。"
 
     # **从「第 1 轮」重新数。** 接着数的话这里会是「第 2 轮」——那正是在正文阶段
     # 反复打断几次就能把 24 轮吃光的形态。

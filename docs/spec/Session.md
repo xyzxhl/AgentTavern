@@ -41,8 +41,7 @@ state_manager 要的是**记法的示范**。**合成一个会让其中一侧被
 实测 state_manager 取 3 时占掉全场 42% 的输入 token——这个数值得用户调，
 但它和其它 agent 配置一样是**服务级**，不属于 session。
 
-**验收** 两个窗口彼此独立、位于各自 YAML 且不进入 session 的断言待补，见
-[TODO](../TODO.md)。
+**验收** `test_writer_and_state_history_windows_are_independent_yaml_values`
 
 ### S120 · 「用户扮演谁」属于 worldbook，不提供 session 覆盖
 
@@ -102,13 +101,16 @@ session 共用同一个玩家角色。
 
 **规格** 同一 session 始终只有一个 runner。新的 WebSocket 到达时，服务端先关闭并收尾
 旧连接与旧 runner，再接受新连接；旧 handler 的延迟清理不得删掉新连接的登记。
+客户端的多个异步连接尝试同样只允许最后一次生效：旧 REST 请求不得安装 socket，
+旧 socket 的关闭回调不得把当前连接误报为已关闭。切换 session 时必须清空上一连接的
+草稿提示、用量和其它瞬态投影；只有新 session 的 REST 快照与随后消息可以填回。
 
 **不做** 并行保留两个 runner；不把第二个连接直接拒绝后留给页面永久断线。
 
 **为什么** 本项目面向本地单用户，刷新页面是正常恢复动作，不是需要保护的多用户竞争。
 直接拒绝新连接会让刷新恰好撞上旧连接清理窗口时永远停在“连接断开”，而旧页面已经不可用。
 
-**验收** `test_a_new_socket_takes_over_without_leaving_two_runners`
+**验收** `test_a_new_socket_takes_over_without_leaving_two_runners` · `test_only_the_latest_connection_attempt_installs_a_socket`
 
 ### S162 · 新会话从所选 worldbook 得名并避让重名
 

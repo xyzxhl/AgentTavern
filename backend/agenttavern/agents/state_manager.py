@@ -1,32 +1,25 @@
 """state_manager：状态维护者（S7）。
 
-**它是第四个 agent，跑在 writer 之后。** 拿到这一轮的细纲和成文，把该被记住的
+**它是第三个 agent，跑在 writer 之后。** 拿到这一轮的成文，把该被记住的
 东西折成几个键值写进 state。以前这活在 director 手上，边推演边记。
 
 ## 为什么后置
 
-- **记的人得看得见最终写出来的是什么。** 细纲常常留白——「他含糊地应了一句」，
-  正文才落实成具体那句话。边推演边记的人只能记那个含糊的版本。
+- **记的人只以最终写出来的东西为准。** 细纲常常留白或在渲染时偏离，正文才是
+  实际发生的版本。
 - **director 那一轮少了一件要惦记的事。** 它原先要在推演途中反复自问"这个要不要
-  记"，而它当时还不知道最后会写成什么样；催促词里那条「先 state_write 再 submit」
+  记"，而它当时还不知道最后会写成什么样；催促词里那条「先写状态再提交细纲」
   的分支也是这么来的，实测在 `pulp` 第 4 轮空转掉整场 84% 的 input token。
 
-## 这削掉了 S5 的一半，必须说在明处
-
-S5 是「director 从不读正文」，它换来 director 能覆盖五倍历史跨度。现在正文经由
-这里转写进 state，state 下一轮进 director——**正文确实回流了**，但回流的是被压缩
-和筛选过的几十个键值，不是原文。S5 买到的东西还在，说法要改。
-
-它也不违反 S4（director → writer 单向、无回流）：那条讲的是**一个 run 内部**，
-这里的回流跨了 run 边界，走 state 这个共享数据，性质和 history 一样。
+director 下一轮也会读正文 history；state 的作用不是替正文回流，而是把仍持续生效的
+少量事实拎到眼前，作为检索捷径。
 
 ## loop 的出口是"这一次不再调用工具"
 
-没有 `submit` 之类的终止工具，这是有意的。director 需要一个是因为它要交付**产物**
-（细纲），交付这个动作得有地方承接；这里的产物就是那几次写入本身，写完就没事了。
-`MAX_ROUNDS` 只是保底。
+没有 `submit` 之类的终止工具，这是有意的。director 也用无工具的最终输出收口；这里的
+产物就是那几次写入本身，写完就没事了。`MAX_ROUNDS` 只是保底。
 
-**「没变化也要调用一次」那条契约（E0）随之作废**：它原先靠 `submit_outline` 退回
+**「没变化也要调用一次」那条契约（E0）随之作废**：它原先靠提交细纲时退回
 来强制，为的是区分"确实没变"和"忘了记"。director 会忘是因为它同时在推演；
 这个 agent 唯一的任务就是记状态，空手回来就当没变化——为消这个歧义再花一轮
 往返不值。
@@ -63,11 +56,10 @@ async def run_state_manager(
     registry: ToolRegistry,
     tracer: Tracer,
     *,
-    outline: str,
     prose: str,
     max_rounds: int = MAX_ROUNDS,
 ) -> StateResult:
-    """读这一轮的细纲和正文，把状态变化写进 ``ctx.staged_delta``。
+    """读这一轮的正文，把状态变化写进 ``ctx.staged_delta``。
 
     **只暂存不落盘**：增量随节点一并落地，细纲、正文、增量必须同时抵达，
     节点是原子的（S42/S20）。
@@ -80,7 +72,6 @@ async def run_state_manager(
         # （那个走 `current_state`），不必重新装配一次。
         ctx.base_state(),
         recent=recent,
-        outline=outline,
         prose=prose,
     ).messages
 

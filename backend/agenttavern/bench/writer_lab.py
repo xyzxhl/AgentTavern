@@ -32,11 +32,12 @@ from ..llm import LLMGateway, Message
 from ..models import WorldbookEntry
 from ..prompting import call_of, upstream_runs, writer_prompt
 from ..storage import Store
+from ..tracing import outline_from_trace
 
 
 @dataclass(frozen=True)
 class Take:
-    """一份固定的 writer 输入。**取自落盘节点，不重新生成。**"""
+    """一份固定的 writer 输入。正文取自节点，临时细纲取自开发 trace。"""
 
     index: int
     outline: str
@@ -79,13 +80,12 @@ def load_takes(
 
     takes: list[Take] = []
     for i, node in enumerate(path):
-        if not node.outline:
+        outline = outline_from_trace(repo, node.id)
+        if not outline:
             continue
         window = upstream_runs()
         upstream = "\n\n".join(n.prose for n in path[max(0, i - window) : i] if n.prose)
-        takes.append(
-            Take(index=i + 1, outline=node.outline, upstream=upstream, original=node.prose)
-        )
+        takes.append(Take(index=i + 1, outline=outline, upstream=upstream, original=node.prose))
     # 文风实验要的是角色语言习惯与用户扮演谁——两样都在**条目**上（S65），
     # worldbook 已经没有字段了（S64）。文风与视角也不在 session 上了（R31），
     # 它们是 `writer.yaml` 里那两个 `choice` 的 `selected`。

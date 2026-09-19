@@ -20,10 +20,13 @@ goal_manager 是第四个 agent，跨整个 goal 生命周期累积一份**产�
 
 **服务** [R24](../req/长任务.md)
 
-**规格** 四个工具：`plan`（首次拆**以及任何一轮就地重拆**）、`check`（更新成立情况）、
-`steer`（写下一条输入）、`finish`。收口条件是「这一次不再调用任何工具」。
+**规格** 四个目标工具：`plan`（首次拆**以及任何一轮就地重拆**）、`check`（更新成立情况）、
+`steer`（写下一条输入）、`finish`；历史发生折叠时还可用只读的 `history_read`。
+收口条件是「这一次不再调用任何工具」。
 
-静态前缀跨整个 goal 生命周期不变，**每轮只追加一条产品记录**。当前有效的 plan 与
+静态前缀跨整个 goal 生命周期不变，**每轮只追加一条产品记录**；累计体量越过与
+director 相同的上下文预算后，按同一段落边界折成摘要，并可由 `history_read` 按段展开。
+当前有效的 plan 与
 进度以权威状态单独持久化，并在每次 goal_manager 调用前投影到上下文末尾。当前 turn 的
 thinking、tool call/result 只在这次 loop 内存在；turn 结束后不追加到 goal 历史。跨 turn
 保留的是工具已经写入的权威 goal 状态，不是调用与回执的 transcript。
@@ -188,40 +191,41 @@ goal_manager 的系统失败也暂停 goal：若故事节点已经原子提交�
 
 **服务** [R28](../req/长任务.md)
 
-**规格** 起点直接划到它身上：它和它之前的剧情一样进静态前缀、**给细纲**，
+**规格** 起点直接划到它身上：它和它之前的剧情一样进静态前缀、**给正文**，
 目标从**下一轮**开始。开场那次留给下一轮去跑。
 
 **不做** 判它、把它的开销记进预算、按正文逐条追加给 goal_manager。
 
 **为什么** 三样都是在**为一件目标没参与的事结账**——那一轮的输入是用户自己打的，
-细纲是 director 在目标存在之前定的，判它「有没有推进某个中间状态」纯属碰运气，
+正文是目标存在之前写成的，判它「有没有推进某个中间状态」仍是在为目标未参与的剧情
+结账，
 而预算兜的是自主运行成本，**它一分钱都不是自主跑出来的**。
 
 **验收** `test_a_goal_set_while_a_run_is_in_flight_survives_that_run`
 
-### S102 · 上下文按起点切成两段：之前给细纲，期间给正文
+### S102 · 起点前后都只给正文，分段只决定缓存位置
 
 **服务** [R25](../req/长任务.md)
 
-**规格** 起点之前的剧情进静态前缀、**给细纲**（摘要策略与 director 一致）；
-起点之后的每一轮逐条追加、**给正文**。
+**规格** 起点之前的剧情进静态前缀，只给正文；起点之后的每一轮逐条追加最终正文。
+用户亲自提交的顶层输入与 turn 内纠正/引导，是用户接管方向的证据，也随目标期间的
+正文保留；goal_manager 自己写出的模拟输入已经落实成正文，不重复回灌。
 
-每个 turn 的记录**标注输入来源**（模拟 / 顶层用户输入 / turn 内纠正 / turn 内引导）。
-**正文没写成时不回退到细纲**，明说「这一轮没有写出正文」。
+两段都按 [S157](Retrieval.md#s157) 与 director 共用同一上下文预算、段落摘要和
+`history_read` 地址。**正文没写成时不回退到细纲**，明说「这一轮没有写出正文」。
 
-**为什么** 两段回答的问题不同：前面那段只需要「故事到这儿了」，细纲够用而且便宜；
-goal 期间要判的是「这一步到底有没有发生」，而**细纲只说定了什么，正文才是最终写出来
-的东西**。
+**为什么** 无论是在 goal 之前交代背景，还是在 goal 期间判断进度，都必须以实际成文
+为准。细纲只是当时计划写什么，不能证明最终发生了什么。
 
-输入来源是它**最重要的信号**：剧情偏了，是自己推错了还是用户主动把剧情带走了？
-**后者强得多，用户的意图优先于目标。** director 不读这个字段——两种输入在它眼里
-必须一模一样。
+用户介入是它**最重要的信号**：剧情偏了，是自己推错了还是用户主动把剧情带走了？
+**后者强得多，用户的意图优先于目标。** director 仍把普通输入与模拟输入按同一种
+剧情输入处理；这个来源差异只服务于 goal 恢复后的判断。
 
 回退看起来只是「降级用一份更粗的记录」，实际上**把一个失败悄悄补齐了**：
 那一轮什么都没写出来，而 goal_manager 读到一段像模像样的剧情，
 会照着它判某个中间状态已经成立。**静默的降级比缺失更糟。**
 
-**验收** `test_before_the_goal_gets_outlines_and_during_gets_prose` · `test_each_turn_says_who_gave_the_input` · `test_a_turn_without_prose_says_so_instead_of_falling_back` · `test_a_goal_set_at_session_start_treats_everything_as_during`
+**验收** `test_before_and_during_the_goal_both_get_prose` · `test_user_interventions_survive_but_simulated_inputs_do_not_echo` · `test_a_turn_without_prose_says_so_instead_of_falling_back` · `test_a_goal_set_at_session_start_treats_everything_as_during` · `test_goal_history_compacts_like_director_and_can_expand`
 
 ### S103 · 恢复时能续就续，续不上就整份重建
 
@@ -229,6 +233,9 @@ goal 期间要判的是「这一步到底有没有发生」，而**细纲只说�
 
 **规格** 权威在**投影**不在对话。暂停期间用户可能自己跑几轮、还可能切分支——
 **切了分支就整份重建**（「以最终选择的分支为准」只有重建做得到，增量追加撤不回来）。
+
+恢复时，暂停期间最终选中路径上的正文与用户亲自提交的顶层输入、纠正和引导一起补入；
+模拟输入不补。正文若已折叠，用户方向仍保留，具体剧情可用 `history_read` 展开。
 
 重建丢掉工具调用的历史，但计划与进度以投影的形式留着。
 
@@ -261,13 +268,16 @@ goal 期间要判的是「这一步到底有没有发生」，而**细纲只说�
 
 **验收** `test_it_is_told_who_the_user_plays` · `test_it_does_not_read_the_world_or_the_goal`
 
-### S160 · 暂停从下一轮生效，不截断已经开始的轮次
+### S160 · 单独暂停 goal 从下一轮生效，不截断已经开始的轮次
 
 **服务** [R30](../req/长任务.md)
 
-**规格** goal 处于运行态时，一轮从目标开场开始就归当前 goal。用户在该轮任一阶段按暂停，
+**规格** goal 处于运行态时，一轮从目标开场开始就归当前 goal。用户只按 goal 的暂停时，
 当前轮仍完整跑完：故事节点照常提交，run 末的目标核对照常完成，这轮的产品记录、轮数与
 token 照常记账；核对没有给出终态时保留“用户暂停”，并且不自动开启下一轮。
+
+用户按「停止生成」或发送纠正时，当前故事 run 分别按 S48 / S50 处理，同时立即把 goal
+置为暂停并关闭自动续跑；这些动作不是本条所说的“只暂停 goal”。
 
 目标在一轮开始前已经暂停时，用户手写的轮次仍按 S104 处理：不判目标、不计入目标预算。
 
@@ -277,4 +287,21 @@ token 照常记账；核对没有给出终态时保留“用户暂停”，并�
 **为什么** 暂停表达的是“这一轮之后先别继续”，不是“把正在写的节点撕掉”。只保留故事
 节点却跳过核对与记账，会出现界面已经多了一轮、goal 仍显示 `0/N` 的分裂状态。
 
-**验收** `test_pausing_during_goal_opening_finishes_and_accounts_for_that_run` · `test_a_paused_goal_neither_judges_nor_continues`
+**验收** `test_pausing_during_goal_opening_finishes_and_accounts_for_that_run` · `test_a_paused_goal_neither_judges_nor_continues` · `test_stop_and_correction_pause_an_active_goal`
+
+### S176 · 节点提交后的中断仍须结算并暂停 goal
+
+**服务** [R28](../req/长任务.md) [R30](../req/长任务.md)
+
+**规格** 若故事节点已经原子提交，随后在归段、摘要或其它后处理阶段收到中断，本轮不再
+回滚或伪装成未完成。编排层仍把本轮 run 数与 token 记入当前 goal，但不再发起新的模型
+判定；随后暂停 goal、关闭自动续跑，并把新节点设为当前可编辑节点。
+
+**不做** 恢复上一节点的编辑窗口；不让一个已经存在的故事节点从 goal 预算中消失；
+不在连接已断时继续反复尝试发送同一批通知。
+
+**为什么** 节点是故事侧的提交边界。越过这条边界后再把 run 当成失败，会出现正文已经
+可见、goal 轮数却没增加的分裂状态；继续判定又可能需要已断开的交互链路，暂停后交还
+控制权更明确。
+
+**验收** `test_post_commit_cancellation_accounts_and_pauses_the_goal`

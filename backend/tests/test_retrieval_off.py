@@ -75,11 +75,11 @@ def test_worldinfo_tools_disappear_when_read_is_off() -> None:
 
 
 def _compacted(readable: bool) -> str:
-    # 体量要顶在**扁平化之后仍然留下的东西**上（S61）：细纲留、轮次提示不留。
+    # 体量要顶在**扁平化之后仍然留下的东西**上（S61）：正文留、轮次提示不留。
     # 塞在提示里会被扁平化吃掉，压根越不了界。
     filler = CONTEXT_BUDGET_CHARS
-    node = Node(outline="第一轮" + "长" * filler, outline_summary="她进店，他锁了门。")
-    tail = Node(parent_id=node.id, outline="第二轮" + "长" * filler)
+    node = Node(prose="第一轮" + "长" * filler, prose_summary="她进店，他锁了门。")
+    tail = Node(parent_id=node.id, prose="第二轮" + "长" * filler)
 
     return "\n".join(m.content or "" for m in replay_messages([node, tail], readable=readable))
 

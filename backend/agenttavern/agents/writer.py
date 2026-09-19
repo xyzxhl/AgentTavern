@@ -21,7 +21,7 @@ from ..tracing import Tracer
 DEVIATION_MARKER = "---偏离---"
 
 # 注入几轮正文上文用于衔接，**由 `Capabilities.upstream_runs` 决定（默认 3）**。
-# writer 只需要接住语气，不需要长程记忆——那是 director 的事，它读细纲历史。
+# writer 只需要接住语气，不需要完整长程历史；director 读取更长的正文历史。
 # 这个数以前是这里的一个常量，改它要动代码；它其实是每个故事都该自己定的东西
 # （节奏慢的故事上文要多给几轮），所以搬进了能力开关。
 
@@ -86,8 +86,8 @@ def _recent_prose(ctx: RunContext) -> str:
 def _split_deviation(raw: str) -> tuple[str, str | None]:
     """拆出偏离报告（S8）。
 
-    writer 不改写细纲，只报告实质增删；编排层记录在节点上，下一 run 的 director
-    读细纲历史时可见。这是**兜底与归因信号**，不是常规通路——writer 本就不该
+    writer 不改写细纲，只报告实质增删；编排层记录在节点上供审计。
+    这是**兜底与归因信号**，不是常规通路——writer 本就不该
     增删实质内容。
     """
     if DEVIATION_MARKER not in raw:

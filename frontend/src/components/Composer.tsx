@@ -13,9 +13,8 @@ import { useSession } from "../store";
  * 没话要说的时候，那一下唯一的意思就是「别再往下跑了」；有话要说就永远是发送——
  * 跑着的时候发送进队列，作为新的一轮（S107：每条输入独立成一个 run，不打包）。
  *
- * **引导走 Ctrl+Enter**（S50）：它插进正在跑的这一轮、落在操作边界上，和排队
- * 是两件事。不给它单独的按钮，是因为按钮一多，「发送」是干什么的就得先想一下；
- * 而引导本来就是少数情况。
+ * 引导走 Ctrl+Enter；纠正走 Alt+Enter（S50）。两者都插进当前 turn，区别是纠正
+ * 会立即取消在飞的操作。运行中有文字时也显示两个小按钮，避免关键能力只能靠记快捷键。
  */
 export function Composer(): JSX.Element {
   const [text, setText] = useState("");
@@ -39,6 +38,13 @@ export function Composer(): JSX.Element {
   function guide(): void {
     if (!said) return;
     send({ type: "interject", text: said, interrupt: false });
+    setText("");
+  }
+
+  /** 掐掉在飞的操作，再把这句话作为同一 turn 的纠正追加进去。 */
+  function correct(): void {
+    if (!said) return;
+    send({ type: "interject", text: said, interrupt: true });
     setText("");
   }
 
@@ -68,8 +74,9 @@ export function Composer(): JSX.Element {
               // Shift+Enter 换行——正文输入常有多段。
               if (e.shiftKey) return;
               e.preventDefault();
-              // Ctrl/Cmd+Enter 直接走引导，不排队。
-              if (e.ctrlKey || e.metaKey) guide();
+              // Ctrl/Cmd+Enter 引导；Alt+Enter 纠正并取消当前操作；普通 Enter 排队。
+              if (e.altKey) correct();
+              else if (e.ctrlKey || e.metaKey) guide();
               else press();
             }}
             rows={2}
@@ -97,10 +104,11 @@ export function Composer(): JSX.Element {
         </div>
 
         {inFlight && said && (
-          <p className="mt-1.5 text-[11px] text-dim">
-            <b className="font-medium text-fg">发送</b> 排队，等这一轮写完再作为新的一轮 ·{" "}
-            <b className="font-medium text-fg">Ctrl+Enter</b> 插进正在跑的这一轮，当场改方向
-          </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-dim">
+            <span><b className="font-medium text-fg">发送</b> 排队到下一轮</span>
+            <button className="btn py-0.5" onClick={guide}>引导 · Ctrl+Enter</button>
+            <button className="btn py-0.5" onClick={correct}>纠正 · Alt+Enter</button>
+          </div>
         )}
       </div>
     </div>

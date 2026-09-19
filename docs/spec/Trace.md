@@ -88,7 +88,7 @@ trace 从不参与节点、goal 历史或模型 context 的重放。
 **为什么** 事件是推过来的，**刷新一次页面之前那些就没了**。
 而开发者模式本来就强制落盘——**记了不给读回来的路等于没记**。
 
-**验收** —（缺，见 [TODO.md](../TODO.md)）
+**验收** `test_a_past_run_can_be_read_back_from_disk`
 
 ### S116 · 用户的手动编辑也要进 trace
 

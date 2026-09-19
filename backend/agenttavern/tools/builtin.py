@@ -1,14 +1,13 @@
 """内置工具。清单与理由见 docs/design/Tools.md。
 
 **这里装的是全部工具，不是某一个 agent 的工具面**——谁拿到哪几个由
-`registry.py` 决定。`state_write` 只给 state_manager，`submit_outline` 只给
-director（S7）。
+`registry.py` 决定。`state_write` 只给 state_manager（S7）；director 的最终输出
+直接交付细纲，不需要提交工具（S174）。
 
-**明确不提供**（同样重要）：任何让 director 读正文的工具、调用 writer 的工具、
-生成子 agent、修改元指令 / 控制维度、写文件 / 执行代码。头两条是 S5 的基础——
-director 能覆盖五倍历史跨度，正是因为它自己从不读正文；工具返回值会回流到调用者
-上下文，正文一旦这样回流，隔离当场就没了。（正文经 state_manager 折成键值再进
-state 是另一回事：那是一次有损压缩，且跨了 run 边界。）
+**明确不提供**（同样重要）：绕过 history 的任意正文读取旁路、调用 writer 的工具、
+生成子 agent、修改元指令 / 控制维度、写文件 / 执行代码。正文统一由当前路径的
+history / `history_read` 提供；writer 是 director 完成后必经的单次阶段，不由
+director 决定是否、何时或调用几次。
 """
 
 from __future__ import annotations
@@ -23,31 +22,8 @@ from ..models import StateDelta, WorldbookMode
 from ..models.state import Tree, paths_of
 from ..models.state import label_path as _label
 from ..prompting import tool_description
-from .base import Tool, ToolOutcome, ToolResult, error
+from .base import Tool, ToolResult, error
 from .context import RunContext
-
-# --------------------------------------------------------------------------
-# 产出与终止
-# --------------------------------------------------------------------------
-
-
-class SubmitOutlineParams(BaseModel):
-    # 「细纲该写什么、不该写什么」整节在 `director.yaml` 的 `output_contract` 里，
-    # 这里不重复（S27）。
-    outline: str = Field(description="本轮细纲，一整段文字。")
-
-
-async def _submit_outline(ctx: RunContext, params: SubmitOutlineParams) -> ToolResult:
-    # **E0 契约已作废**（S7）：它原先要求提交细纲前必须写过一次 state_write。
-    # director 不再维护状态，这里也就没有前置条件了。
-    ctx.outline = params.outline
-    return ToolResult(
-        content="细纲已提交。",
-        outcome=ToolOutcome.TERMINATE,
-        label="提交了细纲",
-        payload={"chars": len(params.outline)},
-    )
-
 
 # --------------------------------------------------------------------------
 # 展开：三个域，一份实现（S157）
@@ -185,36 +161,38 @@ def _worldinfo_tree(ctx: RunContext) -> Tree:
     }
 
 
-# -- history：段落 id → 那几轮的细纲 ------------------------------------------
+# -- history：段落 id → 那几轮的正文 ------------------------------------------
 
 
 async def _history_read(ctx: RunContext, params: ExpandParams) -> ToolResult:
-    """前情那棵树，**两层：段落 id → 轮次 id → 细纲**（S57/S157）。
+    """前情那棵树，**两层：段落 id → 轮次 id → 正文**（S57/S157）。
 
     **段落是唯一用 id 当地址的域**——它没有名字，只有一段摘要，而摘要当不了
     地址（太长、会重、传回来会被改写一两个字）。所以上下文里的占位符是
     「id + 摘要」：摘要是提要，id 是地址。
 
     **索引按段折叠，展开也必须按段给回全文**：摘要在上下文里顶替的是**整段**
-    ——那几轮的细纲全被它替掉了。只还回末节点那一轮，等于告诉模型"这段就这么点
+    ——那几轮的正文全被它替掉了。只还回末节点那一轮，等于告诉模型"这段就这么点
     内容"，比不展开更糟：它会以为自己已经看全了。
     """
     return await _expand(_history_tree(ctx), params.paths, what="前情")
 
 
 def _history_tree(ctx: RunContext) -> Tree:
-    """路径上每一段：``{段落 id: {轮次 id: 细纲}}``。
+    """路径上每一段：``{段落 id: {轮次 id: 正文}}``。
 
     段落按「末节点 + 跨度」寻址：父指针唯一，所以从末节点上溯 ``span - 1`` 步
     得到的链是确定的，**任何经过末节点的路径都得到同一段**，分支天然安全（S42）。
     """
-    if ctx.parent_id is None:
+    repo = getattr(ctx, "repo", None)
+    parent_id = getattr(ctx, "parent_id", None)
+    if repo is None or parent_id is None:
         return {}
 
-    nodes = ctx.repo.all_nodes()
+    nodes = repo.all_nodes()
     tree: Tree = {}
-    for end in ctx.repo.path_to(ctx.parent_id):
-        if not end.outline_summary:
+    for end in repo.path_to(parent_id):
+        if not end.prose_summary:
             # 没归过段的轮次原文还在上下文里，不必也不该从这里再取一次。
             continue
         chain, current = [end], end
@@ -223,7 +201,7 @@ def _history_tree(ctx: RunContext) -> Tree:
                 break
             current = nodes[current.parent_id]
             chain.append(current)
-        tree[end.id] = {n.id: n.outline for n in reversed(chain)}
+        tree[end.id] = {n.id: n.prose for n in reversed(chain)}
     return tree
 
 
@@ -321,13 +299,6 @@ def _tool(agent: str, name: str, params: type[BaseModel], handler: Any) -> Tool[
     )
 
 
-def submit_tool(agent: str = "director") -> Tool[Any]:
-    """**没有前置条件了**（S7）：E0 契约（提交前必须写过一次 state）随
-    director 卸下 `state_write` 一并作废。
-    """
-    return _tool(agent, "submit_outline", SubmitOutlineParams, _submit_outline)
-
-
 def state_query_tool(agent: str) -> Tool[Any]:
     """读侧。**两个 agent 都可能拿到它**：director 读状态推演，state_manager
     读状态决定该改哪个键。只在按需展开开着时才注册（P13）。
@@ -338,9 +309,9 @@ def state_query_tool(agent: str) -> Tool[Any]:
 def state_write_tool(agent: str = "state_manager") -> Tool[Any]:
     """写侧。**只给 state_manager**（S7）。
 
-    它以前在 director 手上，边推演边记；现在挪到 writer 之后，读着这一轮的细纲和
-    正文去记。换来两件事：记的人看得见**最终写出来的是什么**（正文常常落实了细纲
-    没写死的东西），以及 director 那一轮少了一件要惦记的事。
+    它以前在 director 手上，边推演边记；现在挪到 writer 之后，只以这一轮正文为
+    事实依据。换来两件事：记的人看得见**最终写出来的是什么**，以及 director 那一轮
+    少了一件要惦记的事。
     """
     return _tool(agent, "state_write", StateWriteParams, _state_write)
 
@@ -348,7 +319,7 @@ def state_write_tool(agent: str = "state_manager") -> Tool[Any]:
 def history_read_tool(agent: str = "director") -> Tool[Any]:
     """前情的展开。**`history_search` 没了**（S54 整条撤销）。
 
-    它做的是"在细纲全文里逐字比对，命中的多一个标记"。而索引本来就覆盖全部
+    它做的是"在正文全文里逐字比对，命中的多一个标记"。而索引本来就覆盖全部
     段落、摘要就在眼前——命中标记能加的信息只有"这几个字逐字出现过"，
     而伏笔常常换了个说法，逐字查不中是常态。它买到的那点东西不值一个工具位。
     """
@@ -396,6 +367,5 @@ __all__ = [
     "history_read_tool",
     "state_query_tool",
     "state_write_tool",
-    "submit_tool",
     "worldinfo_read_tool",
 ]

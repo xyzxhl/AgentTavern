@@ -99,7 +99,6 @@ class EditNode(BaseModel):
     node_id: str
     user_input: str | None = Field(default=None, title="EditedUserInput")
     """替换这一 turn 的顶层输入文字；来源与提交时间保持不变（S164）。"""
-    outline: str | None = None
     prose: str | None = None
 
     state_delta: StateDelta | None = None
@@ -207,6 +206,7 @@ class ClientEnvelope(BaseModel):
 class RunStarted(BaseModel):
     type: Literal["run_started"] = "run_started"
     run_id: str
+    input: str
 
 
 class Trace(BaseModel):

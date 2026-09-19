@@ -7,11 +7,11 @@
 - **生成后**：归段（`close_segment`）——它只影响**以后**怎么回看这一轮。
 
 生成后的动作绝不能放进 tool loop：它对本轮产出毫无帮助，却要占掉往返、
-分散注意力，还会和 `submit_outline` 的终止语义打架（S4）。
+分散注意力；director 输出细纲之后，本轮产出已经确定（S174）。
 
 但它**必须问 director 本人**，而不是另起一个冷调用。这一段收没收是语义判断，
 判据是"这场戏完了没有"——刚写完的 director 手里有 state、有前情、知道故事
-要往哪走；一个只看得见几段细纲的调用，判据全靠猜。
+要往哪走；一个只看得见几段正文的调用，判据全靠猜。
 
 追问接在 director 自己的对话后面，因此几乎不花额外的输入 token。
 
@@ -62,7 +62,7 @@ def parse_cut(calls: Sequence[ToolCall], open_runs: int) -> int:
 async def ask_segment_cut(
     gateway: LLMGateway,
     messages: list[Message],
-    open_outlines: list[str],
+    open_prose: list[str],
     tracer: Tracer,
     *,
     model: str | None = None,
@@ -86,11 +86,14 @@ async def ask_segment_cut(
     在这个文件里另存了一份，于是 YAML 那一份是死字——用户改完什么都不会发生，
     而两份必然对不上（同 S27）。
     """
-    open_runs = len(open_outlines)
+    open_runs = len(open_prose)
     if open_runs == 0:
         return 0
 
-    listing = "\n".join(f"{i + 1}. {o[:120]}" for i, o in enumerate(open_outlines))
+    # 归段是语义判断，结尾恰恰是最重要的证据。以前每轮只给前 120 字，模型会把
+    # 正常预览当成“句中截断”，也永远看不见场景在末尾已经收束。正文必须完整给出；
+    # 超出模型上下文时让调用明确失败，不能靠静默截断换一个必然偏向“不分段”的答案。
+    listing = "\n\n".join(f"{i + 1}. {p}" for i, p in enumerate(open_prose))
     asked = special_messages(
         "director",
         "segment",

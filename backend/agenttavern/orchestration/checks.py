@@ -12,7 +12,7 @@
 定向送 human / AI eval，让覆盖率不必靠盲抽。标记从不影响运行时行为（P12：
 重生成成本高，决定权在用户）。
 
-这里的每一条都只看**形状**，不看内容：长度、比例、有没有提交。凡是需要判断
+这里的每一条都只看**形状**，不看内容：长度、类型、有没有提交。凡是需要判断
 "这条记得对不对""这个细节该不该记"的，都不在代码这一侧。
 """
 
@@ -38,15 +38,6 @@ _DENSITY_MIN_CHARS = {
 
 def _min_chars(density: str) -> int:
     return _DENSITY_MIN_CHARS.get(density, _DENSITY_MIN_CHARS["normal"])
-
-
-EXPANSION_MIN_RATIO = LIMITS.sampling.expansion_min_ratio
-"""正文 / 细纲的长度比下限。低于此值说明 writer 没有在展开，只是在照抄。
-
-**这个数不是质量判据，是隔离是否生效的指标**（S14）：细纲写事实、正文写描写，
-两者体量本就该拉开。实测越界时是 1.0，分工修好后是 2.1–3.3。取 1.6 是留了余量的
-下限——它要抓的是"塌回 1.0"，不是给正常波动划线。
-"""
 
 
 STATE_VALUE_MAX_CHARS = LIMITS.sampling.state_value_max_chars
@@ -132,7 +123,6 @@ def sampling_flags(
     prose: str,
     density: str,
     deviation: str | None,
-    outline: str = "",
     state_before: dict[str, object] | None = None,
 ) -> list[str]:
     """返回可疑之处。空列表表示这一 run 没有值得优先送审的特征。"""
@@ -147,12 +137,6 @@ def sampling_flags(
     if shadowed := _shadowed_keys(state_before or {}, delta.set):
         flags.append(
             f"新位置与已有位置只差一层归属，可能是同一件事的两个写法：{'、'.join(shadowed)}"
-        )
-
-    if outline and prose and len(prose) < len(outline) * EXPANSION_MIN_RATIO:
-        flags.append(
-            f"正文只比细纲长 {len(prose) / len(outline):.1f} 倍，"
-            "writer 可能在照抄而非展开（细纲越界写了描写？）"
         )
 
     if delta.is_empty() and len(prose) > _min_chars(density) * 2:

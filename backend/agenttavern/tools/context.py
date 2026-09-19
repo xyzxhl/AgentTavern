@@ -91,20 +91,17 @@ class RunContext:
     """``state_write`` 写入这里，run 完整结束时才落盘（S20）。
 
     **填它的人是 state_manager，不再是 director**（S7）——状态维护后置到
-    writer 之后，读着细纲和正文去记，而不是边推演边记。它仍然只暂存不落盘：
-    节点是原子的，细纲、正文、增量必须同时抵达（S42/S20）。
+    writer 之后，只以正文为事实依据去记，而不是边推演边记。它仍然只暂存不落盘：
+    节点是原子的，正文与增量必须同时抵达（S42/S20）。
     """
 
     state_write_count: int = 0
     """``state_write`` 调用了几次。**只用于 trace 与统计，不再是契约。**
 
-    它原先撑着 E0：`submit_outline` 前必须至少写一次，为的是区分"确实没变化"
+    它原先撑着 E0：提交细纲前必须至少写一次，为的是区分"确实没变化"
     与"模型忘了记"。那条契约随 S7 作废——director 不写状态了，而 state_manager
     唯一的任务就是记状态，它空手回来就是"没变化"，为消这个歧义再花一轮往返不值。
     """
-
-    outline: str | None = None
-    """由 ``submit_outline`` 填入，终止 loop。"""
 
     def base_state(self) -> WorldState:
         """本 run 开始时的状态：沿父路径重放的结果。"""

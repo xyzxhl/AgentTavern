@@ -7,6 +7,16 @@ import { useSession } from "../store";
 import { NodeEditor } from "./NodeEditor";
 import { Process, splitAtProse } from "./Process";
 
+/** 节点编辑器已经含有正文输入框；打开时不再重复渲染阅读态正文（S173）。 */
+export function isNodeProseVisible(nodeId: string | undefined, editing: string | null): boolean {
+  return nodeId !== undefined && editing !== nodeId;
+}
+
+/** 节点已经原子落盘、但生成后处理仍在跑时，重连只能画一张同 run 卡片。 */
+export function hasCommittedLiveNode(path: Node[], liveRunId: string | undefined): boolean {
+  return liveRunId !== undefined && path.some((node) => node.id === liveRunId);
+}
+
 /**
  * 正文流。**每一轮是「输入 → 过程 → 正文」三段**，过程摆在两者中间——
  * 它本来就发生在中间。
@@ -26,6 +36,7 @@ export function Transcript(): JSX.Element {
 
   const liveSteps = live ? (traces[live.runId] ?? []) : [];
   const flowing = live ? streaming[live.runId] : undefined;
+  const liveIsCommitted = hasCommittedLiveNode(path, live?.runId);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -44,19 +55,24 @@ export function Transcript(): JSX.Element {
           <p className="text-sm text-dim">说点什么开始这个故事。</p>
         )}
 
-        {path.map((node, at) => (
-          <Turn
-            key={node.id}
-            said={node.user_input?.text}
-            simulated={node.user_input?.source === "simulated"}
-            events={[]}
-            node={node}
-            last={at === path.length - 1}
-          />
-        ))}
+        {path.map((node, at) => {
+          const isLive = node.id === live?.runId;
+          return (
+            <Turn
+              key={node.id}
+              said={node.user_input?.text}
+              simulated={node.user_input?.source === "simulated"}
+              events={isLive ? liveSteps : []}
+              node={node}
+              last={at === path.length - 1}
+              running={isLive}
+              thinking={isLive ? flowing?.process : undefined}
+            />
+          );
+        })}
 
         {/* 正在跑的那一轮：还没有节点，但输入和过程都已经有了。 */}
-        {live && (
+        {live && !liveIsCommitted && (
           <Turn
             said={live.input}
             events={liveSteps}
@@ -125,6 +141,8 @@ function Turn({
 }): JSX.Element {
   const editing = useSession((s) => s.editing);
   const notes = useSession((s) => s.notes[node?.id ?? ""] ?? []);
+  const isEditing = node !== undefined && editing === node.id;
+  const showProse = isNodeProseVisible(node?.id, editing);
 
   // **时间线不能在正文这里倒着走**（S125）：状态维护跑在 writer 之后（S7），
   // goal 判定更在 run 末（R24），它们的思考与工具调用因此归到正文**下面**那一块。
@@ -164,6 +182,7 @@ function Turn({
       )}
 
       {node &&
+        showProse &&
         (node.prose ? (
           <div className="prose-body">
             <Markdown>{node.prose}</Markdown>
@@ -204,7 +223,7 @@ function Turn({
         </ul>
       )}
 
-      {node && editing === node.id && <NodeEditor node={node} />}
+      {node && isEditing && <NodeEditor node={node} />}
 
       {/* 已归段的分界画出来，没归段的给一个「在这里断段」（S22 的第三条支路）。 */}
       {node?.closes_segment && <SegmentEnd span={node.segment_span ?? 1} />}

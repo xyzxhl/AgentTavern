@@ -19,7 +19,6 @@ export type NodeId = string;
 export type Type5 = "edit_node";
 export type NodeId1 = string;
 export type EditedUserInput = string | null;
-export type Outline = string | null;
 export type Prose = string | null;
 export type StateResult = {
   [k: string]: unknown;
@@ -56,6 +55,7 @@ export type ServerMessage =
   | ServerError;
 export type Type10 = "run_started";
 export type RunId = string;
+export type Input = string;
 export type Type11 = "delta";
 export type RunId1 = string;
 export type Actor = string;
@@ -106,8 +106,7 @@ export type Text3 = string;
  */
 export type InputSource = "user" | "simulated";
 export type SubmittedAt = string;
-export type Outline1 = string;
-export type OutlineSummary = string | null;
+export type ProseSummary = string | null;
 export type Interjections = string[];
 export type ClosesSegment = boolean;
 export type SegmentSpan = number;
@@ -303,7 +302,6 @@ export interface EditNode {
   type?: Type5;
   node_id: NodeId1;
   user_input?: EditedUserInput;
-  outline?: Outline;
   prose?: Prose;
   state_delta?: StateDelta | null;
   state_result?: StateResult;
@@ -377,6 +375,7 @@ export interface GoalControl {
 export interface RunStarted {
   type?: Type10;
   run_id: RunId;
+  input: Input;
 }
 /**
  * 流式分片（S118）：**正文或思考的一小段**，边生成边推。
@@ -449,8 +448,7 @@ export interface Node {
   created_at?: CreatedAt;
   status?: RunStatus;
   user_input?: UserInput | null;
-  outline?: Outline1;
-  outline_summary?: OutlineSummary;
+  prose_summary?: ProseSummary;
   interjections?: Interjections;
   closes_segment?: ClosesSegment;
   segment_span?: SegmentSpan;

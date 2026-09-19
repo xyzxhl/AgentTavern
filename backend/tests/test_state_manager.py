@@ -47,12 +47,10 @@ async def test_it_reads_the_prose_it_just_wrote(tmp_path: Path) -> None:
     llm = ScriptedLLM(text("无变化。"), auto_state=False)
     ctx, tracer, reg = _ctx(tmp_path, llm)
 
-    await run_state_manager(
-        ctx, reg, tracer, outline="他含糊地应了一句。", prose="「……回头再说吧。」"
-    )
+    await run_state_manager(ctx, reg, tracer, prose="「……回头再说吧。」")
 
     sent = str(llm.messages_of(0))
-    assert "他含糊地应了一句。" in sent
+    assert "他含糊地应了一句。" not in sent
     assert "「……回头再说吧。」" in sent
 
 
@@ -65,38 +63,36 @@ async def test_it_does_not_read_the_world_or_the_goal(tmp_path: Path) -> None:
     book.save_entry(WorldbookEntry(name="题材与基调", content="低魔悬疑"))
     book.save_entry(WorldbookEntry(name="教团", content="总部在旧城区。"))
 
-    await run_state_manager(ctx, reg, tracer, outline="她推开门。", prose="门开了。")
+    await run_state_manager(ctx, reg, tracer, prose="门开了。")
 
     sent = str(llm.messages_of(0))
     assert "低魔悬疑" not in sent
     assert "总部在旧城区" not in sent
 
 
-async def test_recent_turns_carry_the_full_triple(tmp_path: Path) -> None:
-    """**「细纲 → 成文 → 当时记下的」三样缺一不可。**
-
-    少了细纲看不出"定下的事实"和"记下的键"之间的取舍，少了正文看不出细纲留白
-    处最后落成了什么，少了增量就根本没有示范——而这一节存在的全部理由就是示范，
-    没有它键名和值的形状会一轮一个样。
-    """
+async def test_recent_turns_carry_only_authoritative_prose(tmp_path: Path) -> None:
+    """历史叙事只取正文；旧细纲与旧 state 写法都不作为本轮事实输入。"""
     llm = ScriptedLLM(text("无变化。"), auto_state=False)
     ctx, tracer, reg = _ctx(tmp_path, llm)
     ctx.repo.save_node(
         Node(
             id="run_0",
-            outline="她把照片推过去。",
             prose="照片正面朝上，停在他手边。",
             state_delta=StateDelta(set={"照片.位置": "陈屿手边"}),
         )
     )
     ctx.parent_id = "run_0"
 
-    await run_state_manager(ctx, reg, tracer, outline="他没有去看。", prose="他没有低头。")
+    await run_state_manager(ctx, reg, tracer, prose="他没有低头。")
 
     sent = str(llm.messages_of(0))
-    assert "她把照片推过去。" in sent
     assert "照片正面朝上，停在他手边。" in sent
-    assert "照片.位置" in sent and "陈屿手边" in sent
+    recent = next(
+        str(message.get("content") or "")
+        for message in llm.messages_of(0)
+        if "照片正面朝上，停在他手边。" in str(message.get("content") or "")
+    )
+    assert "照片.位置" not in recent and "陈屿手边" not in recent
 
 
 async def test_only_the_last_few_turns_come_along(tmp_path: Path) -> None:
@@ -113,18 +109,16 @@ async def test_only_the_last_few_turns_come_along(tmp_path: Path) -> None:
 
     parent = None
     for i in range(window + 2):
-        node = Node(
-            id=f"run_{i}", parent_id=parent, outline=f"第{i}轮细纲。", prose=f"第{i}轮正文。"
-        )
+        node = Node(id=f"run_{i}", parent_id=parent, prose=f"第{i}轮正文。")
         ctx.repo.save_node(node)
         parent = node.id
     ctx.parent_id = parent
 
-    await run_state_manager(ctx, reg, tracer, outline="本轮。", prose="本轮正文。")
+    await run_state_manager(ctx, reg, tracer, prose="本轮正文。")
 
     sent = str(llm.messages_of(0))
-    assert "第0轮细纲。" not in sent, f"只该带最近 {window} 轮"
-    assert f"第{window + 1}轮细纲。" in sent
+    assert "第0轮正文。" not in sent, f"只该带最近 {window} 轮"
+    assert f"第{window + 1}轮正文。" in sent
 
 
 # -- loop 怎么收口 ------------------------------------------------------------
@@ -133,8 +127,7 @@ async def test_only_the_last_few_turns_come_along(tmp_path: Path) -> None:
 async def test_the_exit_is_calling_no_tool(tmp_path: Path) -> None:
     """**没有终止工具是有意的**。
 
-    director 需要 `submit_outline` 是因为它要交付一件产物，交付这个动作得有地方
-    承接；这里的产物就是那几次写入本身，写完就没事了。
+    director 的产物由最终文本交付；这里的产物就是那几次写入本身，写完就没事了。
     """
     llm = ScriptedLLM(
         tool("state_write", set={"地点": "客厅"}),
@@ -143,9 +136,9 @@ async def test_the_exit_is_calling_no_tool(tmp_path: Path) -> None:
     )
     ctx, tracer, reg = _ctx(tmp_path, llm)
 
-    result = await run_state_manager(ctx, reg, tracer, outline="她推开门。", prose="门开了。")
+    result = await run_state_manager(ctx, reg, tracer, prose="门开了。")
 
-    assert "submit_outline" not in reg.names
+    assert set(reg.names) <= {"state_write", "state_query"}
     assert result.rounds == 2
     assert result.delta.set["地点"] == "客厅"
 
@@ -160,7 +153,7 @@ async def test_several_writes_accumulate_into_one_delta(tmp_path: Path) -> None:
     )
     ctx, tracer, reg = _ctx(tmp_path, llm)
 
-    result = await run_state_manager(ctx, reg, tracer, outline="她推开门。", prose="门开了。")
+    result = await run_state_manager(ctx, reg, tracer, prose="门开了。")
 
     assert result.delta.set["地点"] == "客厅"
     assert result.delta.append["林.知情"] == ["照片"]
@@ -176,7 +169,7 @@ async def test_invalid_tool_arguments_return_to_the_agent_for_repair(tmp_path: P
     )
     ctx, tracer, reg = _ctx(tmp_path, llm)
 
-    result = await run_state_manager(ctx, reg, tracer, outline="她推门。", prose="门开了。")
+    result = await run_state_manager(ctx, reg, tracer, prose="门开了。")
 
     assert result.delta.set == {"地点": "客厅"}
     first_result = llm.messages_of(1)[-1]
@@ -193,7 +186,7 @@ async def test_an_empty_hand_means_nothing_changed(tmp_path: Path) -> None:
     llm = ScriptedLLM(text("这一轮没什么要改的。"), auto_state=False)
     ctx, tracer, reg = _ctx(tmp_path, llm)
 
-    result = await run_state_manager(ctx, reg, tracer, outline="他们沉默着。", prose="没人说话。")
+    result = await run_state_manager(ctx, reg, tracer, prose="没人说话。")
 
     assert result.rounds == 1
     assert result.delta.is_empty()
@@ -204,9 +197,7 @@ async def test_a_model_that_never_stops_hits_the_cap(tmp_path: Path) -> None:
     llm = ScriptedLLM(tool("state_write", set={"地点": "客厅"}), auto_state=False)
     ctx, tracer, reg = _ctx(tmp_path, llm)
 
-    result = await run_state_manager(
-        ctx, reg, tracer, outline="她推开门。", prose="门开了。", max_rounds=MAX_ROUNDS
-    )
+    result = await run_state_manager(ctx, reg, tracer, prose="门开了。", max_rounds=MAX_ROUNDS)
     assert result.rounds == MAX_ROUNDS
 
 
@@ -223,7 +214,7 @@ async def test_a_system_failure_fails_the_atomic_turn(tmp_path: Path) -> None:
             return super()._handle(request)
 
     llm = Broken(
-        tool("submit_outline", outline="她推开门。"),
+        text("她推开门。"),
         text("门开了。"),
         auto_state=False,
     )
@@ -251,7 +242,7 @@ async def test_an_interrupt_is_not_a_failure(tmp_path: Path) -> None:
             return super()._handle(request)
 
     llm = Stopped(
-        tool("submit_outline", outline="她推开门。"),
+        text("她推开门。"),
         text("门开了。"),
         auto_state=False,
     )
@@ -274,7 +265,7 @@ async def test_state_off_means_it_never_runs(tmp_path: Path) -> None:
     跑不跑」，而不是一条独立的能力，所以不需要第二个。
     """
     llm = ScriptedLLM(
-        tool("submit_outline", outline="她推开门。"),
+        text("她推开门。"),
         text("门开了。"),
         state=dict(set={"不该出现": True}),
     )

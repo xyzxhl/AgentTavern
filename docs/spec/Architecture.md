@@ -30,8 +30,8 @@
 
 **规格** 一条从队列出队的顶层 user input 开启一个 turn；turn 内的纠正与引导不另开
 turn。turn 是逻辑位置，重生成只为它创建兄弟版本。每个完成版本各有一个 run，落成
-故事树上恰好一个节点；`run = node version = 一份细纲 = 一份正文`。
-节点还装着状态增量与偏离报告。
+故事树上恰好一个节点。每个 run 在 turn 内产生一份细纲和一份正文；细纲是交给 writer
+的临时制品，完成节点只保存正文、状态增量与偏离报告。
 
 **不做** 一个 run 产出两个节点，或两个 run 合并成一个节点。打断加续跑仍然只是
 同一版本、**一个**节点。
@@ -45,8 +45,8 @@ turn。turn 是逻辑位置，重生成只为它创建兄弟版本。每个完�
 
 **服务** [R20](../req/回头与改写.md) [R22](../req/回头与改写.md)
 
-**规格** state_manager 卡在**落盘之前**跑。细纲、正文、状态增量三样一起写进节点，
-不存在中间态。
+**规格** state_manager 卡在**落盘之前**跑。正文与状态增量一起写进节点，不存在
+中间态；细纲只在当前 turn 内传给 writer，不写入完成节点。
 
 模型调用、协议或存储失败使整个 run 失败，不落一个缺状态增量的节点。工具参数或校验
 错误仍作为 tool result 返回 state_manager，让当前 loop 自行修正。
@@ -57,7 +57,7 @@ turn。turn 是逻辑位置，重生成只为它创建兄弟版本。每个完�
 的人（切分支、看历史状态）会算错。代价是这一轮的结束晚一次模型调用，而用户此时
 已经看完正文了。
 
-**验收** `test_interrupt_during_state_keeps_outline_and_prose` · `test_staged_delta_is_not_persisted_until_run_ends` · `test_a_system_failure_fails_the_atomic_turn` · `test_invalid_tool_arguments_return_to_the_agent_for_repair`
+**验收** `test_interrupt_during_state_keeps_outline_and_prose` · `test_staged_delta_is_not_persisted_until_run_ends` · `test_a_completed_node_does_not_persist_the_outline` · `test_a_system_failure_fails_the_atomic_turn` · `test_invalid_tool_arguments_return_to_the_agent_for_repair`
 
 ### S166 · provider 没有完整结束的响应使整轮失败
 
@@ -79,12 +79,12 @@ director 不提交、writer 空正文，甚至只剩「连接关闭」，原始�
 
 **服务** [R7](../req/推进剧情.md)
 
-**规格** director 拿走全部推演职责：读细纲历史、世界设定、状态、用户指令，产出细纲。
+**规格** director 拿走全部推演职责：读正文历史、世界设定、状态、用户指令，产出细纲。
 writer **只承担文风**，不做任何规划。
 
 **不做** 把 writer 当成流水线下游的规划环节，给它剧情决定权。
 
-**验收** `test_director_never_sees_style_or_prose` · `test_style_and_prose_never_reach_the_director` · `test_each_side_gets_its_own_sections_and_none_of_the_others`
+**验收** `test_director_never_sees_style` · `test_director_replays_previous_prose` · `test_each_side_gets_its_own_sections_and_none_of_the_others`
 
 ### S4 · 正常交接是静态 workflow；用户插话可使下游作废并回 director
 
@@ -106,33 +106,34 @@ writer / state 运行期间收到 turn 内插话时，当前下游产物作废�
 
 **不做** `render(细纲) -> 正文` 这样一个看起来很自然的工具。
 
-**为什么** **工具返回值会回流到调用者的上下文。** 正文一旦回流到 director，
-[Generation.md](Generation.md) 的全部论证即刻作废——它能覆盖五倍历史跨度，
-正是因为它从不读正文。
+**为什么** writer 是 director 完成后必经的单次渲染阶段，不是可选能力。把它做成工具
+会让 director 决定是否、何时、调用几次，还会把同一 run 的成文结果带回规划 loop，
+混淆两侧职责并引入递归改稿路径。
 
-**验收** `test_writer_sees_prose_upstream_director_does_not` · `test_history_never_leaks_prose`
+**验收** `test_writer_is_not_in_the_director_tool_registry` · `test_each_side_gets_its_own_sections_and_none_of_the_others`
 
-### S6 · 正文只经状态回流给 director，不以原文回流
+### S6 · 正文是跨轮唯一叙事权威，细纲只活在 turn 内
 
 **服务** [R7](../req/推进剧情.md)
 
-**规格** director 读不到任何一段正文。writer 写出来的东西经 state_manager 折成
-几十个键值进入状态，下一轮随状态进 director。
+**规格** 完成节点不保存细纲。director 的跨 turn history 每轮只重放「顶层 user input
+→ 按顺序的插话 → 正文」；state_manager、goal_manager 与归段摘要的叙事输入也只取
+正文。细纲只在当前 turn 内从 director 交给 writer；挂起时可随草稿持久化供同一 turn
+恢复，开发者 trace 可留作审计，但两者都不成为节点或后续 context。
 
-**不做** 任何读正文的工具、任何把正文塞进 director 上下文的路径。
+**不做** 把细纲与正文并列成两份跨轮故事记录；不在正文缺失时拿细纲冒充已发生剧情。
 
-**为什么** 这条**削掉了「正文完全不回流」的一半**，但买到的东西还在：回流的是被
-压缩和筛选过的键值，不是原文，体量与污染都受控。能说的话变了——不能再讲"正文完全
-不回流"，要讲"正文只以状态的形式回流"。
+**为什么** 计划与成文发生冲突时，只有正文是用户实际读到、也是世界实际发生的版本。
+让下游或下一轮读取细纲会把未落成的计划重新当成事实，形成两套叙事真相。
 
-**验收** `test_writer_sees_prose_upstream_director_does_not` · `test_the_director_cannot_touch_state`
+**验收** `test_replay_keeps_only_input_interjections_and_prose` · `test_state_manager_reads_only_prose_as_narrative` · `test_goal_manager_reads_prose_before_and_during_the_goal` · `test_a_completed_node_does_not_persist_the_outline`
 
 ### S7 · state_manager 后置到 writer 之后，读着正文去记
 
 **服务** [R22](../req/回头与改写.md)
 
-**规格** 状态维护是 writer 之后的一次独立调用。它拿到：当前状态全量、前 k 轮的
-「细纲 → 成文 → 当时记下的」三元组、本轮细纲、本轮正文。工具只有
+**规格** 状态维护是 writer 之后的一次独立调用。它拿到当前状态全量、前 k 轮正文与
+本轮正文。工具只有
 `state_write` 和 `state_query`，**没有终止工具**——收口条件是「这一次不再调用任何工具」。
 
 工具调用参数不合法属于可恢复错误，回给 agent；agent 本身的调用、协议或存储故障属于
@@ -140,12 +141,9 @@ writer / state 运行期间收到 turn 内插话时，当前下游产物作废�
 
 **不做** 让 director 边推演边记状态。
 
-**为什么** 细纲常常留白（「他含糊地应了一句」），落实成具体那句话是 writer 的事。
-边推演边记的人**还不知道最后会写成什么样**，只能记那个含糊的版本。
-
-三元组缺一不可：少了细纲看不出「定下的事实」与「记下的键」之间的取舍，少了正文
-看不出留白处最后落成了什么，少了增量就没有示范——而这一节存在的全部理由就是让
-键名和值的形状不漂移。
+**为什么** 细纲常常留白或在渲染时发生偏离，不能证明某件事已经写进故事。当前状态
+提供既有键形状，正文提供本轮唯一事实来源；把旧增量或细纲再塞进去只会引入第二份
+可能冲突的叙事依据。
 
 **验收** `test_it_reads_the_prose_it_just_wrote` · `test_the_write_side_belongs_to_the_state_manager_alone` · `test_the_director_cannot_touch_state` · `test_invalid_tool_arguments_return_to_the_agent_for_repair` · `test_a_system_failure_fails_the_atomic_turn`
 
@@ -154,12 +152,13 @@ writer / state 运行期间收到 turn 内插话时，当前下游产物作废�
 **服务** [R20](../req/回头与改写.md)
 
 **规格** writer 若为通顺而增删了实质内容，单出一份**偏离报告**（通常为空）。
-编排层把它记在节点上，下一 run 的 director 读细纲历史时可见。
+编排层把它记在节点上供开发者审计，不注入后续模型 context。
 
 **不做** 让 writer 回头改写细纲。
 
-**为什么** director 永远不读正文，**它永远发现不了这个偏差**，漂移从这里开始且
-不可自愈。让 writer 报告而不是改写，是为了保住它「纯渲染」的定位。
+**为什么** 后续 agent 直接以正文为准，不需要用偏离报告修补事实；报告仍用于把
+「规划错了」与「writer 没按规划落成」区分开。让 writer 报告而不是改写细纲，是为了
+保住它「纯渲染」的定位。
 
 **验收** `test_deviation_report_is_extracted`
 
@@ -220,7 +219,5 @@ loop 边跑边追加的东西（模型回复、工具调用、工具结果、编
 第六类是补的：原本五类里写入侧只有「遗漏」没有「多余」，于是"记了不该记的"无人负责。
 **冗余的代价是慢性的**（状态越长越容易看漏要紧的几条），不会以单点错误的形式暴露。
 
-**验收** `test_attribution_table_excludes_the_class_with_no_referent`
-
-> ⚠ **这条规格没有落地**：代码里的 `AttributionClass` 只有五个成员，
-> `WRITE_REDUNDANCY` 不存在。见 [TODO.md](../TODO.md)。
+**验收** `test_attribution_classes_cover_all_six` ·
+`test_attribution_table_excludes_the_class_with_no_referent`

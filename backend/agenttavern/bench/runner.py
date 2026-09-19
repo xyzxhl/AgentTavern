@@ -28,7 +28,7 @@ from ..models import (
 from ..orchestration import execute_run
 from ..prompting import PromptSetup, player_character, prompts_as
 from ..storage import SessionRepository, Store
-from ..tracing import Tracer
+from ..tracing import Tracer, outline_from_trace
 from .metrics import Metrics, collect
 from .scenarios import Scenario
 
@@ -81,6 +81,7 @@ class TurnRecord:
     state_before: dict[str, Any]
     state_after: dict[str, Any]
     node: Node | None = None
+    outline_text: str = ""
     notes: list[str] = field(default_factory=list)
     metrics: Metrics = field(default_factory=Metrics)
     events: list[TraceEvent] = field(default_factory=list)
@@ -88,7 +89,7 @@ class TurnRecord:
 
     @property
     def outline(self) -> str:
-        return self.node.outline if self.node else ""
+        return self.outline_text
 
     @property
     def prose(self) -> str:
@@ -168,7 +169,6 @@ class BenchResult:
                 sum(t.metrics.tokens_in for t in done),
             ),
             "nudges": sum(t.metrics.nudges for t in done),
-            "e0_pushbacks": sum(t.metrics.e0_pushbacks for t in done),
             "parse_errors": sum(t.metrics.parse_errors for t in done),
             "tool_errors": sum(t.metrics.tool_errors for t in done),
             # ask_question（S23）。**`questions_not_three` 是契约检查**：
@@ -276,11 +276,14 @@ async def _run_scenario(
                 parent_id=parent_id,
                 ask_user=auto_answer,
                 on_trace=events.append,
+                developer=True,
+                persist_trace=True,
             )
         except Exception as exc:
             record.failure = f"{type(exc).__name__}: {exc}"
         else:
             record.node = outcome.node
+            record.outline_text = outcome.outline
             record.notes = outcome.notes
             parent_id = outcome.node.id
             goal_input = await _drive_goal(repo, gateway, parent_id, events, result, outcome.usage)
@@ -329,7 +332,15 @@ async def _drive_goal(
         run,
         repo.path_to(leaf_id),
     )
-    step = await advance_goal(gateway, tracer, goal, run, user_id=session.id)
+    step = await advance_goal(
+        gateway,
+        tracer,
+        goal,
+        run,
+        user_id=session.id,
+        repo=repo,
+        parent_id=leaf_id,
+    )
     run.spent_runs += 1
     run.spent_tokens += (
         usage.tokens_in + usage.tokens_out + tracer.usage.tokens_in + tracer.usage.tokens_out
@@ -363,7 +374,7 @@ def _actual_boundaries(repo: SessionRepository, leaf_id: str | None) -> set[int]
     if leaf_id is None:
         return set()
     path = repo.path_to(leaf_id)
-    cuts = {i + 1 for i, node in enumerate(path) if node.outline_summary}
+    cuts = {i + 1 for i, node in enumerate(path) if node.prose_summary}
     return cuts - {len(path)}
 
 
@@ -388,6 +399,7 @@ def load_result(settings: Settings, session_id: str) -> BenchResult:
                 state_before=dict(repo.state_at(node.parent_id).values),
                 state_after=dict(repo.state_at(node.id).values),
                 node=node,
+                outline_text=outline_from_trace(repo, node.id),
             )
         )
     return result

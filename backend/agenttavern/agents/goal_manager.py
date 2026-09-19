@@ -3,7 +3,7 @@
 **它是第四个 agent，不是 director 顺手做的一步。** 叫「管理者」而不是「判定者」，
 因为判定只是它几件事里的一件——它还拆阶段、核对进度、替用户写下一条输入。
 
-上下文只有目标、推进节奏、当前计划，以及目标前的细纲历史和目标期间的逐轮正文。
+上下文只有目标、推进节奏、当前计划，以及目标前后统一的逐轮正文。
 它不读世界设定和状态——它管的是"推到哪儿了"，不是"这一轮怎么写"。
 
 ## 一份跨 run 的长对话，不是三次干净调用
@@ -43,14 +43,14 @@ from ..models import (
     Actor,
     Goal,
     GoalRun,
-    InputSource,
     Node,
     TraceEventType,
 )
-from ..prompting import assemble, call_of, rendering
+from ..prompting import assemble, call_of, rendering, tool_enabled
+from ..storage import SessionRepository
 from ..tools import GoalContext, ToolRegistry
 from ..tracing import Tracer
-from .replay import interjections_of
+from .replay import goal_background_messages, goal_replay_messages, goal_turn_record
 
 MAX_ROUNDS = LIMITS.goal_manager.max_rounds
 """一轮里最多几次模型往返。正常一到两次（调工具、然后空手回来收口）。
@@ -72,19 +72,22 @@ class GoalStep:
     """``(outcome, reason)``。非空即该交回控制权。"""
 
 
-def render_before(nodes: list[Node]) -> str:
-    """goal 设立**之前**那段剧情，给**细纲**（S93）。
+def render_before(nodes: list[Node], *, readable: bool) -> str:
+    """goal 设立之前的正文历史（S93）。
 
-    摘要策略和 director 一样（`summary_or_head`）：归过段的用那段摘要，
-    没归段的用头部截断并写明还剩多少字（S26）。理由也一样——这段只回答
-    "故事到这儿了"，细纲够用而且便宜；它还在静态前缀里，全量给一次就够。
+    它是背景事实，不是仍在生效的用户方向，因此只给正文；越界时与 director
+    共用段落摘要、折叠时机和可展开地址。
     """
     if not nodes:
         return "（还没有已经写出来的剧情。）"
-    return "\n\n".join(f"{i + 1}. {n.summary_or_head()}" for i, n in enumerate(nodes))
+    return "\n\n".join(
+        message.content or "" for message in goal_background_messages(nodes, readable=readable)
+    )
 
 
-def _prefix(user_character: str, goal: Goal, before: list[Node]) -> list[Message]:
+def _prefix(
+    user_character: str, goal: Goal, before: list[Node], *, readable: bool
+) -> list[Message]:
     """静态前缀：任务说明 + 用户扮演谁 + 目标 + 节奏 + goal 之前的剧情。
 
     **整个 goal 生命周期不变**——"之前"那段不会再长，goal 期间的轮次逐条追加在后面。
@@ -103,45 +106,19 @@ def _prefix(user_character: str, goal: Goal, before: list[Node]) -> list[Message
         contexts={
             "user_character": user_character,
             "goal": goal.description,
-            "history_outline": render_before(before),
+            "history_prose": render_before(before, readable=readable),
         },
     ).messages
 
 
-_SOURCE_KEY = {
-    InputSource.USER: "turn_user",
-    InputSource.SIMULATED: "turn_simulated",
-}
-"""这一句的措辞在 `goal_manager.yaml` 的 `rendering` 里（R31）——它是模型每轮
-都会读到的字。这里只把来源映射到那一条的名字。"""
-
-
 def turn_record(node: Node, index: int, interjections: list[str]) -> Message:
-    """goal 期间某一轮的记录：**输入是谁给的** + **那一轮的正文**。
+    """兼容旧调用点：正文，加上用户亲自给出的输入与插话。
 
-    给正文而不是细纲（S93）：goal 期间要判的是"这一步到底有没有发生"，而**细纲
-    只说定了什么，正文才是最终写出来的东西**——留白处落成了什么、话说到什么份上，
-    只有正文看得见。goal 设立之前那段仍然给细纲，它在静态前缀里（`render_before`）。
-
-    来源标注是这条消息里最要紧的东西（S102）：剧情偏了，是 goal_manager 自己
-    推错了，还是用户主动把剧情带走了？后者强得多——用户的意图优先于目标。
-    不标注的话两种偏离长得一模一样，而应对完全不同。
+    goal 自己写的模拟输入不回灌；它已经落实成正文。用户输入与插话是接管方向的
+    信号，暂停期间尤其必须保留（S102）。
     """
-    said = node.user_input
-    parts = []
-    if said and said.text:
-        parts.append(rendering("goal_manager", _SOURCE_KEY[said.source], text=said.text))
-    else:
-        parts.append(rendering("goal_manager", "turn_silent"))
-    for word in interjections:
-        parts.append(rendering("goal_manager", "turn_interjection", text=word))
-    # **正文没写成时不要回退到细纲**（S94）。回退看起来只是"降级用一份更粗的
-    # 记录"，实际上把一个失败悄悄补齐了：那一轮什么都没写出来，而 goal_manager
-    # 读到一段像模像样的剧情，会照着它判某个中间状态已经成立。
-    # 说出来，让它当成一次没有产出的轮次处理。
-    parts.append(node.prose or "（这一轮没有写出正文。）")
-    body = rendering("goal_manager", "turn", index=index, body="\n".join(parts))
-    return Message(role=Role.USER, content=body)
+    copy = node.model_copy(update={"interjections": interjections})
+    return goal_turn_record(copy, index)
 
 
 def plan_snapshot(run: GoalRun) -> Message | None:
@@ -171,32 +148,16 @@ def sync_conversation(
     持久层只存产品记录。当前计划不混进这条追加链，而是在每次模型调用前由
     ``plan_snapshot`` 动态放到末尾；工具对话只在本次调用的临时消息里存在。
     """
-    # **路径切成两段**（S93）：goal 之前给细纲（进静态前缀），之后给正文（逐条追加）。
+    # 路径仍切成静态前缀与 goal 期间两段；两边共用 director 的压缩时机、
+    # 段落摘要和 history_read 地址。模型执行流量不进入这份产品记录。
     ids = [n.id for n in path]
     cut = ids.index(run.started_at_leaf_id) + 1 if run.started_at_leaf_id in ids else 0
     before, during = path[:cut], path[cut:]
-
-    during_ids = [n.id for n in during]
-    # **停在切点上也算续得上**（S100）。开场那一次跑在任何 goal 期间的轮次之前，
-    # 那时 `during` 是空的，`seen_leaf_id` 落在 goal 之前的最后一个节点上——照
-    # 「还在 during 里」判的话，goal 期间的第一轮就会触发一次整份重建，而那时
-    # 对话完全是连续的。重建只是白白丢掉它开场时自己写计划的那段过程。
-    #
-    # 拿切点**那个节点**比，而不是拿 `started_at_leaf_id` 比：分支切走之后
-    # `started_at_leaf_id` 可能根本不在路径上（`cut` 退回 0），那种情形必须重建。
-    seen = run.seen_leaf_id
-    at_cut = seen == (ids[cut - 1] if cut else None)
-    resumable = bool(run.conversation) and (at_cut or seen in during_ids)
-    # 停在切点上时 `during` 整段都还没给过，从头追加。
-    start = during_ids.index(seen) + 1 if resumable and not at_cut and seen else 0
-
-    if not resumable:
-        run.conversation = _prefix(user_character, goal, before)
-
-    for index in range(start, len(during)):
-        run.conversation.append(
-            turn_record(during[index], cut + index + 1, interjections_of(during[index]))
-        )
+    readable = tool_enabled("goal_manager", "history_read")
+    # 每次由权威路径重建；内容不变的前缀仍是逐字稳定的，缓存不受影响。这样压缩触发
+    # 和分支切换都只有一个来源，不再维护一套只能增长、无法折叠的第二历史。
+    run.conversation = _prefix(user_character, goal, before, readable=readable)
+    run.conversation.extend(goal_replay_messages(during, readable=readable, start_index=cut + 1))
     run.seen_leaf_id = path[-1].id if path else None
 
 
@@ -210,6 +171,8 @@ async def advance_goal(
     user_id: str | None = None,
     max_rounds: int = MAX_ROUNDS,
     on_delta: OnDelta | None = None,
+    repo: SessionRepository | None = None,
+    parent_id: str | None = None,
 ) -> GoalStep:
     """跑一轮 goal_manager。**对话由调用方备好**（含这一轮新追加的那条记录）。
 
@@ -220,7 +183,7 @@ async def advance_goal(
     agent**，凭什么它的思考就该藏起来——而它恰恰是最需要看的那个：目标迟迟不
     达标时，唯一能回答"它到底在等什么"的就是这段。``None`` 走非流式。
     """
-    ctx = GoalContext(goal=goal, run=run)
+    ctx = GoalContext(goal=goal, run=run, repo=repo, parent_id=parent_id)
     registry = ToolRegistry.for_goal_manager()
     specs = registry.specs()
     messages = list(run.conversation)

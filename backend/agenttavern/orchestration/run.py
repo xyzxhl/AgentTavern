@@ -4,7 +4,7 @@
 是固定单向 workflow（S4）。writer/state_manager 阶段收到插话是唯一的用户驱动回边：
 当前下游产物作废，同一 turn 回 director；agent 自身仍不协商、不回流。
 
-**run = node = 一份细纲 = 一份正文**，四者严格一一对应（S1）。
+一个 run 产生一个原子节点；细纲只在 run 内连接 director 与 writer。
 """
 
 from __future__ import annotations
@@ -46,6 +46,12 @@ from .checks import sampling_flags
 class RunOutcome:
     node: Node
     usage: Usage
+    outline: str = ""
+    """本次 run 的临时细纲。只供同进程评测，不写入节点或后续上下文。"""
+
+    interrupted_after_commit: bool = False
+    """节点已落盘后，归段等后处理被取消；调用方仍须完成 goal 记账。"""
+
     notes: list[str] = field(default_factory=list)
     """eval 采样标记。**从不影响运行时行为**（P12/P12）——只是把可疑样本挑出来送审。"""
 
@@ -228,8 +234,8 @@ async def _execute_run(
                 tracer,
                 user_input,
                 # **草稿一律接下去，不分阶段。** writer / state 阶段被打断而用户
-                # 又说了话时，这一轮回 director 重来——但已经查过的资料、以及那次
-                # `submit_outline` 连同它交出的细纲，都还在这几条消息里。
+                # 又说了话时，这一轮回 director 重来——但已经查过的资料、以及上次
+                # 作为最终输出交出的细纲，都还在这几条消息里。
                 # 于是「上一次写的是什么」不必再单开一节说明：**它就在对话里**。
                 resume=draft,
                 appended_inputs=appended_inputs,
@@ -300,8 +306,8 @@ async def _execute_run(
             )
             raise asyncio.CancelledError
 
-    # **状态维护后置**（S7）：读着刚写完的细纲和正文去记，而不是 director
-    # 边推演边记。位置卡在 `save_node` **之前**——节点是原子的，细纲、正文、
+    # **状态维护后置**（S7）：只读刚写完的正文去记，而不是 director
+    # 边推演边记。位置卡在 `save_node` **之前**——节点是原子的，正文、
     # 增量必须同时抵达（S42/S20）；放到落盘之后会出现一个"有正文没增量"的
     # 瞬时节点，那一刻沿路径重放状态的人（分支、`state_at`）会算错。
     # 代价是这一轮的结束晚一次模型调用，而用户此时已经看完正文了。
@@ -309,7 +315,7 @@ async def _execute_run(
         if inbox is not None:
             inbox.phase = RunStage.STATE.value
         try:
-            await _maintain_state(ctx, tracer, outline, prose)
+            await _maintain_state(ctx, tracer, prose)
         except asyncio.CancelledError:
             # 这一段的上游全都完成了，所以草稿把它们一并带上：空输入时下一次
             # 只重跑这一段，正文不会被重写一遍。
@@ -344,7 +350,6 @@ async def _execute_run(
         prose=prose,
         density=selected("writer", "density"),
         deviation=deviation,
-        outline=outline,
         state_before=repo.state_at(parent_id).values,
     )
     for note in notes:
@@ -355,7 +360,6 @@ async def _execute_run(
         parent_id=parent_id,
         status=RunStatus.COMPLETE,
         user_input=turn_input,
-        outline=outline,
         prose=prose,
         deviation_report=deviation,
         state_delta=ctx.staged_delta,
@@ -364,7 +368,7 @@ async def _execute_run(
     )
     repo.clear_draft()
 
-    # 暂存的增量在此刻随节点一并落盘——细纲与增量同时抵达，节点是原子的（S42/S20）。
+    # 暂存的增量在此刻随正文一并落盘，节点是原子的（S42/S20）。细纲到此结束生命周期。
     repo.save_node(node)
     tracer.emit(
         TraceEventType.STATE_COMMITTED,
@@ -389,24 +393,30 @@ async def _execute_run(
     #
     # **必须问刚写完的 director 本人**：它手里有 state、有前情、知道故事要往哪走。
     # 所以从 writer / state 阶段续跑的那一轮不问——这一轮根本没有 director 在跑，
-    # 另起一个只看得见几段细纲的冷调用，判据全靠猜（S22）。那一轮因此不带
+    # 另起一个只看得见几段正文的冷调用，判据全靠猜（S22）。那一轮因此不带
     # 分段标记，代价只是这一处分界要等下一轮才被认出来。
-    if special_on("director", "segment") and director is not None:
-        with contextlib.suppress(Exception):
-            open_nodes = _open_segment(repo, node.id)
-            cut = await ask_segment_cut(
-                gateway,
-                director.messages,
-                [n.outline for n in open_nodes],
-                tracer,
-                user_id=session.id,
-            )
-            if cut > 0:
-                # **可以回溯**：分界常常要等下一轮才看得出来，所以标记打在
-                # 模型指的那一条上，不一定是刚写完的这一轮（S58）。
-                open_nodes[cut - 1].closes_segment = True
-                repo.save_node(open_nodes[cut - 1])
-        await close_segment(repo, gateway, node.id, tracer)
+    interrupted_after_commit = False
+    try:
+        if special_on("director", "segment") and director is not None:
+            with contextlib.suppress(Exception):
+                open_nodes = _open_segment(repo, node.id)
+                cut = await ask_segment_cut(
+                    gateway,
+                    director.messages,
+                    [n.prose for n in open_nodes],
+                    tracer,
+                    user_id=session.id,
+                )
+                if cut > 0:
+                    # **可以回溯**：分界常常要等下一轮才看得出来，所以标记打在
+                    # 模型指的那一条上，不一定是刚写完的这一轮（S58）。
+                    open_nodes[cut - 1].closes_segment = True
+                    repo.save_node(open_nodes[cut - 1])
+            await close_segment(repo, gateway, node.id, tracer)
+    except asyncio.CancelledError:
+        # 节点与 active leaf 已经提交，取消只能终止派生后处理，不能把完整 turn
+        # 伪装成失败。调用方看到这个标记后仍会记 goal 的本轮花销，再暂停判定。
+        interrupted_after_commit = True
 
     tracer.emit(
         TraceEventType.RUN_FINISHED,
@@ -416,7 +426,13 @@ async def _execute_run(
         usage=None,
     )
 
-    return RunOutcome(node=node, usage=tracer.usage, notes=notes)
+    return RunOutcome(
+        node=repo.load_node(node.id),
+        usage=tracer.usage,
+        outline=outline,
+        interrupted_after_commit=interrupted_after_commit,
+        notes=notes,
+    )
 
 
 def _resume_point(
@@ -475,7 +491,7 @@ def _suspend(
             stage=stage,
             user_input=user_input,
             # **这一轮的推演一并存着**：回 director 重来时它接得下去，
-            # 那次 `submit_outline` 连同它交出的细纲就在里面。用户新说的话会被
+            # 上次作为最终输出交出的细纲就在里面。用户新说的话会被
             # 接在它之后——**位置就是它的含义**：模型读到的是"你交的这份细纲，
             # 用户看了之后又说了话"，而不是"这一轮的输入换了一条"（S119）。
             messages=messages,
@@ -497,7 +513,7 @@ def _suspend(
     )
 
 
-async def _maintain_state(ctx: RunContext, tracer: Tracer, outline: str, prose: str) -> None:
+async def _maintain_state(ctx: RunContext, tracer: Tracer, prose: str) -> None:
     """跑 state_manager，把增量写进 ``ctx.staged_delta``。
 
     工具参数错误由 registry 作为 tool result 返回给 agent 自修复；模型调用、协议或
@@ -507,7 +523,6 @@ async def _maintain_state(ctx: RunContext, tracer: Tracer, outline: str, prose: 
         ctx,
         ToolRegistry.for_state_manager(has_state=bool(ctx.current_state().values)),
         tracer,
-        outline=outline,
         prose=prose,
     )
 
@@ -521,9 +536,9 @@ def _open_segment(repo: SessionRepository, leaf_id: str) -> list[Node]:
     path = repo.path_to(leaf_id)
     out: list[Node] = []
     for node in reversed(path):
-        if node.id != leaf_id and (node.closes_segment or node.outline_summary):
+        if node.id != leaf_id and (node.closes_segment or node.prose_summary):
             break
-        if node.outline:
+        if node.prose:
             out.append(node)
     out.reverse()
     return out
@@ -565,9 +580,9 @@ async def close_segment(
     index = len(path) - 1
     while index >= 0:
         node = path[index]
-        if node.outline_summary:
+        if node.prose_summary:
             break
-        if node.outline:
+        if node.prose:
             pending.append(node)
         index -= 1
     pending.reverse()
@@ -588,12 +603,12 @@ async def close_segment(
         reason = "生成时判定的结尾"
 
     try:
-        joined = "\n\n".join(n.outline for n in segment)
+        joined = "\n\n".join(n.prose for n in segment)
         end = segment[-1]
         # **一律压**（S25）。这里以前有条"已经比摘要还短就原样留下"的近路，
         # 阈值就是那个已经删掉的 `summary_max_chars`——它是同一个说了不算的数，
-        # 换个名字留下来只是把问题藏起来。近路本来也几乎不触发：一段细纲动辄上千字。
-        end.outline_summary = await summarize_text(
+        # 换个名字留下来只是把问题藏起来。近路本来也几乎不触发：一段正文动辄上千字。
+        end.prose_summary = await summarize_text(
             gateway, joined, user_id=repo.session_id, tracer=tracer
         )
         end.segment_span = len(segment)
@@ -613,13 +628,13 @@ async def close_segment(
     tracer.emit(
         TraceEventType.CROSS_CHECK,
         Actor.ORCHESTRATOR,
-        f"归段（{reason}）：{len(segment)} 轮 {len(joined)} 字压成 {len(end.outline_summary)} 字",
+        f"归段（{reason}）：{len(segment)} 轮 {len(joined)} 字压成 {len(end.prose_summary)} 字",
         {
             "end": end.id,
             "span": len(segment),
             "reason": reason,
             "chars_in": len(joined),
-            "chars_out": len(end.outline_summary),
+            "chars_out": len(end.prose_summary),
         },
     )
     return end

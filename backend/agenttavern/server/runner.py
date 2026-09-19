@@ -123,6 +123,7 @@ class SessionRunner:
         self._pending: list[_Queued] = []
         self._resume_next: _Queued | None = None
         self._questions: dict[str, asyncio.Future[str]] = {}
+        self._question_messages: dict[str, Question] = {}
         self._current: asyncio.Task[None] | None = None
         self._inbox: Inbox | None = None
         """当前 run 的插话信箱。**一个 run 一个**——上一轮没人认领的话不该漏到下一轮。"""
@@ -139,11 +140,19 @@ class SessionRunner:
         名下（S118）。id 是在 `execute_run` 内部生成的，外面只能从 trace 里接住。
         """
 
+        self._run_input: str = ""
+        """当前 turn 的顶层输入。``run_started`` 用它把执行态绑定到权威输入，
+        客户端不必拿“最后一次发出去的 submit”猜正在跑的是哪一条（S171）。"""
+
         # 所有出站消息走**同一条队列**，由单个 sender 顺序送出。
         # trace 是从同步回调里产生的，若各自 create_task 发送就会乱序——
         # UI 上会看到「本轮结束」排在「开始新的一轮」前面。
         self._out: asyncio.Queue[ServerMessage] = asyncio.Queue()
         self._sender_task: asyncio.Task[None] | None = None
+        self._delivery_open = True
+        """首个 WebSocket 发送失败后关闭投影出口；runner 仍可把权威结果落盘。"""
+        self._attachment_revision = 0
+        """接管序号。刷新抖动时只允许最后一次 ``attach`` 重新打开投递面。"""
         self._deferred_goal_messages: list[ServerMessage] | None = None
 
         # goal 的预算计数**已经落盘**了（`GoalRun.spent_*`，S98）。它以前是这里的
@@ -180,6 +189,38 @@ class SessionRunner:
             self._owner_loop = asyncio.get_running_loop()
             self._sender_task = asyncio.create_task(self._sender())
             self._loop_task = asyncio.create_task(self._loop())
+
+    async def detach(self) -> None:
+        """关闭失效连接的投递面，但不取消权威 run（S175）。"""
+        self._delivery_open = False
+        sender = self._sender_task
+        if sender is not None and not sender.done():
+            sender.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await sender
+        while not self._out.empty():
+            self._out.get_nowait()
+
+    async def attach(self, broadcast: Broadcast) -> None:
+        """把仍在运行的 session runner 接到刷新后的 WebSocket。"""
+        self._attachment_revision += 1
+        revision = self._attachment_revision
+        await self.detach()
+        # 两次页面接管可能在上面的 await 处交错；旧接管者不能在新接管者之后
+        # 又把 broadcast 和 sender 改回去。
+        if revision != self._attachment_revision:
+            return
+        self._broadcast = broadcast
+        self._delivery_open = True
+        self._sender_task = asyncio.create_task(self._sender())
+
+    def reconnect_messages(self) -> list[ServerMessage]:
+        """重连后补出仍在进行的交互状态；流式旧片段不重放。"""
+        messages: list[ServerMessage] = []
+        if self.busy and self._run_id:
+            messages.append(RunStarted(run_id=self._run_id, input=self._run_input))
+        messages.extend(self._question_messages.values())
+        return messages
 
     async def aclose(self) -> None:
         owner = self._owner_loop
@@ -289,6 +330,7 @@ class SessionRunner:
         future = self._questions.pop(question_id, None)
         if future is None or future.done():
             return False
+        self._question_messages.pop(question_id, None)
         future.set_result(selected)
         return True
 
@@ -304,6 +346,11 @@ class SessionRunner:
         """
         if self._current is None or self._current.done() or self._inbox is None:
             return False
+        if interrupt:
+            # 用户主动改正正在执行的方向，意味着自动目标不应在这一轮之后继续替他
+            # 作主。故事 turn 仍按 S50 在边界处接上这句；goal 同时转为暂停，之后
+            # 用户手写或继续引导的内容会在恢复时交给 goal_manager。
+            self._pause_goal("用户纠正了正在进行的生成")
         self._inbox.push(text, interrupt=interrupt)
         if not self._inbox.accepting and interrupt:
             self._current.cancel()
@@ -323,6 +370,7 @@ class SessionRunner:
         if self._current is None or self._current.done():
             return False
         self._autocontinue_armed = False
+        self._pause_goal("用户打断了正在进行的生成")
         if self._inbox is not None and self._inbox.accepting:
             self._inbox.push(interrupt=True)
             return True
@@ -416,6 +464,14 @@ class SessionRunner:
 
     async def _execute_frozen(self, item: _Queued | None) -> None:
         session = self._repo.load_session()
+        draft = self._repo.load_draft()
+        self._run_input = (
+            item.text
+            if item is not None and item.continuation is None
+            else (
+                draft.user_input.text if draft is not None and draft.user_input is not None else ""
+            )
+        )
         goal_active_at_start = session.meta.goal is not None and (
             session.goal_run is None or not session.goal_run.paused
         )
@@ -443,7 +499,7 @@ class SessionRunner:
             # **先宣告这一轮开始，再让它规划。** 规划要跑几十秒，不先宣告的话
             # 界面上那段时间什么都没有——而这一轮的记录已经在往外推了。
             self._run_id = run_id
-            self._emit(RunStarted(run_id=run_id))
+            self._emit(RunStarted(run_id=run_id, input=""))
             try:
                 simulated = await self._open_goal(session, run_id) or simulated
             except asyncio.CancelledError:
@@ -470,6 +526,14 @@ class SessionRunner:
                 return
             session = latest
 
+        user_input = (
+            UserInput(text=item.text)
+            if item and item.continuation is None
+            else (UserInput(text=simulated, source=InputSource.SIMULATED) if simulated else None)
+        )
+        if user_input is not None:
+            self._run_input = user_input.text
+
         try:
             outcome = await execute_run(
                 self._repo,
@@ -482,15 +546,7 @@ class SessionRunner:
                 # **来源要标注**（S102）：goal_manager 靠它分辨"剧情偏了是我推错了"
                 # 和"用户主动把剧情带走了"。director 不读这个字段——两种输入在它
                 # 眼里必须一模一样，否则它会对模拟输入区别对待。
-                user_input=(
-                    UserInput(text=item.text)
-                    if item and item.continuation is None
-                    else (
-                        UserInput(text=simulated, source=InputSource.SIMULATED)
-                        if simulated
-                        else None
-                    )
-                ),
+                user_input=user_input,
                 appended_inputs=item.continuation if item else None,
                 # **父节点只有一个来源：出队那一刻的活跃叶**（S44）。
                 # 普通输入挂在它下面（延长），重生成挂在它的父下面（开兄弟）。
@@ -526,23 +582,39 @@ class SessionRunner:
         self._autocontinue_armed = True
 
         self._deferred_goal_messages = []
-        try:
+        if outcome.interrupted_after_commit:
+            # 取消落在节点提交后的归段/摘要阶段。故事节点已经完整，不能恢复上一轮
+            # 的编辑窗口，更不能漏掉 goal 本轮预算；只跳过模型判定并暂停后续推进。
+            self._autocontinue_armed = False
             await self._check_goal(
                 outcome.node.id,
                 outcome.usage,
                 active_at_start=goal_active_at_start,
+                evaluate=False,
             )
-        except asyncio.CancelledError:
-            # 节点已经原子提交。此时停止的是目标判定/续跑，不回滚故事产出，
-            # 也绝不能让刚被停止的 goal 立刻自动开下一轮。
-            self._autocontinue_armed = False
-            self._pause_goal("连接中断，目标判定未完成" if self._closing else "用户停止了目标判定")
-        except Exception as exc:  # noqa: BLE001
-            # goal_manager 位于节点提交之后，无法再把它伪装成整个故事 run 的失败。
-            # 保留本轮产出、暂停目标，让用户决定是否恢复。
-            self._autocontinue_armed = False
-            logger.exception("goal_check_failed session=%s run=%s", session.id, outcome.node.id)
-            self._pause_goal(f"目标判定失败：{exc}")
+            self._pause_goal(
+                "连接中断，目标判定未完成" if self._closing else "用户停止了生成后处理"
+            )
+        else:
+            try:
+                await self._check_goal(
+                    outcome.node.id,
+                    outcome.usage,
+                    active_at_start=goal_active_at_start,
+                )
+            except asyncio.CancelledError:
+                # 节点已经原子提交。此时停止的是目标判定/续跑，不回滚故事产出，
+                # 也绝不能让刚被停止的 goal 立刻自动开下一轮。
+                self._autocontinue_armed = False
+                self._pause_goal(
+                    "连接中断，目标判定未完成" if self._closing else "用户停止了目标判定"
+                )
+            except Exception as exc:  # noqa: BLE001
+                # goal_manager 位于节点提交之后，无法再把它伪装成整个故事 run 的失败。
+                # 保留本轮产出、暂停目标，让用户决定是否恢复。
+                self._autocontinue_armed = False
+                logger.exception("goal_check_failed session=%s run=%s", session.id, outcome.node.id)
+                self._pause_goal(f"目标判定失败：{exc}")
 
         self._mark_editable(revision, outcome.node.id)
         deferred = self._deferred_goal_messages
@@ -595,6 +667,7 @@ class SessionRunner:
         usage: Usage,
         *,
         active_at_start: bool,
+        evaluate: bool = True,
     ) -> None:
         """goal_manager 在 **run 末**跑（R24/S92/S92）——与控制权（轮内）
         作用点不同。
@@ -631,7 +704,7 @@ class SessionRunner:
             # 它早就交给 director 了，抢不回来：判它、把它的开销记到目标账上，
             # 都是在为一件目标没参与的事结账。
             #
-            # 所以起点划到它身上：它和它之前的剧情一样进静态前缀、给细纲，
+            # 所以起点划到它身上：它和它之前的剧情一样进静态前缀、给正文，
             # 目标**从下一轮开始**。开场那次留给下一轮去跑——那时才有它自己的
             # `run_id` 可挂（S100），而在这里跑就只能挂到刚结束的这一轮名下。
             run.started_at_leaf_id = leaf_id
@@ -643,6 +716,9 @@ class SessionRunner:
         run.spent_runs += 1
         run.spent_tokens += usage.tokens_in + usage.tokens_out
         if not self._save_goal_run(run):
+            return
+
+        if not evaluate:
             return
 
         step, spent = await self._goal_turn(session, goal, run, leaf_id, leaf_id)
@@ -698,6 +774,8 @@ class SessionRunner:
             on_delta=lambda kind, text: self._emit_delta(
                 Actor.GOAL_MANAGER.value, kind, text, run_id
             ),
+            repo=self._repo,
+            parent_id=leaf_id,
         )
         return step, tracer.usage
 
@@ -774,7 +852,7 @@ class SessionRunner:
         # 规划那几十秒在界面上有着落，S100），那和这里说的是同一轮。
         if event.type is TraceEventType.RUN_STARTED and event.run_id != self._run_id:
             self._run_id = event.run_id
-            self._emit(RunStarted(run_id=event.run_id))
+            self._emit(RunStarted(run_id=event.run_id, input=self._run_input))
         self._emit(Trace(event=event))
 
     def _save_goal_run(self, run: GoalRun) -> bool:
@@ -818,13 +896,17 @@ class SessionRunner:
         self._emit_goal(GoalFinished(outcome=outcome, reason=reason))
 
     def _pause_goal(self, reason: str) -> None:
+        self._autocontinue_armed = False
         session = self._repo.load_session()
         if session.meta.goal is None or session.goal_run is None:
             return
         # 用户已经明确按过暂停时，不用连接清理或后置失败把原因改写成另一件事。
-        if not session.goal_run.paused:
-            session.goal_run.paused = True
-            session.goal_run.paused_reason = reason
+        # 同一次 stop 还会让被取消阶段走进自己的 CancelledError 收尾；第二次调用
+        # 既不能改写原因，也不能重复广播同一对生命周期事件。
+        if session.goal_run.paused:
+            return
+        session.goal_run.paused = True
+        session.goal_run.paused_reason = reason
         self._repo.save_session(session)
         self._emit_goal(SessionUpdated(session=session))
         self._emit_goal(GoalPaused(reason=reason))
@@ -843,18 +925,23 @@ class SessionRunner:
         future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
         self._questions[question_id] = future
 
-        self._emit(Question(question_id=question_id, question=question, options=options))
+        message = Question(question_id=question_id, question=question, options=options)
+        self._question_messages[question_id] = message
+        self._emit(message)
         try:
             # 不设超时（S24）。这就是全部的挂起机制——suspend/resume，
             # 不是 timeout/retry；上下文不会过期，因为逻辑上什么都没发生。
             return await future
         finally:
             self._questions.pop(question_id, None)
+            self._question_messages.pop(question_id, None)
 
     # -- 出站 ---------------------------------------------------------------
 
     def _emit(self, message: ServerMessage) -> None:
         """入队即返回。**同步**，因此从同步回调（如 trace）里发也保持顺序。"""
+        if not self._delivery_open:
+            return
         self._out.put_nowait(message)
 
     async def _sender(self) -> None:
@@ -869,6 +956,12 @@ class SessionRunner:
                     self._repo.load_session().id,
                     message.type,
                 )
+                # 连接已经不可写。继续逐条尝试只会为同一断线刷一串异常，并让后续
+                # trace/delta 在无消费者的队列里增长；权威 run 仍在后台正常落盘。
+                self._delivery_open = False
+                while not self._out.empty():
+                    self._out.get_nowait()
+                return
 
 
 def _parent_for(repo: SessionRepository, leaf_id: str | None, item: _Queued | None) -> str | None:

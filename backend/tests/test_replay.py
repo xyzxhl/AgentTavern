@@ -11,7 +11,7 @@ from agenttavern.models import Node, RunDraft, UserInput
 
 
 def _run(
-    outline: str,
+    prose: str,
     *,
     stale: int = 0,
     filler: int = 0,
@@ -21,10 +21,10 @@ def _run(
     """一轮的产品记录；``stale`` 只保留为旧测试调用参数，节点不再存旧快照。"""
     del stale
     node = Node(
-        outline=outline + "长" * filler,
+        prose=prose + "长" * filler,
         closes_segment=closes,
-        outline_summary=summary,
-        user_input=UserInput(text=f"用户：{outline}"),
+        prose_summary=summary,
+        user_input=UserInput(text=f"用户：{prose}"),
     )
     return node
 
@@ -46,7 +46,7 @@ def test_a_past_turn_carries_no_tool_calls_at_all() -> None:
     assert all(m.reasoning_content is None for m in flat)
 
 
-def test_flattening_keeps_only_the_input_and_outline() -> None:
+def test_flattening_keeps_only_the_input_and_prose() -> None:
     """跨轮只有产品记录；旧 state、thinking 与工具过程都不在节点里。"""
     text = "\n".join(m.content or "" for m in flatten_turn(_run("第1轮", stale=500)))
 
@@ -168,7 +168,7 @@ def test_reasoning_and_tools_only_persist_in_a_draft() -> None:
         Message(role=Role.TOOL, content="结果", tool_call_id="c1"),
     ]
     draft = RunDraft(messages=messages)
-    node = Node(outline="结果")
+    node = Node(prose="结果")
 
     assert draft.messages[1].reasoning_content is not None
     dumped = node.model_dump()

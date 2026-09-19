@@ -14,7 +14,7 @@
 |---|---|---|
 | **state** | 世界的当前样子 | **剧情推进**（state_manager 每轮提交增量） |
 | **worldinfo** | 静态设定：世界、角色 | **用户** |
-| **history** | 过往每一轮的细纲 | 每轮追加，只增不改 |
+| **history** | 过往每一轮的输入、插话与正文 | 每轮随路径追加；仅最后一轮在编辑窗口内可改 |
 
 灰区：同一个实体两边都能有——"他们是兄妹"属 worldinfo，"他们现在决裂了"属 state。
 
@@ -145,7 +145,7 @@
 | 用户**直接指某一轮** | "回到他们在酒店那次" |
 | 怀疑**与早前矛盾但说不清哪里** | 这是"不知道自己漏了什么"，只能扫 |
 
-**反面同样要写**：想知道现在什么样看 state；想接住上一轮语气——近几轮细纲已经在
+**反面同样要写**：想知道现在什么样看 state；想接住上一轮语气——近几轮正文已经在
 上下文里；只想知道大概发生过什么——摘要够用。
 
 **为什么** state 与摘要的盲区是**同一个**：state 只记会约束后续的，
@@ -155,14 +155,15 @@
 
 不写反面会滥用：每轮翻史，token 爆炸。正反对照着说，边界才钉得住。
 
-**验收** —（缺，见 [TODO.md](../TODO.md)）
+**验收** `test_history_read_description_has_both_sides_of_the_boundary`
 
 ### S57 · 摘要按段压缩，分界由模型判断
 
 **服务** [R16](../req/推进剧情.md)
 
-**规格** 摘要与细纲是 **n : 1**。编排层攒够最小轮数就问模型"该在第几轮之后断开"，
+**规格** 摘要与正文是 **n : 1**。编排层攒够最小轮数就问模型"该在第几轮之后断开"，
 回 0 表示这一段还没完、再等一轮，到最大轮数强制断开止损。
+归段判断与摘要调用的叙事输入都只包含正文，不附带细纲、状态增量或旧工具记录。
 
 段落按**「末节点 + 跨度」寻址**，不记起止 id。**那个末节点 id 就是它的 key**
 （[S53](#s53)）：段落是三个域里唯一没有名字的东西，所以它是唯一用 id 当地址的，
@@ -220,19 +221,20 @@
 **让优化当前轮的模型去做一件只利后续的事，是把激励放反了。**
 实测 12 轮下来它一次都没被调用过。
 
-默认开是因为**它的回退项不中性**：没有摘要时索引退化为"细纲前 120 字"，
+默认开是因为**它的回退项不中性**：没有摘要时索引退化为"正文前 120 字"，
 那不是精度低一点，而是**位置偏置**——开头原样保留、结尾完全消失，
 而它还顶着「总结」的名字。**会误导模型的回退不能当作安全默认值。**
 
 **验收** `test_every_segment_goes_through_summarize` · `test_an_index_entry_says_how_much_it_left_out`
-（后者钉的是回退那一半：没归过段的轮次在索引里是"细纲前 N 字 + 全文字数"）
+（后者钉的是回退那一半：没归过段的轮次在索引里是"正文前 N 字 + 全文字数"）
 
 ### S60 · director 跨 turn 只继承产品记录，压缩越界一次、全部替换
 
 **服务** [R7](../req/推进剧情.md) [R31](../req/调教提示词.md)
 
 **规格** 已完成 turn 跨边界只留下三类产品记录：顶层 user input、按原位置保留的纠正/
-引导、最终细纲。thinking、tool call/result 与运行时错误一律不进入后续 turn 的 context。
+引导、最终正文。thinking、tool call/result、运行时错误与细纲一律不进入后续 turn 的
+context。
 
 **状态与控制维度放在每轮的用户消息里，不放 system**。
 
@@ -247,7 +249,7 @@
 每收一段换一段等于每隔几轮动一次前缀，缓存反复失效——**那还不如不持续。**
 
 节点保存重放所需的产品记录，重放时沿路径拼接，分支因此天然安全。工具结果里值得跨 turn
-保留的事实必须已经进入细纲或 state；系统不再从旧工具回执里补捞。
+保留的事实必须已经进入正文或 state；系统不再从旧工具回执里补捞。
 
 **验收** `test_everything_is_kept_until_the_budget_is_crossed` · `test_crossing_the_budget_replaces_every_summarised_segment_at_once` · `test_nothing_is_dropped_when_no_segment_has_been_summarised_yet` · `test_a_past_turn_carries_no_tool_calls_at_all`
 
@@ -266,7 +268,7 @@ turn 完成、明确放弃或整轮失败时，草稿中的执行记录随草稿
 开发者 trace 是例外：它可以 append-only 留下完整交换用于审计，但永远不作为后续模型
 context 的来源。
 
-**验收** `test_a_past_turn_carries_no_tool_calls_at_all` · `test_flattening_keeps_only_the_input_and_outline` · `test_an_interjection_survives_flattening_in_place` · `test_reasoning_and_tools_only_persist_in_a_draft`
+**验收** `test_a_past_turn_carries_no_tool_calls_at_all` · `test_flattening_keeps_only_the_input_and_prose` · `test_an_interjection_survives_flattening_in_place` · `test_reasoning_and_tools_only_persist_in_a_draft`
 
 ### S62 · 推理段计入预算，但只在 run / 草稿内存在
 
@@ -297,6 +299,10 @@ context 的来源。
 | 状态 | 键名 | **就是 key 本身** | 深过 `depth` 的子树、长过 `state_inline_limit` 的字符串 | `state_query` |
 | 设定 | 条目名 | 同上 | 按需条目的正文，**不看长度** | `worldinfo_read` |
 | 前情 | 段落 id | **那段摘要** | 已归段的那几轮 | `history_read` |
+
+前情的同一套折叠与地址同时供 director 和 goal_manager 使用：两者共享预算触发方式、
+段落摘要与展开实现；goal_manager 另外保留用户在目标期间亲自给出的方向，不让它随正文
+折叠消失。
 
 **折叠留下的 key 必须就是展开接受的地址。** 折起来的地方一律是「key + 体量」，
 只有前情多一句摘要——因为只有它的 key 不是人话。

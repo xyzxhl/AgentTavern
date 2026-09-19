@@ -428,6 +428,7 @@ class Store:
         - 删除未形成需求的 ``time_driven``；
         - 给旧会话打开“上一轮”编辑窗口；
         - 节点只留下跨轮产品记录，director 工具过程不再保留；
+        - 细纲与细纲摘要退出节点；旧摘要不能冒充正文摘要，直接失效；
         - goal 工具过程清空，下一次调用会从路径与权威 plan 重建产品记录。
         """
         for session_id in self.list_sessions():
@@ -452,19 +453,23 @@ class Store:
 
             for path in repo.nodes_dir.glob("*.json"):
                 node = json.loads(path.read_text(encoding="utf-8"))
+                node_changed = "outline" in node or "outline_summary" in node
+                node.pop("outline", None)
+                node.pop("outline_summary", None)
                 old = node.pop("director_messages", None)
-                if old is None:
-                    continue
-                node["interjections"] = []
-                for message in old:
-                    if not isinstance(message, dict) or message.get("role") != "user":
-                        continue
-                    content = str(message.get("content") or "")
-                    if "<用户追加输入>" not in content:
-                        continue
-                    body = content.split("<用户追加输入>", 1)[1]
-                    node["interjections"].append(body.split("</用户追加输入>", 1)[0].strip())
-                _write_raw(path, node)
+                if old is not None:
+                    node_changed = True
+                    node["interjections"] = []
+                    for message in old:
+                        if not isinstance(message, dict) or message.get("role") != "user":
+                            continue
+                        content = str(message.get("content") or "")
+                        if "<用户追加输入>" not in content:
+                            continue
+                        body = content.split("<用户追加输入>", 1)[1]
+                        node["interjections"].append(body.split("</用户追加输入>", 1)[0].strip())
+                if node_changed:
+                    _write_raw(path, node)
 
     def migrate_kinds(self) -> int:
         """条目的 `kind` 换过两次名，把旧值改成现在的（S65/S64）。返回改了几条。

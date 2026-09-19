@@ -10,12 +10,24 @@ import type {
   GoalProgress,
   Node,
   Question,
+  RunStarted,
   ServerMessage,
   Session,
   TraceEvent,
 } from "./protocol";
 
 export type RunPhase = "idle" | "running" | "asking";
+
+/** 执行态卡片只信服务端已经出队的输入，不从客户端待发送状态反推（S171）。 */
+export function liveFromRunStarted(message: RunStarted): { runId: string; input: string } {
+  return { runId: message.run_id, input: message.input };
+}
+
+/** 重生成一轮时，该轮和它之后的旧路径立刻退出当前视图（S172）。 */
+export function pathBeforeReroll(path: Node[], nodeId: string): Node[] | null {
+  const at = path.findIndex((node) => node.id === nodeId);
+  return at < 0 ? null : path.slice(0, at);
+}
 
 /** 主区当前是哪一页。`story` 是默认的正文流；其余是左栏上方的独立页面入口。 */
 export type Page =
@@ -88,10 +100,6 @@ export interface SessionState {
    */
   streaming: Record<string, { prose: string; process: Thought[] }>;
 
-  /** 刚发出去、还没等到 `run_started` 的那句话。**只为把它归到正确的一轮名下。**
-   * 服务端要到 `run_finished` 才把输入回给我们，而过程要在那之前就显示出来。 */
-  pendingInput: string;
-
   question: Question | null;
   queue: string[];
   usage: { tokensIn: number; tokensOut: number };
@@ -145,27 +153,30 @@ export interface SessionState {
   /** 把状态从服务端拉回来对齐。**改了 worldbook 的初始状态条目之后必须调**——
    * 故事开始之前它是现算的，改了会立刻改变当前 state，而 WS 那侧不会为此推消息。 */
   refreshState: () => Promise<void>;
-  send: (message: ClientMessage) => void;
+  send: (message: ClientMessage) => boolean;
+  /** 回答当前问题；发送成功后立即收起问题，避免同一个 question 被重复回答。 */
+  answerQuestion: (questionId: string, selected: string) => void;
   dismissNotice: () => void;
 }
 
 let socket: SessionSocket | null = null;
+let connectionRevision = 0;
+/** `connect()` 会跨一次 REST 请求；只允许最后一次请求安装 socket（S161）。 */
 
 export const useSession = create<SessionState>((set, get) => {
   /** 一条服务端消息 → 一次状态更新。**穷尽 switch**，漏掉一种会是编译错误。 */
   function apply(message: ServerMessage): void {
     switch (message.type) {
       case "run_started":
-        set((s) => ({
+        set({
           phase: "running",
           notice: null,
           resumable: false,
           failed: null,
-          // 刚提交的那句话归到这一轮名下。自动续跑时没人打字，留空。
-          live: { runId: message.run_id, input: s.pendingInput },
-          pendingInput: "",
+          // 服务端从已经出队的 item 给出权威输入。队列和插话都不能改写这一位。
+          live: liveFromRunStarted(message),
           editing: null,
-        }));
+        });
         break;
 
       case "delta": {
@@ -233,6 +244,7 @@ export const useSession = create<SessionState>((set, get) => {
         break;
 
       case "run_failed":
+        const rerollFailed = get().rerolling;
         set((s) => ({
           phase: "idle",
           live: null,
@@ -240,7 +252,9 @@ export const useSession = create<SessionState>((set, get) => {
           traces: withoutKey(s.traces, s.live?.runId ?? ""),
           failed: s.live?.input ? { input: s.live.input, reason: message.reason } : null,
           notice: `这一轮失败了：${message.reason}`,
+          rerolling: false,
         }));
+        if (rerollFailed) void get().refreshState();
         break;
 
       case "run_interrupted":
@@ -263,7 +277,11 @@ export const useSession = create<SessionState>((set, get) => {
         // **叶子不是我们以为的那个 → 整条路径换过了**（切分支）。这条自纠比让
         // `switchBranch` 自己去拉可靠：它是在收到服务端的确认之后才动的，
         // 而"发完就拉"会和服务端处理那条消息抢先后。
-        if (message.leaf_id && message.leaf_id !== get().path.at(-1)?.id) {
+        if (
+          !get().rerolling &&
+          message.leaf_id &&
+          message.leaf_id !== get().path.at(-1)?.id
+        ) {
           void get().refreshState();
         }
         break;
@@ -320,7 +338,12 @@ export const useSession = create<SessionState>((set, get) => {
         break;
 
       case "error":
-        set({ notice: message.message });
+        if (get().rerolling) {
+          set({ notice: message.message, rerolling: false });
+          void get().refreshState();
+        } else {
+          set({ notice: message.message });
+        }
         break;
     }
   }
@@ -339,7 +362,6 @@ export const useSession = create<SessionState>((set, get) => {
     live: null,
     failed: null,
     streaming: {},
-    pendingInput: "",
     question: null,
     queue: [],
     usage: { tokensIn: 0, tokensOut: 0 },
@@ -357,7 +379,7 @@ export const useSession = create<SessionState>((set, get) => {
       // 路径整条换掉，状态随之重放（S42）。这里只发消息——服务端回的那份
       // `state` 快照带着新的叶子 id，`apply` 认出来之后自己去把路径拉回来。
       get().send({ type: "switch_branch", node_id: nodeId });
-      set({ editing: null, failed: null });
+      set({ editing: null, failed: null, rerolling: false });
     },
 
     regenerate(nodeId) {
@@ -365,9 +387,12 @@ export const useSession = create<SessionState>((set, get) => {
       // 重新生成"就是「先切过去、再重生成」两步。这两步在这里做完，用户按的是
       // 一个按钮——但后面那几轮会移出当前路径，所以调用处要先问过。
       const { path, send } = get();
+      const remaining = pathBeforeReroll(path, nodeId);
+      if (remaining === null) return;
+      // 点下去就让旧版本和它的后代退出当前路径。新版本失败时从服务端恢复。
+      set({ path: remaining, editing: null, rerolling: true });
       if (path.at(-1)?.id !== nodeId) send({ type: "switch_branch", node_id: nodeId });
       send({ type: "regenerate", node_id: nodeId });
-      set({ editing: null, rerolling: true });
     },
 
     editNode({ nodeId, ...patch }) {
@@ -424,7 +449,6 @@ export const useSession = create<SessionState>((set, get) => {
           live: null,
           failed: null,
           streaming: {},
-          pendingInput: "",
           question: null,
           queue: [],
           notes: {},
@@ -441,7 +465,12 @@ export const useSession = create<SessionState>((set, get) => {
 
     async connect(sessionId) {
       get().disconnect();
+      const revision = connectionRevision;
       const detail = await api.getSession(sessionId);
+      // StrictMode 会让启动 effect 走一遍 setup → cleanup → setup；用户快速切会话也会
+      // 产生同样的交错。旧请求晚回来时必须作废，否则一个页面会留下两个连接，
+      // 服务端接管旧连接后，旧 onclose 又会把新页面误报成「连接已关闭」。
+      if (revision !== connectionRevision) return;
       set({
         sessionId,
         session: detail.session,
@@ -453,18 +482,22 @@ export const useSession = create<SessionState>((set, get) => {
         live: null,
         failed: null,
         streaming: {},
-        pendingInput: "",
         question: null,
         queue: [],
+        usage: { tokensIn: 0, tokensOut: 0 },
         notes: {},
         notice: null,
+        resumable: false,
         goal: null,
         editing: null,
         rerolling: false,
       });
 
-      socket = new SessionSocket(sessionId, apply, (reason) => set({ notice: reason }));
-      socket.open();
+      const nextSocket = new SessionSocket(sessionId, apply, (reason) => {
+        if (socket === nextSocket && revision === connectionRevision) set({ notice: reason });
+      });
+      socket = nextSocket;
+      nextSocket.open();
     },
 
     async refreshState() {
@@ -480,6 +513,7 @@ export const useSession = create<SessionState>((set, get) => {
     },
 
     disconnect() {
+      connectionRevision += 1;
       socket?.close();
       socket = null;
     },
@@ -487,10 +521,19 @@ export const useSession = create<SessionState>((set, get) => {
     send(message) {
       if (!socket?.send(message)) {
         set({ notice: "还没连上，这条没发出去。" });
-        return;
+        return false;
       }
-      // 只有 `submit` 会开新的一轮；插话落在正在跑的那一轮里，不另起。
-      if (message.type === "submit") set({ pendingInput: message.text, failed: null });
+      if (message.type === "submit") set({ failed: null });
+      return true;
+    },
+
+    answerQuestion(questionId, selected) {
+      const question = get().question;
+      if (!question || question.question_id !== questionId) return;
+      if (!get().send({ type: "answer", question_id: questionId, selected })) return;
+      // 服务端收到 answer 后会继续同一 run；不要等到整轮结束才移除交互控件，
+      // 否则用户能对同一个 question 再答一次并收到协议错误。
+      set({ question: null, phase: "running" });
     },
 
     dismissNotice: () => set({ notice: null }),

@@ -1,4 +1,4 @@
-from .base import Tool, ToolOutcome, ToolResult
+from .base import Tool, ToolResult
 from .builtin import close_segment_tool
 from .context import AskUser, RunContext, RunDelta
 from .goal import GoalContext, goal_tools
@@ -12,7 +12,6 @@ __all__ = [
     "RunContext",
     "RunDelta",
     "Tool",
-    "ToolOutcome",
     "ToolRegistry",
     "ToolResult",
     "build_state_tools",

@@ -7,19 +7,23 @@
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-from conftest import STATE_MARK, ScriptedLLM, text, tool
+from conftest import FOLLOWUP_MARK, STATE_MARK, ScriptedLLM, text, tool
 
-from agenttavern.models import Actor, Node, Session, UserInput
+from agenttavern.agents.director import _operation
+from agenttavern.models import Actor, Goal, GoalRun, Node, Session, SessionMeta, UserInput
+from agenttavern.server.protocol import Question, QueueStatus, ServerError, ServerMessage
 from agenttavern.server.runner import SessionRunner
 from agenttavern.storage import Store
+from agenttavern.tools import Inbox
 
 
 def one_run(place: str = "客厅", outline: str = "她推开门。", prose: str = "门轴响了。"):
     return [
         tool("state_write", set={"地点": place}),
-        tool("submit_outline", outline=outline),
+        text(outline),
         text(prose),
     ]
 
@@ -79,6 +83,196 @@ async def test_aclose_returns_when_idle(tmp_path: Path) -> None:
     await asyncio.sleep(0)
 
     await asyncio.wait_for(runner.aclose(), timeout=2.0)
+
+
+async def test_cancelling_a_run_also_cancels_the_model_operation() -> None:
+    """外层取消必须传给 ``asyncio.wait`` 里生成的子 task，不能留下模型流。"""
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def model_operation() -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    task = asyncio.create_task(
+        _operation(SimpleNamespace(inbox=Inbox()), model_operation())  # type: ignore[arg-type]
+    )
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert cancelled.is_set(), "父 run 结束前必须等底层模型请求真正取消"
+
+
+async def test_stop_and_correction_pause_the_active_goal(tmp_path: Path) -> None:
+    """用户接管当前 run 时，goal 同时暂停，不得在本轮后继续自动推进。"""
+    for action in ("correct", "stop"):
+        store = Store(tmp_path / action)
+        session = Session(
+            meta=SessionMeta(goal=Goal(description="继续赶路")),
+            goal_run=GoalRun(),
+        )
+        repo = store.create_session(session)
+
+        async def broadcast(_message: object) -> None:
+            return None
+
+        runner = SessionRunner(repo, ScriptedLLM(*one_run()).gateway(), broadcast)
+        blocker = asyncio.create_task(asyncio.Event().wait())
+        runner._current = blocker
+        runner._inbox = Inbox()
+        try:
+            accepted = (
+                runner.interject("改走北门", interrupt=True)
+                if action == "correct"
+                else runner.stop()
+            )
+            assert accepted
+            saved = repo.load_session()
+            assert saved.goal_run is not None and saved.goal_run.paused
+            assert "用户" in saved.goal_run.paused_reason
+            assert not runner._autocontinue_armed
+            emitted = runner._out.qsize()
+            runner._pause_goal("后续取消收尾不应再次广播")
+            assert runner._out.qsize() == emitted
+            reloaded_goal = repo.load_session().goal_run
+            assert reloaded_goal is not None
+            assert reloaded_goal.paused_reason == saved.goal_run.paused_reason
+        finally:
+            blocker.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await blocker
+
+
+async def test_a_broken_socket_stops_the_sender_after_one_failure(tmp_path: Path) -> None:
+    """连接关闭后只记录一次发送失败，后续 trace/delta 不再堆积或反复发送。"""
+    store = Store(tmp_path)
+    repo = store.create_session(Session())
+    attempts = 0
+
+    async def broken_broadcast(_message: object) -> None:
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("socket closed")
+
+    runner = SessionRunner(repo, ScriptedLLM(*one_run()).gateway(), broken_broadcast)
+    runner.start()
+    try:
+        runner._emit(QueueStatus(pending=["第一条"]))
+        assert await _until(lambda: runner._sender_task is not None and runner._sender_task.done())
+        runner._emit(QueueStatus(pending=["第二条"]))
+        await asyncio.sleep(0)
+
+        assert attempts == 1
+        assert runner._out.empty()
+    finally:
+        await asyncio.wait_for(runner.aclose(), timeout=2.0)
+
+
+async def test_detaching_the_socket_keeps_the_run_and_reattaches_interaction(
+    tmp_path: Path,
+) -> None:
+    """断线只丢流式投影；刷新后仍能看见当前 run 与待回答问题（S175）。"""
+    runner, _repo, first = make_runner(tmp_path, ScriptedLLM(*one_run()))
+    runner.start()
+    blocker = asyncio.create_task(asyncio.Event().wait())
+    runner._current = blocker
+    runner._run_id = "run_live"
+    runner._run_input = "继续调查"
+
+    question = asyncio.create_task(runner._ask_user("走哪边？", ["左", "中", "右"]))
+    assert await _until(
+        lambda: any(getattr(message, "type", "") == "question" for message in first)
+    )
+
+    await runner.detach()
+    assert not blocker.done(), "关闭投递面不能取消权威 run"
+
+    second: list[object] = []
+
+    async def broadcast(message: object) -> None:
+        second.append(message)
+
+    await runner.attach(broadcast)
+    projections = runner.reconnect_messages()
+    assert [message.type for message in projections] == ["run_started", "question"]
+    question_message = projections[-1]
+    assert isinstance(question_message, Question)
+    assert runner.answer(question_message.question_id, "左")
+    assert await question == "左"
+
+    await runner.aclose()
+
+
+async def test_only_the_latest_overlapping_attach_reopens_delivery(tmp_path: Path) -> None:
+    """刷新握手交错时，旧页面不能在新页面之后把 runner 的出口抢回去。"""
+    runner, _, _ = make_runner(tmp_path, ScriptedLLM(*one_run()))
+    first: list[ServerMessage] = []
+    latest: list[ServerMessage] = []
+
+    async def first_broadcast(message: ServerMessage) -> None:
+        first.append(message)
+
+    async def latest_broadcast(message: ServerMessage) -> None:
+        latest.append(message)
+
+    runner.start()
+    try:
+        await asyncio.gather(runner.attach(first_broadcast), runner.attach(latest_broadcast))
+        runner._emit(ServerError(message="只发给最后接管者"))
+        assert await _until(lambda: bool(latest))
+
+        assert not first
+        assert latest[-1] == ServerError(message="只发给最后接管者")
+    finally:
+        await runner.aclose()
+
+
+async def test_post_commit_cancellation_accounts_and_pauses_the_goal(tmp_path: Path) -> None:
+    """取消若落在节点提交后的归段阶段，节点与 goal 账本不能分裂。"""
+
+    class CancelSegmentFollowup(ScriptedLLM):
+        def _handle(self, request):  # type: ignore[no-untyped-def]
+            messages = json.loads(request.content)["messages"]
+            if FOLLOWUP_MARK in str(messages[-1].get("content") or ""):
+                raise asyncio.CancelledError
+            return super()._handle(request)
+
+    store = Store(tmp_path)
+    session = Session(
+        meta=SessionMeta(goal=Goal(description="让她进门", max_runs=5)),
+        goal_run=GoalRun(),
+    )
+    repo = store.create_session(session)
+    sent: list[object] = []
+
+    async def broadcast(message: object) -> None:
+        sent.append(message)
+
+    runner = SessionRunner(repo, CancelSegmentFollowup(*one_run()).gateway(), broadcast)
+    runner.start()
+    try:
+        await runner.submit("我推开门")
+        assert await _until(
+            lambda: (
+                repo.load_session().goal_run is not None
+                and bool(repo.load_session().goal_run.paused)
+            )
+        )
+
+        saved = repo.load_session()
+        assert saved.active_leaf_id is not None
+        assert saved.editable_node_id == saved.active_leaf_id
+        assert saved.goal_run is not None
+        assert saved.goal_run.spent_runs == 1
+        assert saved.goal_run.spent_tokens > 0
+        assert repo.load_draft() is None
+        assert repo.load_node(saved.active_leaf_id).prose == "门轴响了。"
+    finally:
+        await asyncio.wait_for(runner.aclose(), timeout=2.0)
 
 
 async def test_stop_cancels_only_the_run_not_the_loop(tmp_path: Path) -> None:
@@ -244,7 +438,7 @@ async def test_the_loop_is_cancellable_by_anyone_not_only_by_aclose(tmp_path: Pa
 async def test_guidance_after_director_returns_to_director_in_the_same_turn(tmp_path: Path) -> None:
     """writer/state 的插话在阶段边界回 director，不另开下一 turn。
 
-    两种情形走同一条路：引导正好落在 `submit_outline` 上（它是终止点，直接返回，
+    两种情形走同一条路：引导正好落在 director 的最终细纲输出上（收口后直接返回，
     **走不到边界**），或者落在 writer 阶段（那是一次不可分的生成，本来就没有边界）。
     用户的输入在任何情况下都不该消失；下游产物作废，原顶层输入仍是本轮输入。
 
@@ -276,7 +470,8 @@ async def test_guidance_after_director_returns_to_director_in_the_same_turn(tmp_
     node = next(iter(repo.all_nodes().values()))
     assert node.user_input is not None and node.user_input.text == "我推开门"
     assert node.interjections == ["等等，让她去阳台"]
-    assert node.outline == "她走到阳台。"
+    assert node.prose == "风起来了。"
+    assert "outline" not in node.model_dump()
 
     await runner.aclose()
 
@@ -305,7 +500,7 @@ async def test_a_failed_turn_reopens_the_previous_turn_for_editing(tmp_path: Pat
             return super()._handle(request)
 
     llm = BrokenState(
-        tool("submit_outline", outline="她再次推门。"),
+        text("她再次推门。"),
         text("门又响了一次。"),
         auto_state=False,
     )

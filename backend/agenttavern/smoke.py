@@ -52,6 +52,7 @@ def render_report(
     metrics: Metrics,
     events: list[TraceEvent],
     node: Any,
+    outline: str,
     notes: list[str],
     failure: str | None,
 ) -> str:
@@ -112,9 +113,9 @@ def render_report(
         out += [
             "## 产出",
             "",
-            f"### 细纲（{len(node.outline)} 字）",
+            f"### 细纲（{len(outline)} 字）",
             "",
-            _fence(node.outline),
+            _fence(outline),
             "",
             f"### 正文（{len(node.prose)} 字）",
             "",
@@ -173,7 +174,7 @@ async def run_once(args: argparse.Namespace) -> int:
 
     gateway = RecordingGateway(settings)
     events: list[TraceEvent] = []
-    node, notes, failure = None, [], None
+    node, outline, notes, failure = None, "", [], None
 
     async def ask(question: str, options: list[str]) -> str:
         # 非交互：取第一个选项，报告里会如实记下来。
@@ -193,7 +194,7 @@ async def run_once(args: argparse.Namespace) -> int:
             ask_user=ask,
             on_trace=events.append,
         )
-        node, notes = outcome.node, outcome.notes
+        node, outline, notes = outcome.node, outcome.outline, outcome.notes
     except Exception as exc:  # noqa: BLE001 —— 失败的 run 在阶段 0 最有信息量
         failure = f"{type(exc).__name__}: {exc}"
         print(f"!! {failure}", file=sys.stderr)
@@ -209,6 +210,7 @@ async def run_once(args: argparse.Namespace) -> int:
         metrics=metrics,
         events=events,
         node=node,
+        outline=outline,
         notes=notes,
         failure=failure,
     )
@@ -224,7 +226,7 @@ async def run_once(args: argparse.Namespace) -> int:
     if notes:
         print(f"采样标记：{notes}")
     if node is not None:
-        print(f"细纲 {len(node.outline)} 字 / 正文 {len(node.prose)} 字")
+        print(f"细纲 {len(outline)} 字 / 正文 {len(node.prose)} 字")
     print(f"报告：{path}")
     return 1 if failure else 0
 

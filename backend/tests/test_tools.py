@@ -21,7 +21,6 @@ from agenttavern.models import (
 from agenttavern.storage import Store
 from agenttavern.tools import (
     RunContext,
-    ToolOutcome,
     ToolRegistry,
     build_state_tools,
     build_tools,
@@ -80,17 +79,6 @@ def reg() -> ToolRegistry:
 
 
 # -- 契约 -------------------------------------------------------------------
-
-
-async def test_submit_outline_has_no_precondition(reg, ctx) -> None:
-    """**E0 契约已作废**（S7）。
-
-    它原先要求提交细纲前必须写过一次 `state_write`，为的是区分"确实没变化"与
-    "模型忘了提交"。director 不再维护状态，这个前置条件也就没有对象了。
-    """
-    ok = await call(reg, ctx, "submit_outline", outline="她推开门。")
-    assert ok.outcome is ToolOutcome.TERMINATE
-    assert ctx.outline == "她推开门。"
 
 
 async def test_an_empty_write_is_legal(reg, ctx) -> None:
@@ -227,7 +215,7 @@ async def test_all_three_expand_the_same_way(reg, ctx) -> None:
     ctx.repo.book().save_entry(
         WorldbookEntry(name="教团", content="总部在旧城区。", mode=WorldbookMode.ON_DEMAND)
     )
-    node = Node(outline="她推开门。", outline_summary="她进了店。")
+    node = Node(prose="门轴响了。", prose_summary="她进了店。")
     ctx.repo.save_node(node)
     ctx.parent_id = node.id
 
@@ -238,7 +226,7 @@ async def test_all_three_expand_the_same_way(reg, ctx) -> None:
     ]
     assert "在场" in got[0].content
     assert "旧货" not in got[1].content and "总部在旧城区" in got[1].content
-    assert "她推开门" in got[2].content
+    assert "门轴响了" in got[2].content
     for result in got:
         assert not result.is_error
         assert set(result.payload) == {"found", "missing"}
@@ -278,12 +266,12 @@ async def test_only_expandable_worldinfo_is_on_the_tree(reg, ctx) -> None:
 async def test_history_read_expands_the_whole_segment(reg, ctx) -> None:
     """**索引按段折叠，展开也必须按段给回全文**（S57）。
 
-    摘要在上下文里顶替的是**整段**——那几轮的细纲、当时查了什么，全被它替掉了。
+    摘要在上下文里顶替的是**整段**——那几轮的正文全被它替掉了。
     只还回末节点那一轮比不展开更糟：模型会以为自己已经看全了。
     """
-    a = Node(outline="第一轮：她推开门。")
-    b = Node(parent_id=a.id, outline="第二轮：陈从里屋出来。")
-    c = Node(parent_id=b.id, outline="第三轮：他把门锁上。", outline_summary="她进店，他锁门。")
+    a = Node(prose="第一轮：她推开门。")
+    b = Node(parent_id=a.id, prose="第二轮：陈从里屋出来。")
+    c = Node(parent_id=b.id, prose="第三轮：他把门锁上。", prose_summary="她进店，他锁门。")
     c.segment_span = 3
     for node in (a, b, c):
         ctx.repo.save_node(node)
@@ -297,13 +285,13 @@ async def test_history_read_expands_the_whole_segment(reg, ctx) -> None:
 
 
 async def test_only_folded_history_is_on_the_tree(reg, ctx) -> None:
-    """**没归过段的轮次不在展开树上**：它们的细纲原文还在上下文里。
+    """**没归过段的轮次不在展开树上**：它们的正文原文还在上下文里。
 
     段落是三个域里唯一用 id 当地址的——它没有名字，只有一段摘要，
     而摘要当不了地址（太长、会重、传回来会被改写一两个字）。
     """
-    open_run = Node(outline="还没归段的一轮。")
-    folded = Node(parent_id=open_run.id, outline="归过段的一轮。", outline_summary="摘要。")
+    open_run = Node(prose="还没归段的一轮。")
+    folded = Node(parent_id=open_run.id, prose="归过段的一轮。", prose_summary="摘要。")
     for node in (open_run, folded):
         ctx.repo.save_node(node)
     ctx.parent_id = folded.id
@@ -357,17 +345,17 @@ async def test_expanding_gives_everything_no_budget_no_paging(reg, ctx) -> None:
 # -- 截断必须出声 ------------------------------------------------------------
 #
 # **隐藏不是截断。** 长值换成"用 state_query 展开"是无损降维，展开的路还在。
-# 真截断只剩一处了：前情索引里没归过段的那几轮给的是"细纲前 N 字"，
+# 真截断只剩一处了：前情索引里没归过段的那几轮给的是"正文前 N 字"，
 # 那是真的砍掉了尾巴，砍掉了就得说清丢了多少（P13 同一条理由）。
 
 
 async def test_an_index_entry_says_how_much_it_left_out(reg, ctx) -> None:
     """索引里的头部截断要报出全文字数——那是模型决定要不要 `history_read` 的依据。"""
-    node = Node(outline="很长的一轮细纲。" * 60)
+    node = Node(prose="很长的一轮正文。" * 60)
     assert "……（截断，全文共" in node.summary_or_head(120)
-    assert str(len(node.outline)) in node.summary_or_head(120)
+    assert str(len(node.prose)) in node.summary_or_head(120)
 
-    short = Node(outline="很短。")
+    short = Node(prose="很短。")
     assert short.summary_or_head(120) == "很短。", "没截断就不要加噪声"
 
 
@@ -378,8 +366,7 @@ def test_close_segment_is_in_no_tool_face() -> None:
     """**它不属于任何一个 agent 的工具面**（S22）。
 
     归段是生成后的动作：它对本轮产出毫无帮助，却要占往返、分散注意力，
-    还和 `submit_outline` 的终止语义打架。它只出现在生成后追问那一次
-    独立调用里（`agents/postrun.py`）。
+    它只出现在生成后追问那一次独立调用里（`agents/postrun.py`）。
 
     `summarize` 曾经在 director 的工具面里（S25）。**它整个删掉了**——
     压缩由编排层在轮次滑出全文窗口时自己做，模型不该有一个主动触发压缩的
@@ -475,24 +462,19 @@ async def _pick_first(question: str, options: list[str]) -> str:
 # -- 工具面 -----------------------------------------------------------------
 
 
-async def test_history_never_leaks_prose(reg, ctx) -> None:
-    """S5 的基础：director 从不读 run 的正文。它能覆盖五倍历史跨度正是因为这一点，
-    这条一破，整个隔离设计作废。
-
-    行为检查而非字符串检查：展开前情只能吐细纲。
-    """
-    node = Node(outline="细纲：她推开门。", prose="正文：门轴发出一声长长的呻吟，她站在门口。")
+async def test_history_expands_authoritative_prose(reg, ctx) -> None:
+    """展开前情只返回落成的正文，不存在临时细纲的第二份事实。"""
+    node = Node(prose="正文：门轴发出一声长长的呻吟，她站在门口。")
     ctx.repo.save_node(node)
     ctx.parent_id = node.id
 
-    node.outline_summary = "她进了店。"
+    node.prose_summary = "她进了店。"
     node.segment_span = 1
     ctx.repo.save_node(node)
     body = await call(reg, ctx, "history_read", paths=[[node.id]])
 
-    assert "门轴" not in body.content
-    assert "门轴" not in str(body.payload)
-    assert "细纲" in body.content
+    assert "门轴" in body.content
+    assert body.payload["found"] == [node.id]
     assert "text.quote" not in reg.names
 
 
@@ -611,9 +593,9 @@ def names_for(worldinfo: list[WorldbookEntry] | None = None, **setup: object) ->
         return set(ToolRegistry.for_session(worldinfo).names)
 
 
-def test_submit_outline_always_exists() -> None:
-    """它是 loop 的唯一终止点（S4），不可关闭。"""
-    assert "submit_outline" in names_for(
+def test_director_has_no_submit_tool() -> None:
+    """director 以非空最终文本收口，不注册专用提交工具（S174）。"""
+    assert "submit_outline" not in names_for(
         agents={"state_manager": False},
         tools={"director": {"ask_question": False, "history_read": False}},
     )
@@ -664,20 +646,6 @@ def test_the_write_side_belongs_to_the_state_manager_alone(tmp_path: Path) -> No
     assert "state_query" not in names_for(**off)  # type: ignore[arg-type]
     with using(**off):  # type: ignore[arg-type]
         assert {t.name for t in build_state_tools()} == {"state_write"}
-
-
-async def test_submit_outline_never_has_a_precondition(tmp_path: Path) -> None:
-    """E0 作废之后，state 开着关着都一样能直接提交。"""
-    for on in (True, False):
-        repo = Store(tmp_path / str(on)).create_session(Session())
-        ctx = RunContext("run_x", repo, repo.load_session(), fake_gateway())
-
-        with using(agents={"state_manager": on}):
-            result = await call(
-                ToolRegistry.for_session(), ctx, "submit_outline", outline="她推门。"
-            )
-        assert not result.is_error
-        assert ctx.outline == "她推门。"
 
 
 def test_base_state_uses_parent_path(tmp_path: Path) -> None:

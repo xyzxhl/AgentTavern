@@ -1,14 +1,14 @@
 """谁收到什么。
 
-**哪些 context 给谁，是整个拓扑的地基**（S3 / Generation.md §3）。切法是：
-director 只读细纲历史、不读正文；writer 读正文上文以保证衔接。这一刀切开了最大的
-共享项，两侧才真正可分。
+**哪些 context 给谁，是整个拓扑的地基**（S3 / Generation.md §3）。完成后的剧情只
+以正文为准：director 与 writer 都读正文历史，但只有 writer 读文风、角色语言习惯
+和本轮细纲。
 
 因此这里必须守住：
 
 - **文风与角色语言习惯只进 writer。** 它们不参与检索，参与每一个 token。
-- **正文只进 writer 和 state_manager。** director 能覆盖五倍历史跨度正是因为它
-  自己从不读正文（S5）；state_manager 读，但它把正文折成几个键值，不往回带原文。
+- **正文进入所有需要剧情历史的 agent。** 细纲只在当前 run 内交给 writer，不进入
+  后续 turn 的任何模型上下文。
 
 **否定项两侧都不注入**（S91）：这个字段整个不存在。
 不能提前揭示的东西属于世界设定，写进 worldinfo 或 state 即可；
@@ -31,7 +31,6 @@ from ..models import (
     EntryKind,
     Goal,
     Node,
-    StateDelta,
     WorldbookEntry,
     WorldbookMode,
     WorldState,
@@ -80,19 +79,18 @@ STATE_INLINE_LIMIT = LIMITS.context.state_inline_limit
 def upstream_runs() -> int:
     """给 writer 几轮**正文**上文。**参数住在 `upstream` 那条 context 上**（S80）。
 
-    它只用来接住语气和现场，不是长程记忆——长程记忆是 director 的事，
-    它读细纲历史（S3/S5）。
+    它只用来接住语气和现场；director 的长程历史同样以正文为准。
     """
     return param("writer", "upstream", "runs", LIMITS.windows.upstream_runs)
 
 
 def state_recent_runs() -> int:
-    """给 state_manager 几轮「细纲 → 成文 → 当时记下的」示范（S7）。
+    """给 state_manager 几轮正文上文（S7）。
 
     **这是 state_manager 最大的一笔开销**：滑动窗口，每轮全变，一点缓存前缀都
     吃不到，而前几轮的正文是其中的大头。往下调省钱，代价是键名和值的形状更容易
     漂移。**和 `upstream_runs` 分开**：writer 少一轮只是接得生硬些，
-    state_manager 少一轮直接影响键名一致性。
+    state_manager 少一轮会减少它核对连续变化的依据。
     """
     return param("state_manager", "recent", "runs", LIMITS.windows.state_recent_runs)
 
@@ -258,25 +256,8 @@ def director_prompt(
     )
 
 
-def render_delta(delta: StateDelta) -> str:
-    """一次状态更新。给 state_manager 看它前几轮**自己写过什么**。
-
-    **原样给 `state_write` 的参数 JSON，不隐藏也不改写。** 这一节的全部用处就是
-    做示范，而示范必须和它要模仿的那次调用逐字一致——换个形式重述一遍，模仿的
-    就是那个形式了。
-    """
-    if delta.is_empty():
-        return rendering("state_manager", "delta_empty")
-
-    return json.dumps(delta.model_dump(exclude_defaults=True), ensure_ascii=False, indent=2)
-
-
 def render_recent(nodes: Sequence[Node]) -> str:
-    """前几轮的「细纲 → 成文 → 当时记下的」三元组。
-
-    **三样缺一不可。** 少了细纲看不出"定下的事实"和"记下的键"之间的取舍，
-    少了正文看不出细纲留白处最后落成了什么，少了增量就根本没有示范。
-    """
+    """前几轮正文。剧情事实只从最终落成的正文读取。"""
     if not nodes:
         return rendering("state_manager", "recent_empty")
 
@@ -284,10 +265,7 @@ def render_recent(nodes: Sequence[Node]) -> str:
     for offset, node in enumerate(nodes):
         ago = len(nodes) - offset
         label = "上一轮" if ago == 1 else f"上 {ago} 轮"
-        blocks.append(
-            f"## {label}\n\n### 细纲\n{node.outline}\n\n### 成文\n{node.prose}"
-            f"\n\n### 当时记下的\n{render_delta(node.state_delta)}"
-        )
+        blocks.append(f"## {label}\n\n{node.prose}")
     return "\n\n".join(blocks)
 
 
@@ -295,7 +273,6 @@ def state_manager_prompt(
     state: WorldState,
     *,
     recent: Sequence[Node] = (),
-    outline: str = "",
     prose: str = "",
 ) -> Prompt:
     """装配 state_manager 收到的整串消息（S7）。
@@ -315,7 +292,6 @@ def state_manager_prompt(
                 expandable=tool_enabled("state_manager", "state_query"),
             ),
             "recent": render_recent(recent),
-            "outline": outline,
             "prose": prose,
         },
     )

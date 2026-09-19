@@ -30,7 +30,7 @@ SSE 三条都不满足。不用 socket.io——不需要它的房间与 fallback
 
 ### 用官方 SDK，不用 agent SDK
 
-**不用 agent SDK / 编排框架**（LangChain、LangGraph、各家 agent SDK）：本项目对 tool loop 的控制粒度要求很高——run 内暂存区、`submit_outline` 的终止语义、契约校验、按阶段打断（S49）、无超时挂起（S24）。框架会挡在中间。
+**不用 agent SDK / 编排框架**（LangChain、LangGraph、各家 agent SDK）：本项目对 tool loop 的控制粒度要求很高——run 内暂存区、无工具最终输出的交付语义、可恢复工具错误、按阶段打断（S49）、无超时挂起（S24）。框架会挡在中间。
 
 **但官方 SDK 可以用。** 区别在于它只负责**一次调用**（重试、错误分类、超时、解析），**loop 完全由我们自己写**——SDK 不会挡在中间。省下的是一整套自己写的 HTTP 管道。
 
@@ -78,7 +78,7 @@ data/corpora/<corpus_id>/
 data/sessions/<session_id>/
   session.json              worldbook_id、corpus_ids、标题、goal、冻结的初始状态
                             **没有配置**——控制维度与能力开关都在提示词里（S80）
-  nodes/<node_id>.json      一个 run 一个节点：细纲、正文、state_delta、偏离报告、parent
+  nodes/<node_id>.json      一个 run 一个节点：正文、state_delta、偏离报告、parent
   trace/<run_id>.jsonl      append-only，每 run 一个文件（匹配归因分析的粒度）
 ```
 

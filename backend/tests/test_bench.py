@@ -9,13 +9,13 @@ from agenttavern.bench.grader import parse
 from agenttavern.bench.report import attribution_table, render
 from agenttavern.bench.scenarios import Scenario
 from agenttavern.config import Settings
-from agenttavern.models import InputSource, StateDelta
+from agenttavern.models import AttributionClass, InputSource, StateDelta
 from agenttavern.models.state import paths_of, walk
 
 
 def one_run(outline: str = "她推开门。", prose: str = "门轴响了。"):
     """一轮的两次模型调用。状态那一次由 `ScriptedLLM(state=...)` 应答（S7）。"""
-    return [tool("submit_outline", outline=outline), text(prose)]
+    return [text(outline), text(prose)]
 
 
 # -- 回归集 ------------------------------------------------------------------
@@ -154,10 +154,10 @@ async def test_run_scenario_chains_turns_and_keeps_going_after_a_failure(tmp_pat
     而我们要的正是失败样本。"""
     llm = ScriptedLLM(
         # 第 1 轮：正常
-        tool("submit_outline", outline="她推开门。"),
+        text("她推开门。"),
         text("门开了。"),
-        # 第 2 轮：director 只回文本、永不提交，耗尽轮数 → 失败
-        text("我在想"),
+        # 第 2 轮：director 反复调用不存在的写工具，耗尽轮数 → 失败
+        tool("state_write", set={"地点": "不该写"}),
         state=dict(set={"地点": "客厅"}),
     )
     settings = Settings(data_dir=tmp_path)
@@ -177,9 +177,9 @@ async def test_run_scenario_chains_turns_and_keeps_going_after_a_failure(tmp_pat
 
 async def test_turns_are_chained_so_state_accumulates(tmp_path: Path) -> None:
     llm = ScriptedLLM(
-        tool("submit_outline", outline="她推开门。"),
+        text("她推开门。"),
         text("门开了。"),
-        tool("submit_outline", outline="她看着他。"),
+        text("她看着他。"),
         text("她看着他。灯很暗。"),
         state=[dict(set={"地点": "客厅"}), dict(append={"林昭": {"知情": ["陈撒谎了"]}})],
     )
@@ -326,7 +326,7 @@ async def test_write_miss_sees_prior_state_so_it_can_tell_missing_from_already_k
 
 
 async def test_write_noise_judges_the_delta_against_the_criterion_alone() -> None:
-    """**S12 的五类里没有"记了不该记的"**——写入遗漏只查缺不查多。
+    """**S12 原先的五类里没有"记了不该记的"**——写入遗漏只查缺不查多。
 
     首批实测里 `照片.状态: "柜台，正面朝上"` 被四类一致判为没问题，
     而它正是 S34 点名不该记的东西。
@@ -440,6 +440,42 @@ async def test_grader_failure_becomes_unknown_not_a_crash() -> None:
 # -- report ------------------------------------------------------------------
 
 
+def test_attribution_classes_cover_all_six() -> None:
+    """S12：写入侧既要能归因遗漏，也要能归因冗余。"""
+    assert set(AttributionClass) == {
+        AttributionClass.DIRECTOR_RETRIEVAL,
+        AttributionClass.DIRECTOR_REASONING,
+        AttributionClass.WRITER_DEVIATION,
+        AttributionClass.WRITER_STYLE,
+        AttributionClass.WRITE_OMISSION,
+        AttributionClass.WRITE_REDUNDANCY,
+    }
+
+
+def test_prompt_setup_uses_a_disposable_yaml_copy() -> None:
+    """S85：消融改副本，退出后恢复原配置且删除临时目录。"""
+    from agenttavern.prompting import PromptSetup, load, path_of, prompts_as
+
+    source = path_of("director")
+    original = source.read_bytes()
+    temporary: Path | None = None
+
+    with prompts_as(PromptSetup(choices={"director": {"event_density": "sparse"}})):
+        temporary = path_of("director")
+        assert temporary != source
+        selected = next(
+            item["selected"]
+            for item in load("director")["sections"]
+            if item.get("name") == "event_density"
+        )
+        assert selected == "sparse"
+        assert source.read_bytes() == original
+
+    assert temporary is not None
+    assert not temporary.parent.exists()
+    assert source.read_bytes() == original
+
+
 def test_attribution_table_excludes_the_class_with_no_referent() -> None:
     """「writer 文风失败」没有参照物，AI 判不了（P19）。
     它不该出现在归因表里，但报告必须显式提醒它仍待人工判断。"""
@@ -477,9 +513,9 @@ async def test_regrade_rebuilds_the_same_material_from_disk(tmp_path: Path) -> N
     from agenttavern.bench import load_result
 
     llm = ScriptedLLM(
-        tool("submit_outline", outline="她推开门。"),
+        text("她推开门。"),
         text("门开了。"),
-        tool("submit_outline", outline="她看着他。"),
+        text("她看着他。"),
         text("她看着他。灯很暗。"),
         state=[dict(set={"地点": "客厅"}), dict(append={"林昭.知情": ["陈撒谎了"]})],
     )
@@ -497,7 +533,7 @@ async def test_regrade_rebuilds_the_same_material_from_disk(tmp_path: Path) -> N
 
 async def test_report_renders_without_grading(tmp_path: Path) -> None:
     llm = ScriptedLLM(
-        tool("submit_outline", outline="她推开门。"),
+        text("她推开门。"),
         text("门开了。"),
         state=dict(set={"地点": "客厅"}),
     )

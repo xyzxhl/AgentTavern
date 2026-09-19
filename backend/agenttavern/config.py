@@ -146,7 +146,6 @@ class _Segment(BaseModel):
 
 
 class _Sampling(BaseModel):
-    expansion_min_ratio: float = 1.6
     state_value_max_chars: int = 60
 
 

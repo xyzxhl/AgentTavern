@@ -246,8 +246,9 @@ Anthropic 是 `thinking: {budget_tokens: N}`。
 session 里，改一次只影响一个故事，**而且从提示词那侧完全看不见**。
 
 **验收** `test_input_handling_three_ways` · `test_authority_maps_to_ask_question_eagerness` ·
-`test_speaking_rule_is_a_choice_not_a_toggle_in_code`；三项密度彼此独立且为服务级的断言待补，
-见 [TODO](../TODO.md)。
+`test_speaking_rule_is_a_choice_not_a_toggle_in_code` ·
+`test_the_six_control_choices_live_in_their_agent_files` ·
+`test_the_three_density_choices_are_independent_and_service_wide`
 
 ### S82 · 显式设置优先于输入内容
 
@@ -269,7 +270,7 @@ session 里，改一次只影响一个故事，**而且从提示词那侧完全�
 **为什么** 三者改变的是不同阶段。拆开后可以表达「director 紧凑、writer 铺陈」；
 代价是不存在一个总旋钮替用户维持三者一致。
 
-**验收** 待补：分别修改三项并证明只影响各自 agent，见 [TODO](../TODO.md)。
+**验收** `test_the_three_density_choices_are_independent_and_service_wide`
 
 ### S84 · 工具描述可编，参数 schema 只读并排显示
 
@@ -301,7 +302,7 @@ session 里，改一次只影响一个故事，**而且从提示词那侧完全�
 
 **代价照单收下**：一次 bench 只能跑一种文风，消融改成换 YAML。
 
-**验收** —（`lab.py` 的 `PromptSetup` 被整套测试用着，但没有一条测试钉它自己的语义。见 [TODO.md](../TODO.md)）
+**验收** `test_prompt_setup_uses_a_disposable_yaml_copy`
 
 ### S169 · 多套提示词各自完整，当前套装按 turn 冻结
 

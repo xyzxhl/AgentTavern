@@ -17,6 +17,24 @@ from .storage import SessionRepository
 OnEvent = Callable[[TraceEvent], None]
 
 
+def outline_from_trace(repo: SessionRepository, run_id: str) -> str:
+    """从开发 trace 取回 turn 内细纲，供离线评测使用。
+
+    细纲不再属于节点。需要固定细纲的实验必须显式依赖开发 trace，而不能让评测
+    需求把临时制品重新塞回产品历史。
+    """
+    for event in reversed(repo.read_trace(run_id)):
+        if event.type is not TraceEventType.MODEL_REQUEST or event.actor is not Actor.DIRECTOR:
+            continue
+        response = event.payload.get("response")
+        if not isinstance(response, dict) or response.get("tool_calls"):
+            continue
+        content = response.get("content")
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+    return ""
+
+
 class Tracer:
     """一个 run 的 trace 记录器，顺带累计 token 消耗。"""
 

@@ -3,7 +3,8 @@
 产出一份**无文风约束的文章**（细纲）。它拿走全部推演与状态职责——writer 只是
 从它身上拆下来的一个负担，只承担文风（S3）。
 
-**唯一终止点是 `submit_outline`**（S4）。调用即结束 loop，编排层接手调 writer。
+模型不再调用专门的提交工具：一次不带工具调用的非空最终输出就是细纲（S174），
+随后由编排层接手调 writer。
 
 **它读状态，但不写状态**（S7）：状态维护后置成了 writer 之后的 state_manager。
 于是正文经那一步转写进 state，state 下一轮回到这里——**S5 因此被削了一半**：
@@ -30,7 +31,7 @@ from ..models import (
     trim_dangling_tool_call,
 )
 from ..prompting import call_of, current_snapshot, director_prompt, special_text, tool_enabled
-from ..tools import RunContext, ToolOutcome, ToolRegistry
+from ..tools import RunContext, ToolRegistry
 from ..tracing import Tracer
 from .replay import append_message, replay_messages
 
@@ -57,7 +58,7 @@ class DirectorResult:
 
     留着是为了**生成后的追问**（S22）——比如"这一段收了没有"。那类问题必须问
     刚写完的 director 本人：它手里有 state、有前情、知道故事要往哪走。
-    另起一个只看得见几段细纲的冷调用，判据全靠猜。
+    另起一个只看得见几段正文的冷调用，判据全靠猜。
     """
 
     loop_messages: list[Message] = field(default_factory=list)
@@ -102,7 +103,7 @@ async def run_director(
 
     # **续跑时「用户输入」那一节仍是被打断那一轮的原输入。** 新说的话不进那一节，
     # 它作为「用户追加输入」接在推演之后——**位置就是它的含义**：排在
-    # `submit_outline` 之后，模型才读得出"你交的这份细纲，用户看了之后又说了话"，
+    # 上一次最终细纲之后，模型才读得出"你交的这份细纲，用户看了之后又说了话"，
     # 而不是"这一轮的输入换了一条"（S119）。
     said = user_input.text if user_input else None
     appended: list[str] = list(appended_inputs or [])
@@ -194,15 +195,32 @@ async def run_director(
                 {
                     "finish_reason": response.finish_reason,
                     "tool_calls": [c.name for c in response.tool_calls],
+                    "content_chars": len(response.content.strip()),
                 },
                 usage=response.usage,
             )
 
             if not response.tool_calls:
-                # 模型只回了文本。这在弱模型上很常见，推回去而不是当成产出——
-                # 细纲必须经由 submit_outline 提交，否则契约（E0）就绕过去了。
                 messages.append(response.as_assistant_message())
-                _push(messages, _nudge(ctx))
+                outline = response.content.strip()
+                if outline:
+                    tracer.emit(
+                        TraceEventType.OUTLINE_SUBMITTED,
+                        Actor.DIRECTOR,
+                        "细纲完成",
+                        {"chars": len(outline), "rounds": round_index + 1},
+                    )
+                    ctx.repo.clear_draft()
+                    return DirectorResult(
+                        outline=outline,
+                        usage=tracer.usage,
+                        rounds=round_index + 1,
+                        messages=messages,
+                        loop_messages=messages[loop_start:],
+                    )
+
+                # 空最终输出不是细纲。给模型一次明确催促；到硬上限仍为空则整轮失败。
+                _push(messages, _nudge(ctx, final=forced))
                 _boundary(ctx, messages, tracer)
                 continue
 
@@ -239,25 +257,6 @@ async def run_director(
                     Message(role=Role.TOOL, content=result.content, tool_call_id=call.id)
                 )
 
-                if result.outcome is ToolOutcome.TERMINATE:
-                    assert ctx.outline is not None
-                    tracer.emit(
-                        TraceEventType.OUTLINE_SUBMITTED,
-                        Actor.DIRECTOR,
-                        "细纲完成",
-                        {"chars": len(ctx.outline), "rounds": round_index + 1},
-                    )
-                    ctx.repo.clear_draft()
-                    return DirectorResult(
-                        outline=ctx.outline,
-                        usage=tracer.usage,
-                        rounds=round_index + 1,
-                        messages=messages,
-                        loop_messages=messages[loop_start:],
-                    )
-                # 同一次响应里 submit_outline 之后的调用被忽略——它是终止点，
-                # 之后不该再有动作。
-
             _boundary(ctx, messages, tracer, aborted=aborted)
     except asyncio.CancelledError:
         # **挂起，不作废**（S48）。已经查过的资料、已经暂存的增量、已经想到
@@ -265,7 +264,7 @@ async def run_director(
         _save_draft(ctx, messages[loop_start:], round_index, said, user_input)
         raise
 
-    raise DirectorFailed(f"director 在 {max_rounds} 轮内没有提交细纲")
+    raise DirectorFailed(f"director 在 {max_rounds} 轮内没有输出细纲")
 
 
 def _ABORTED_RESULT(call_id: str) -> Message:  # noqa: N802 — 读作常量式的构造器
@@ -290,8 +289,19 @@ async def _operation(ctx: RunContext, coro: Awaitable[T]) -> T | None:
     signal = asyncio.ensure_future(ctx.inbox.interrupted.wait())
     try:
         await asyncio.wait({op, signal}, return_when=asyncio.FIRST_COMPLETED)
+    except asyncio.CancelledError:
+        # 外层 run 被停止或连接清理时，这个子 task 不会被 ``asyncio.wait``
+        # 自动取消。若任它脱离父 task 存活，底层流会继续读到模型自然结束，既烧
+        # token 又把已经作废的 delta 往失效连接上送。取消必须向下传播并等它真正
+        # 收尾，再把取消交还编排层保存草稿（S48/S51）。
+        op.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await op
+        raise
     finally:
         signal.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await signal
 
     if op.done():
         return op.result()

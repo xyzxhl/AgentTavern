@@ -1,6 +1,7 @@
 """节点：分支树的基本单元。
 
-**run = node = 一份细纲 = 一份正文**，四者严格一一对应（S1）。
+一个完整 run 原子落成一个 node。细纲只在 run 内作为 director → writer 的临时制品；
+节点持久化最终正文与状态增量，不再把计划稿当成跨轮事实。
 
 树结构与交互参考常见 AI chat（S44）：编辑/重生成产生兄弟节点，`< 2/3 >` 切换，
 活跃路径是根到叶的一条链。关键差异是 **节点内容包括 state 增量**（S1）——
@@ -87,17 +88,10 @@ class Node(BaseModel):
     # 随节点变化，也不再有"单轮覆盖"可记。要知道某一轮用的什么文风，看当时的
     # agent 配置，不看节点。
 
-    outline: str = ""
-    """director 的产出：无文风约束的文章（S13）。
+    prose_summary: str | None = None
+    """这一段**正文**的摘要，存在段落的最后一个节点上（S57）。
 
-    是散文而非结构化对象——不需要预设字段格式（不依赖未经证实的写作理论），
-    模型也不必做"把想写的翻译成 schema"这个元层任务。
-    """
-
-    outline_summary: str | None = None
-    """这一段剧情的摘要，**存在段落的最后一个节点上**（S57）。
-
-    摘要与细纲是 **n : 1**，不是一一对应：一段剧情可能横跨四轮，一次转场
+    摘要与正文是 **n : 1**，不是一一对应：一段剧情可能横跨四轮，一次转场
     可能只占半轮。按轮切分不是语义单位，切出来的东西既不好读、条数也不收敛
     （50 轮就是 50 条索引，Q23 的规模问题原样还在）。
 
@@ -108,7 +102,7 @@ class Node(BaseModel):
     interjections: list[str] = Field(default_factory=list)
     """本轮内用户按发生顺序插入的话（S50/S60）。
 
-    跨轮只保留会进入后续剧情上下文的产品记录：顶层输入、插话与细纲。director 的
+    跨轮只保留会进入后续剧情上下文的产品记录：顶层输入、插话与正文。director 的
     reasoning、tool call/result 只为本轮恢复而持久化在 ``RunDraft``，节点不保存。
     """
 
@@ -124,7 +118,7 @@ class Node(BaseModel):
     """
 
     segment_span: int = 1
-    """``outline_summary`` 覆盖了几轮，包含本节点自己。
+    """``prose_summary`` 覆盖了几轮，包含本节点自己。
 
     **按"末节点 + 跨度"寻址，而不是记起止 id**，因为父指针唯一：从末节点
     上溯 ``span - 1`` 步得到的链是确定的，**任何经过末节点的路径都得到同一段**。
@@ -132,13 +126,13 @@ class Node(BaseModel):
     """
 
     prose: str = ""
-    """writer 的产出：成品正文。**director 从不读它**（S5）。"""
+    """writer 的最终产出，也是后续叙事上下文的唯一权威来源。"""
 
     deviation_report: str | None = None
     """writer 若为通顺而增删了实质内容则报告，通常为空（S8）。
 
-    **细纲不回写**：writer 只报告偏离，编排层记录；下一 run 的 director
-    读 history 时可见。
+    **细纲不回写**：writer 只报告偏离，编排层记录供审计；后续模型统一直接读取正文，
+    不把偏离报告当作剧情 context。
     """
 
     state_delta: StateDelta = Field(default_factory=StateDelta)
@@ -160,8 +154,8 @@ class Node(BaseModel):
         的唯一依据。隐藏（"用工具展开"）不算截断，那条路是无损的；这里是真的
         砍掉了尾巴，砍掉了就得说。
         """
-        if self.outline_summary:
-            return self.outline_summary
-        if len(self.outline) <= head_chars:
-            return self.outline
-        return f"{self.outline[:head_chars]}……（截断，全文共 {len(self.outline)} 字）"
+        if self.prose_summary:
+            return self.prose_summary
+        if len(self.prose) <= head_chars:
+            return self.prose
+        return f"{self.prose[:head_chars]}……（截断，全文共 {len(self.prose)} 字）"

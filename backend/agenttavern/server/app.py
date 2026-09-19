@@ -48,6 +48,7 @@ from .protocol import (
     Interject,
     NodeUpdated,
     Regenerate,
+    RunInterrupted,
     ServerError,
     ServerMessage,
     SessionUpdated,
@@ -93,13 +94,12 @@ class NodePatch(BaseModel):
     """用户直接编辑节点数据（R22）。
 
     入口先限制为当前路径的上一 turn，且要求没有执行中或挂起的 run；满足时才直接
-    改写。更远节点没有编辑入口，避免下游重算和细纲缓存破坏。
+    改写。更远节点没有编辑入口，避免下游与正文摘要缓存失效。
 
     状态那部分有两个视图，字段一一对应，见 `EditNode` 上的说明。
     """
 
     user_input: str | None = None
-    outline: str | None = None
     prose: str | None = None
     state_delta: StateDelta | None = None
     state_result: Tree | None = None
@@ -135,6 +135,8 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
     @asynccontextmanager
     async def lifespan(_: FastAPI):  # type: ignore[no-untyped-def]
         yield
+        for runner in list(active_runners.values()):
+            await runner.aclose()
         # **先等建索引收尾再关客户端**：反过来的话，正在跑的那次 embed
         # 会拿到一个已经关掉的连接，于是一份本来能建成的资料被记成失败。
         await builder.drain()
@@ -512,30 +514,35 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
             await websocket.close(code=4404)
             return
 
-        # 本地单用户下，新连接就是刷新后的页面。它接管旧连接，而不是被旧连接清理
-        # 的时间窗永久挡在门外；接管前先停掉旧 runner，仍然保证只有一个写者（S161）。
-        if session_id in active_connections:
-            await close_live_session(session_id)
-
+        # 新页面接管旧连接。正在执行的权威 runner 不能随流式旁路一起取消；空闲 runner
+        # 则直接关闭重建，避免留下无连接的常驻循环（S161/S175）。
+        previous_socket = active_connections.get(session_id)
+        previous_runner = active_runners.get(session_id)
+        # **先占连接名额，再做任何 await。** 浏览器刷新 / HMR 会让两个握手挨得很近；
+        # 若等旧 socket 关闭后才登记，新旧两个处理协程都可能读到“当前无人连接”，
+        # 各自创建 runner，后一个覆盖前一个，前一个的 loop/sender 就永远没人关闭。
         active_connections[session_id] = websocket
+        if previous_socket is not None:
+            with suppress(Exception):
+                await previous_socket.close(code=4012, reason="会话已由新的页面接管")
+        # 等待旧连接关闭期间又来了更新的接管者，这个握手已经失去写权，不能继续
+        # 关闭或创建 runner。它自己的 finally 也会因 identity check 保留新连接。
+        if active_connections.get(session_id) is not websocket:
+            return
+        if previous_runner is not None and not previous_runner.busy:
+            await previous_runner.aclose()
+            if active_runners.get(session_id) is previous_runner:
+                active_runners.pop(session_id, None)
+            previous_runner = None
+
         runner: SessionRunner | None = None
         try:
             await websocket.accept()
+            if active_connections.get(session_id) is not websocket:
+                return
 
             async def broadcast(message: ServerMessage) -> None:
                 await websocket.send_text(message.model_dump_json())
-
-            runner = SessionRunner(
-                repo,
-                active,
-                broadcast,
-                developer=resolved.developer,
-                persist_trace=resolved.trace,
-                embedder=embedder,
-                reranker=reranker,
-            )
-            active_runners[session_id] = runner
-            runner.start()
 
             session = repo.load_session()
             await broadcast(
@@ -544,6 +551,30 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
                     leaf_id=session.active_leaf_id,
                 )
             )
+            # 草稿是权威恢复状态，不能只在当次 ``stop`` 的瞬间通知。刷新页面或
+            # 服务重启后，客户端同样必须知道下一条输入会续进上一 turn（S48）。
+            if repo.load_draft() is not None:
+                await broadcast(RunInterrupted(resumable=True))
+
+            if previous_runner is not None:
+                runner = previous_runner
+                await runner.attach(broadcast)
+                if active_connections.get(session_id) is not websocket:
+                    return
+                for message in runner.reconnect_messages():
+                    await broadcast(message)
+            else:
+                runner = SessionRunner(
+                    repo,
+                    active,
+                    broadcast,
+                    developer=resolved.developer,
+                    persist_trace=resolved.trace,
+                    embedder=embedder,
+                    reranker=reranker,
+                )
+                active_runners[session_id] = runner
+                runner.start()
 
             while True:
                 raw = await websocket.receive_text()
@@ -561,12 +592,15 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
             logger.exception("websocket_failed session=%s", session_id)
             raise
         finally:
-            if runner is not None:
-                await runner.aclose()
-            if runner is not None and active_runners.get(session_id) is runner:
-                del active_runners[session_id]
             if active_connections.get(session_id) is websocket:
                 active_connections.pop(session_id, None)
+                if runner is not None:
+                    if runner.busy:
+                        await runner.detach()
+                    else:
+                        await runner.aclose()
+                        if active_runners.get(session_id) is runner:
+                            del active_runners[session_id]
 
     return app
 
@@ -628,7 +662,6 @@ async def _handle(
         try:
             patch = NodePatch(
                 user_input=message.user_input,
-                outline=message.outline,
                 prose=message.prose,
                 state_delta=message.state_delta,
                 state_result=message.state_result,
@@ -659,8 +692,8 @@ async def _handle(
                 max_runs=message.max_runs,
                 max_total_tokens=message.max_total_tokens,
             )
-            # **记下从哪儿开始**（S93）：它之前的剧情给细纲、进静态前缀，
-            # 之后的每一轮给正文、逐条追加。
+            # **记下从哪儿开始**（S93）：之前与之后都只给正文；前者进静态前缀，
+            # 后者逐条追加。
             session.goal_run = GoalRun(started_at_leaf_id=session.active_leaf_id)
             repo.save_session(session)
             await broadcast(SessionUpdated(session=session))
@@ -754,12 +787,9 @@ def _apply_node_patch(
         else:
             node.user_input = node.user_input.model_copy(update={"text": patch.user_input})
         touched.append("user_input")
-    if patch.outline is not None:
-        node.outline = patch.outline
-        node.outline_summary = None  # 细纲变了，缓存的摘要作废
-        touched.append("outline")
     if patch.prose is not None:
         node.prose = patch.prose
+        node.prose_summary = None  # 正文变了，派生摘要作废
         touched.append("prose")
     if patch.state_delta is not None:
         # **整份替换，不是只换 `set`。** 以前这里是 `node.state_delta.set = ...`，
@@ -791,7 +821,6 @@ def _apply_node_patch(
 
 _EDIT_LABEL = {
     "user_input": "用户输入",
-    "outline": "细纲",
     "prose": "正文",
     "state": "状态增量",
 }

@@ -25,25 +25,26 @@
 - AgentTavern 是全新实现的 agent 化 AI 角色扮演系统，不背负 SillyTavern / TauriTavern 兼容约束。
 - 正常剧情生成始终走 agent 路径，不保留绕过它的“直接生成”快路径。
 - 一条从队列出队的顶层 user input 开启一个 turn；turn 内纠正或引导不另开 turn，
-  重生成只为同一 turn 创建新版本。`run = node version = 一份细纲 = 一份正文`；
-  完整 run 在故事树上产生一个原子节点，节点还包含状态增量与偏离报告。未完成的 run
-  只能是草稿，不能伪装成节点。
+  重生成只为同一 turn 创建新版本。每个 run 在 turn 内产生一份细纲和一份正文；细纲
+  是交给 writer 的临时制品，完整 run 在故事树上只把正文、状态增量与偏离报告落成
+  一个原子节点。未完成的 run 只能是草稿，不能伪装成节点。
 - 默认数据流固定、单向：
 
 ```text
 director -> writer -> state_manager -> goal_manager（仅有 goal 时）
 ```
 
-- director 是主 agent，负责推演与细纲；它读细纲历史、worldinfo、state、用户输入与用户编写的静态开场，但绝不读 writer 生成的节点正文或文风。
+- director 是主 agent，负责推演与细纲；它读正文历史、worldinfo、state、用户输入与用户编写的静态开场，但不读文风。
+- director 用一次不带工具调用的非空最终输出交付细纲；没有 `submit_outline` 终止工具。
 - writer 是无工具的单次渲染调用，只把细纲落成正文；它不承担剧情规划。
 - state_manager 在正文完成后运行，是 state 的唯一模型写入者；director 只能查询 state。
 - goal_manager 只在长任务中存在，跨 run 维护目标产品记录与进度。不要让 goal 语义渗入 director；自主推进应通过模拟输入走和普通输入相同的生成路径。
-- agent 之间不做动态 handoff、协商回流或自行生成子 agent。writer 也不能做成 director 的工具，否则正文会回流并破坏上下文隔离。
+- agent 之间不做动态 handoff、协商回流或自行生成子 agent。writer 也不能做成 director 的工具：它是 director 完成后必经的单次渲染阶段，不参与 director 的 tool loop。
 - 流式输出只是旁路；节点落盘后的完整结果才是权威，客户端必须能用最终结果整体替换流式片段。
 
 ## 数据边界与历史
 
-- `worldinfo` 是用户维护的静态设定；`state` 是剧情推进形成的当前世界状态；`history` 是沿故事路径累积的细纲历史。不要混用这三个词。
+- `worldinfo` 是用户维护的静态设定；`state` 是剧情推进形成的当前世界状态；`history` 是沿故事路径累积的正文历史。不要混用这三个词。
 - state 是 history 的检索捷径，不是第二份剧情记录。存储层不预设时间、地点、人物属性等固定维度；值保持任意嵌套 JSON。
 - 当前 state 是“初始状态 + 当前路径上的节点增量”的重放结果，不是全局单例，也不是独立权威快照。切换分支必须同时切换并重放 state 与 history。
 - worldbook、corpus、session 都是一级资产：worldbook 与 corpus 可被多个 session 引用，session 只保存引用，不复制资产。
@@ -52,14 +53,17 @@ director -> writer -> state_manager -> goal_manager（仅有 goal 时）
 - 「用户扮演谁」属于 worldbook，不是 session 覆盖项；复用同一 worldbook 的 session
   共用同一个玩家角色。
 - trace 全局 append-only，不随分支切换；默认不落盘，开发者模式下按 run 完整落盘。
-- director 的跨 turn history 每轮只保留「顶层 user input → 按顺序的插话 → 细纲」；
-  goal 跨 turn 只保留产品记录与当前有效 plan。thinking、tool call/result 不进入两者。
+- director 的跨 turn history 每轮只保留「顶层 user input → 按顺序的插话 → 正文」；
+  goal 跨 turn 保留正文、用户亲自给出的方向与当前有效 plan，模拟输入不重复回灌。
+  两者共享段落折叠与 `history_read` 展开；thinking、tool call/result 不进入两者。
 - 只持久化权威数据。缓存、索引、摘要和当前 state 都应能由其来源重建，不能反过来成为真相。
 
 ## 分支、输入与中断
 
 - 顶层输入按 FIFO 逐条消费，每条独立开启一个 turn，不得打包；该 turn 的每个完成版本
   各有一个 run / node。排队输入只在当前 turn 完成后开始。
+- `run_started` 必须携带服务端已经出队的顶层 user input；客户端不得用最后发送或仍在
+  排队的 input 猜当前运行卡片的归属。
 - turn 内插话分两种：纠正会取消当前操作再追加，引导会让当前操作完成并在下一个合法
   边界追加。两者都留在当前 turn，只产生一个节点。
 - 用户写出的动作是锚点，不能被省略或偷换；动作结果由世界规则决定，失败也必须在正文里可见且有据。
@@ -71,8 +75,8 @@ director -> writer -> state_manager -> goal_manager（仅有 goal 时）
   开发者 trace 是独立的审计旁路，不是模型上下文来源。
 - 只允许直接编辑当前活跃路径最后一个已完成 turn，且只能在它完成后、下一条顶层
   user input 成功提交前编辑。有 run 正在执行或挂起时一律禁止编辑。编辑不重跑 agent、
-  不重算后代、摘要或缓存；可能返回旧值的派生缓存必须失效，但不立即重建。细纲、正文、
-  状态之间的冲突由用户负责。
+  不重算后代、摘要或缓存；可能返回旧值的派生缓存必须失效，但不立即重建。正文与状态
+  之间的冲突由用户负责。
 
 ## 模型、代码与检索的边界
 
@@ -122,6 +126,7 @@ cd backend
 
 cd ..\frontend
 npm run lint
+npm test
 npm run build
 ```
 

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from conftest import ScriptedLLM, text, tool, tools
 
+from agenttavern.agents import replay
 from agenttavern.agents.goal_manager import advance_goal, sync_conversation, turn_record
 from agenttavern.llm import Message, Role, ToolCall
 from agenttavern.models import (
@@ -39,7 +40,6 @@ def _node(index: int, *, source: InputSource = InputSource.SIMULATED, said: str 
         id=f"run_{index}",
         parent_id=f"run_{index - 1}" if index else None,
         user_input=UserInput(text=said, source=source),
-        outline=f"第{index}轮的细纲。",
         prose=f"第{index}轮的正文。",
     )
 
@@ -70,18 +70,17 @@ def test_the_prefix_is_built_once_and_each_turn_only_appends() -> None:
     assert run.seen_leaf_id == "run_2"
 
 
-def test_each_turn_says_who_gave_the_input() -> None:
-    """**来源标注是这条消息里最要紧的东西**（S102）。
+def test_user_interventions_survive_but_simulated_inputs_do_not_echo() -> None:
+    """剧情事实只认正文；用户接管方向的输入与插话另外保留（S102）。
 
-    剧情偏了，是 goal_manager 自己推错了，还是用户主动把剧情带走了？后者强得多——
-    用户的意图优先于目标。不标注的话两种偏离在梗概里长得一模一样，
-    而应对完全不同。
+    goal_manager 自己写的模拟输入已经落实成正文，逐轮回灌只会让它反复解释自己的
+    指令；用户亲自写的内容则是暂停期间接管方向的证据，不能丢。
     """
     mine = turn_record(_node(1, source=InputSource.SIMULATED, said="我把照片推过去"), 1, [])
     theirs = turn_record(_node(2, source=InputSource.USER, said="我不想去那儿"), 2, [])
     butted_in = turn_record(_node(3), 3, ["<用户追加输入>\n让她别走"])
 
-    assert "我写的输入" in (mine.content or "")
+    assert "我把照片推过去" not in (mine.content or "")
     assert "用户自己的输入" in (theirs.content or "")
     assert "用户插话" in (butted_in.content or "")
     assert "让她别走" in (butted_in.content or "")
@@ -94,11 +93,10 @@ def test_a_turn_without_prose_says_so_instead_of_falling_back() -> None:
     什么都没写出来，而 goal_manager 读到一段像模像样的剧情，会照着它判某个中间
     状态已经成立。
     """
-    empty = Node(id="run_9", outline="定下了很多事。", prose="")
+    empty = Node(id="run_9", prose="")
     body = turn_record(empty, 9, []).content or ""
 
     assert "没有写出正文" in body
-    assert "定下了很多事。" not in body
 
 
 def test_switching_branches_rebuilds_instead_of_extending() -> None:
@@ -112,7 +110,7 @@ def test_switching_branches_rebuilds_instead_of_extending() -> None:
     assert "第1轮的正文。" in _joined(run)
 
     # 切到另一支：run_1 不在这条路径上了
-    other = Node(id="run_x", parent_id="run_0", outline="另一支的细纲。", prose="另一支的正文。")
+    other = Node(id="run_x", parent_id="run_0", prose="另一支的正文。")
     sync_conversation(PLAYER, GOAL, run, [_node(0), other])
 
     body = _joined(run)
@@ -122,22 +120,14 @@ def test_switching_branches_rebuilds_instead_of_extending() -> None:
     assert run.plan is not None and run.plan.subgoals[0].done
 
 
-def test_before_the_goal_gets_outlines_and_during_gets_prose() -> None:
-    """**路径切成两段**（S93）。
-
-    goal 设立**之前**那段进静态前缀、给细纲——它只回答"故事到这儿了"，细纲够用
-    而且便宜，还全量给一次就够。goal **期间**每轮逐条追加、给正文——要判的是
-    "这一步到底有没有发生"，而**细纲只说定了什么，正文才是最终写出来的东西**。
-    """
+def test_before_and_during_the_goal_both_get_prose() -> None:
+    """静态前缀与逐轮追加都只读正文（S93）。"""
     run = GoalRun(started_at_leaf_id="run_1")
     sync_conversation(PLAYER, GOAL, run, [_node(0), _node(1), _node(2), _node(3)])
     body = _joined(run)
 
-    # 之前那两轮：细纲在、正文不在
-    assert "第0轮的细纲。" in body and "第1轮的细纲。" in body
-    assert "第0轮的正文。" not in body and "第1轮的正文。" not in body
-    # 之后那两轮：正文在
-    assert "第2轮的正文。" in body and "第3轮的正文。" in body
+    assert all(f"第{i}轮的正文。" in body for i in range(4))
+    assert "细纲" not in body
 
 
 def test_a_goal_set_at_session_start_treats_everything_as_during() -> None:
@@ -150,7 +140,35 @@ def test_a_goal_set_at_session_start_treats_everything_as_during() -> None:
     assert "还没有已经写出来的剧情" in body, "之前那段是空的，要说出来"
 
 
-# -- 三个工具 -----------------------------------------------------------------
+async def test_goal_history_compacts_like_director_and_can_expand(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """goal_manager 复用同一段落摘要、同一地址和同一展开工具。"""
+    monkeypatch.setattr(replay, "CONTEXT_BUDGET_CHARS", 20)
+    repo = _repo(tmp_path)
+    first = _node(0, source=InputSource.USER, said="先记住门上的划痕")
+    second = _node(1)
+    second.parent_id = first.id
+    second.prose_summary = "他们穿过了旧门。"
+    second.segment_span = 2
+    repo.save_node(first)
+    repo.save_node(second)
+
+    run = GoalRun()
+    sync_conversation(PLAYER, GOAL, run, [first, second])
+    body = _joined(run)
+    assert "他们穿过了旧门" in body
+    assert "第0轮的正文" not in body
+    assert "先记住门上的划痕" in body, "用户接管方向的内容不能随正文折叠消失"
+    assert second.id in body, "摘要留下的 key 必须能直接用于展开"
+
+    ctx = GoalContext(goal=GOAL, run=run, repo=repo, parent_id=second.id)
+    result = await _call(ctx, "history_read", paths=[[second.id]])
+    assert not result.is_error
+    assert "第0轮的正文" in result.content and "第1轮的正文" in result.content
+
+
+# -- 工具 ---------------------------------------------------------------------
 
 
 async def _call(ctx: GoalContext, name: str, **args):

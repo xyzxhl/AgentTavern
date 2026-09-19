@@ -1,7 +1,7 @@
 """把一条路径重放成 director 的产品历史（S60/S61）。
 
 轮内执行链会持久化到可恢复草稿，以支持打断；一旦 turn 完成，跨轮只保留并重放
-`用户输入 → 用户插话 → 细纲`。thinking、工具调用与工具结果都是 turn 内协议流量，
+`用户输入 → 用户插话 → 正文`。thinking、工具调用与工具结果都是 turn 内协议流量，
 不会进入节点，也不会在后续 turn 里换一种形态继续存活。
 
 ## 压缩的触发方式：越界一次，全部替换
@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from ..config import LIMITS
 from ..llm import Message, Role
-from ..models import Node
+from ..models import InputSource, Node
 from ..prompting import rendering, special, special_messages
 
 CONTEXT_BUDGET_CHARS = LIMITS.context.budget_chars
@@ -52,7 +52,7 @@ def append_message(said: str) -> Message:
 def interjection_mark() -> str:
     """追加输入那一条的**结构标记**。
 
-    扁平化时要靠它把用户的插话和编排层的催促（"请调用 submit_outline……"）
+    扁平化时要靠它把用户的插话和编排层的催促（"请直接输出本轮细纲"）
     分开：前者是不可再生的用户输入，跨轮必须留；后者是脚手架，跨轮带着只会
     像一条仍然生效的指令。
 
@@ -106,7 +106,7 @@ def _chars(messages: list[Message]) -> int:
     return sum(len(m.content or "") + len(m.reasoning_content or "") for m in messages)
 
 
-def _summary_message(node: Node, *, readable: bool) -> Message:
+def _summary_message(node: Node, *, readable: bool, agent: str = "director") -> Message:
     """一段被压缩后留下的替身：**折起来的那一段**（S157）。
 
     写清它**顶替了几轮**；展开能力开启时再给出怎么取回原文——否则模型会把
@@ -125,17 +125,17 @@ def _summary_message(node: Node, *, readable: bool) -> Message:
     return Message(
         role=Role.USER,
         content=rendering(
-            "director",
+            agent,
             "history_folded" if readable else "history_folded_gone",
             span=max(1, node.segment_span),
-            summary=node.outline_summary or "",
+            summary=node.prose_summary or "",
             key=node.id,
         ),
     )
 
 
 def flatten_turn(node: Node) -> list[Message]:
-    """把一轮重放成「顶层输入 → 插话 → 细纲」（S60/S61）。
+    """把一轮重放成「顶层输入 → 插话 → 正文」（S60/S61）。
 
     三样东西必须留住，它们各自都是不可再生的；工具过程不跨轮：
 
@@ -143,8 +143,7 @@ def flatten_turn(node: Node) -> list[Message]:
       提示里裹着**那一轮的 state 快照**，几百字，而且它已经被这一轮的新快照
       完全取代。旧快照留着不只是浪费，还会以"写在前面"的权威姿态和新值打架。
     - **插话**：用户在操作之间插的话改变了这一轮的走向，位置也有意义，所以原位保留。
-    - **细纲**：直接取 `node.outline`。它在原始消息里只是 `submit_outline` 的一个参数，
-      藏在 JSON 里。
+    - **正文**：直接取 `node.prose`。它是这一轮最终落成的叙事事实。
     """
     out: list[Message] = []
     text = node.user_input.text if node.user_input else ""
@@ -156,9 +155,115 @@ def flatten_turn(node: Node) -> list[Message]:
             )
         )
     out.extend(Message(role=Role.USER, content=text) for text in node.interjections if text)
-    if node.outline:
-        out.append(Message(role=Role.ASSISTANT, content=node.outline))
+    if node.prose:
+        out.append(Message(role=Role.ASSISTANT, content=node.prose))
     return out
+
+
+def goal_turn_record(node: Node, index: int) -> Message:
+    """goal_manager 的逐轮产品记录：正文，加上用户真正介入的方向。
+
+    模拟输入是 goal_manager 自己刚写的，不必再原样回灌；普通剧情事实只认正文。
+    用户手写输入与 turn 内插话则代表用户接管方向，尤其在 goal 暂停期间不能只靠
+    正文猜回去，所以与正文一起保留（R30/S102）。
+    """
+    parts: list[str] = []
+    if node.user_input and node.user_input.source is InputSource.USER and node.user_input.text:
+        parts.append(rendering("goal_manager", "turn_user", text=node.user_input.text))
+    for word in node.interjections:
+        if word:
+            parts.append(rendering("goal_manager", "turn_interjection", text=word))
+    parts.append(node.prose or "（这一轮没有写出正文。）")
+    body = rendering("goal_manager", "turn", index=index, body="\n".join(parts))
+    return Message(role=Role.USER, content=body)
+
+
+def _goal_direction_record(node: Node, index: int) -> Message | None:
+    """正文折成摘要后仍保留用户亲自给出的输入与插话。"""
+    parts: list[str] = []
+    if node.user_input and node.user_input.source is InputSource.USER and node.user_input.text:
+        parts.append(rendering("goal_manager", "turn_user", text=node.user_input.text))
+    parts.extend(
+        rendering("goal_manager", "turn_interjection", text=word)
+        for word in node.interjections
+        if word
+    )
+    if not parts:
+        return None
+    body = rendering("goal_manager", "turn", index=index, body="\n".join(parts))
+    return Message(role=Role.USER, content=body)
+
+
+def _compact_goal_history(
+    path: list[Node],
+    full: list[Message],
+    *,
+    readable: bool,
+    start_index: int,
+    keep_directions: bool,
+) -> list[Message]:
+    """按 director 的阈值和段边界折叠 goal_manager 的正文历史。"""
+    if not path:
+        return []
+    if _chars(full) <= CONTEXT_BUDGET_CHARS:
+        return full
+
+    last_summarised = max(
+        (index for index, node in enumerate(path) if node.prose_summary), default=-1
+    )
+    if last_summarised < 0:
+        return full
+
+    compacted: list[Message] = []
+    cursor = 0
+    for end_index, end in enumerate(path[: last_summarised + 1]):
+        if not end.prose_summary:
+            continue
+        segment_start = max(cursor, end_index - max(1, end.segment_span) + 1)
+        # 数据若有不连续的旧分段标记，宁可保留中间正文，也不静默丢掉。
+        compacted.extend(full[cursor:segment_start])
+        if keep_directions:
+            for index in range(segment_start, end_index + 1):
+                direction = _goal_direction_record(path[index], start_index + index)
+                if direction is not None:
+                    compacted.append(direction)
+        compacted.append(_summary_message(end, readable=readable, agent="goal_manager"))
+        cursor = end_index + 1
+
+    compacted.extend(full[cursor:])
+    return compacted
+
+
+def goal_background_messages(path: list[Node], *, readable: bool = True) -> list[Message]:
+    """goal 建立前的背景只含正文，不把旧用户指令重新变成当前方向。"""
+    full = [
+        Message(role=Role.USER, content=node.prose or "（这一轮没有写出正文。）") for node in path
+    ]
+    return _compact_goal_history(
+        path,
+        full,
+        readable=readable,
+        start_index=1,
+        keep_directions=False,
+    )
+
+
+def goal_replay_messages(
+    path: list[Node], *, readable: bool = True, start_index: int = 1
+) -> list[Message]:
+    """给 goal_manager 重放目标期间历史，使用 director 的同一压缩时机与段地址。
+
+    越界前逐轮给正文；越界后把已经归段的正文换成同一份段落摘要，并留下
+    ``history_read`` 可展开的 key。用户亲自给出的输入/插话不随正文摘要消失。
+    """
+    full = [goal_turn_record(node, start_index + i) for i, node in enumerate(path)]
+    return _compact_goal_history(
+        path,
+        full,
+        readable=readable,
+        start_index=start_index,
+        keep_directions=True,
+    )
 
 
 def replay_messages(path: list[Node], *, readable: bool = True) -> list[Message]:
@@ -180,7 +285,7 @@ def replay_messages(path: list[Node], *, readable: bool = True) -> list[Message]
     # 越界：从后往前找最后一个已归段的位置，它之前（含它）的全部替换。
     last_summarised = -1
     for index, node in enumerate(path):
-        if node.outline_summary:
+        if node.prose_summary:
             last_summarised = index
 
     if last_summarised < 0:
@@ -188,7 +293,7 @@ def replay_messages(path: list[Node], *, readable: bool = True) -> list[Message]
 
     compacted: list[Message] = []
     for index, node in enumerate(path[: last_summarised + 1]):
-        if node.outline_summary:
+        if node.prose_summary:
             compacted.append(_summary_message(node, readable=readable))
         # 被某一段覆盖的中间轮次不单独出现——它们已经在那条摘要里了。
         del index

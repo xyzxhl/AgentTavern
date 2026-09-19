@@ -13,7 +13,7 @@ import { useSession } from "../store";
  */
 export function QuestionPrompt(): JSX.Element | null {
   const question = useSession((s) => s.question);
-  const send = useSession((s) => s.send);
+  const answerQuestion = useSession((s) => s.answerQuestion);
   const [own, setOwn] = useState("");
   const box = useRef<HTMLDivElement>(null);
 
@@ -34,18 +34,18 @@ export function QuestionPrompt(): JSX.Element | null {
       const picked = question!.options[at];
       if (picked === undefined) return;
       event.preventDefault();
-      send({ type: "answer", question_id: question!.question_id, selected: picked });
+      answerQuestion(question!.question_id, picked);
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [question, send]);
+  }, [answerQuestion, question]);
 
   if (!question) return null;
 
   function answer(selected: string): void {
     const said = selected.trim();
     if (!said) return;
-    send({ type: "answer", question_id: question!.question_id, selected: said });
+    answerQuestion(question!.question_id, said);
   }
 
   return (

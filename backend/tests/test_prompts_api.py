@@ -62,13 +62,66 @@ def test_a_tool_carries_its_description_and_its_schema(client) -> None:
     """
     doc = client.get("/prompts/director").json()
 
-    assert "提交本轮细纲" in doc["data"]["tools"]["submit_outline"]["body"]
+    assert "按路径展开世界状态" in doc["data"]["tools"]["state_query"]["body"]
+    assert "submit_outline" not in doc["data"]["tools"]
     # `ask_question` 的描述本身是一个 `choice`：控制权三档讲的正是「这个工具该
     # 多积极地调用」（S10②），三类不必为工具再加第四类。
     assert set(doc["data"]["tools"]["ask_question"]["options"]) == {"low", "medium", "high"}
 
-    schema = doc["params"]["submit_outline"]
-    assert "outline" in schema["properties"], "参数由 Python 生成，只读"
+    schema = doc["params"]["state_query"]
+    assert "paths" in schema["properties"], "参数由 Python 生成，只读"
+    assert "submit_outline" not in doc["params"]
+
+
+def test_history_read_description_has_both_sides_of_the_boundary(client) -> None:
+    """S56 的六个触发条件和三个反面都必须出现在可编辑的工具描述里。
+
+    这里钉的是规格要求的语义锚点，不钉整段措辞；用户仍可重写句式和组织方式。
+    """
+    body = client.get("/prompts/director").json()["data"]["tools"]["history_read"]["body"]
+
+    for trigger in (
+        "早前的原话",
+        "兑现或推翻伏笔",
+        "先后或因果",
+        "摘要与当前 state 对不上",
+        "用户直接指向某一轮",
+        "与早前内容矛盾",
+    ):
+        assert trigger in body
+
+    for non_trigger in ("查询当前状态", "承接上一轮语气", "剧情大概"):
+        assert non_trigger in body
+
+
+def test_director_keeps_the_user_action_and_makes_failure_visible(client) -> None:
+    """S106 的冲突解法必须留在可编辑提示词里：动作兑现，结果服从世界规则。"""
+    sections = client.get("/prompts/director").json()["data"]["sections"]
+    prompt = "\n".join(section.get("body", "") for section in sections)
+
+    for anchor in (
+        "用户输入是本轮必须兑现的剧情锚点",
+        "由世界规则决定的结果",
+        "失败也必须实际发生且可见",
+        "不得通过拖延、转移焦点、让角色无视",
+        "不要擅自改写用户意图",
+    ):
+        assert anchor in prompt
+
+
+def test_ask_answer_stays_inside_the_current_turn_constraints(client) -> None:
+    """ask 的回答只补当前 turn 的分岔，不能被误读成解除原输入的边界。"""
+    sections = client.get("/prompts/director").json()["data"]["sections"]
+    prompt = "\n".join(section.get("body", "") for section in sections)
+
+    for anchor in (
+        "仍是同一个 turn",
+        "回答只解决题干中的局部分岔",
+        "否定约束仍然全部有效",
+        "从前提、执行过程到本轮结果都必须能完整落在当前约束内",
+        "不等于授权其字面之外的后续推进",
+    ):
+        assert anchor in prompt
 
 
 def test_the_specials_and_the_rendering_strings_are_reachable(client) -> None:

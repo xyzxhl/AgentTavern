@@ -165,10 +165,6 @@ def test_config_yaml_covers_every_knob() -> None:
         ),
         "segment.max_runs": (LIMITS.segment.max_runs, summarize.MAX_SEGMENT_RUNS),
         "segment.min_runs": (LIMITS.segment.min_runs, summarize.MIN_SEGMENT_RUNS),
-        "sampling.expansion_min_ratio": (
-            LIMITS.sampling.expansion_min_ratio,
-            checks.EXPANSION_MIN_RATIO,
-        ),
         "sampling.state_value_max_chars": (
             LIMITS.sampling.state_value_max_chars,
             checks.STATE_VALUE_MAX_CHARS,
@@ -391,6 +387,7 @@ def test_migration_reduces_runtime_records_to_cross_turn_products(tmp_path: Path
             {
                 "id": "run_old",
                 "outline": "她改道去了阳台。",
+                "outline_summary": "旧细纲摘要。",
                 "prose": "风从阳台吹进来。",
                 "director_messages": [
                     {"role": "assistant", "content": "隐藏推理"},
@@ -422,3 +419,4 @@ def test_migration_reduces_runtime_records_to_cross_turn_products(tmp_path: Path
     raw_node = json.loads((old / "nodes" / "run_old.json").read_text(encoding="utf-8"))
     assert "modes" not in raw_session
     assert "director_messages" not in raw_node
+    assert "outline" not in raw_node and "outline_summary" not in raw_node

@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from enum import StrEnum
 from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -17,18 +16,10 @@ from ..llm import ToolSpec
 P = TypeVar("P", bound=BaseModel)
 
 
-class ToolOutcome(StrEnum):
-    CONTINUE = "continue"
-
-    TERMINATE = "terminate"
-    """仅 ``submit_outline``。它是特殊的：调用即结束 loop，并把细纲交付给 writer。"""
-
-
 class ToolResult(BaseModel):
     content: str
     """回给模型的内容。"""
 
-    outcome: ToolOutcome = ToolOutcome.CONTINUE
     is_error: bool = False
 
     label: str = ""

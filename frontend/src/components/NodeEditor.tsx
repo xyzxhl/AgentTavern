@@ -5,7 +5,7 @@ import type { Node, StateDelta } from "../protocol";
 import { useSession } from "../store";
 
 /**
- * 直接改一轮的产品记录（R20）。**输入 / 细纲 / 正文 / 状态摆在同一处**——它们
+ * 直接改一轮的产品记录（R20）。**输入 / 正文 / 状态摆在同一处**——它们
  * 都会进入后续上下文，分到几个地方去改只会让同一轮出现多个入口。
  *
  * 改完在 trace 里留一条 `USER_EDIT`（S47）：手改过的正文不能在回看时被当成
@@ -19,7 +19,6 @@ export function NodeEditor({ node }: { node: Node }): JSX.Element {
   const sessionId = useSession((s) => s.sessionId);
 
   const [userInput, setUserInput] = useState(node.user_input?.text ?? "");
-  const [outline, setOutline] = useState(node.outline ?? "");
   const [prose, setProse] = useState(node.prose ?? "");
 
   // 状态那部分是两个视图，不是两个概念（见 `StateEditor`）。
@@ -42,14 +41,12 @@ export function NodeEditor({ node }: { node: Node }): JSX.Element {
     const patch: {
       nodeId: string;
       user_input?: string;
-      outline?: string;
       prose?: string;
       state_delta?: StateDelta;
       state_result?: Record<string, unknown>;
     } = { nodeId: node.id ?? "" };
 
     if (userInput !== (node.user_input?.text ?? "")) patch.user_input = userInput;
-    if (outline !== (node.outline ?? "")) patch.outline = outline;
     if (prose !== (node.prose ?? "")) patch.prose = prose;
 
     // **只发当前这个视图。** 两个一起发服务端会拒（它不知道该听谁的），而那
@@ -76,14 +73,6 @@ export function NodeEditor({ node }: { node: Node }): JSX.Element {
           className="h-20 w-full resize-y rounded border border-line bg-ink-900 px-2 py-1.5 text-xs leading-relaxed text-fg outline-none focus:border-dim"
           value={userInput}
           onChange={(e) => setUserInput(e.target.value)}
-        />
-      </Field>
-
-      <Field label="细纲" hint="director 写的，writer 照着它写正文">
-        <textarea
-          className="h-32 w-full resize-y rounded border border-line bg-ink-900 px-2 py-1.5 text-xs leading-relaxed text-fg outline-none focus:border-dim"
-          value={outline}
-          onChange={(e) => setOutline(e.target.value)}
         />
       </Field>
 

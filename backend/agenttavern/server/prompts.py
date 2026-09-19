@@ -87,7 +87,7 @@ _FAKE_CONTEXTS: dict[str, Any] = {
     "recent": "（试装配）",
     "user_character": "（试装配）",
     "goal": "（试装配）",
-    "history_outline": "（试装配）",
+    "history_prose": "（试装配）",
     "content": "（试装配）",
 }
 

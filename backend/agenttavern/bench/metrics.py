@@ -47,10 +47,7 @@ class RecordingGateway(LLMGateway):
 class Metrics:
     rounds: int = 0
     nudges: int = 0
-    """模型只回文本、没调工具的次数。弱模型上这是主要失败模式。"""
-
-    e0_pushbacks: int = 0
-    """先调 submit_outline 被契约退回的次数。"""
+    """模型给了空最终输出、被催促直接交付细纲的次数。"""
 
     parse_errors: int = 0
     """工具参数不是合法 JSON 的次数。"""
@@ -79,7 +76,6 @@ class Metrics:
         return {
             "rounds": self.rounds,
             "nudges": self.nudges,
-            "e0_pushbacks": self.e0_pushbacks,
             "parse_errors": self.parse_errors,
             "tool_errors": self.tool_errors,
             "tool_calls": self.tool_calls,
@@ -96,7 +92,7 @@ def collect(events: list[TraceEvent]) -> Metrics:
     for e in events:
         if e.type.value == "model_response" and e.actor.value == "director":
             m.rounds += 1
-            if not e.payload.get("tool_calls"):
+            if not e.payload.get("tool_calls") and not e.payload.get("content_chars"):
                 m.nudges += 1
         if e.tokens_in:
             m.tokens_in += e.tokens_in
@@ -110,8 +106,6 @@ def collect(events: list[TraceEvent]) -> Metrics:
             m.tool_calls[tool] = m.tool_calls.get(tool, 0) + 1
             if e.payload.get("error"):
                 m.tool_errors += 1
-        if "缺少状态增量" in e.label:
-            m.e0_pushbacks += 1
         if "参数解析失败" in e.label or "参数错误" in e.label:
             m.parse_errors += 1
         if tool == "ask_question" and "answer" in e.payload:

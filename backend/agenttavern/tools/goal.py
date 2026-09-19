@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from ..models import Goal, GoalOutcome, GoalPlan, GoalRun, SubGoal
 from ..prompting import tool_description
+from ..storage import SessionRepository
 from .base import Tool, ToolResult, error
 
 
@@ -34,6 +35,11 @@ class GoalContext:
 
     goal: Goal
     run: GoalRun
+    repo: SessionRepository | None = None
+    """前情展开使用的当前 session。goal 状态工具本身仍不写存储。"""
+
+    parent_id: str | None = None
+    """当前活跃路径末端；``history_read`` 只沿这条路径展开。"""
 
     next_input: str | None = None
     """这一轮 `advance` 写下的操控剧情的输入，由编排层取走喂给下一轮。"""

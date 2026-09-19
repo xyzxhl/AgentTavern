@@ -1,16 +1,17 @@
 """director 的 tool loop 与上下文装配。"""
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
+import yaml
 from conftest import (
     ScriptedLLM,
     option,
     special_body,
     text,
     tool,
-    tools,
     using,
 )
 
@@ -82,8 +83,8 @@ def writer_text() -> str:
 
 
 async def test_happy_path(tmp_path: Path) -> None:
-    """**一轮就完**：查证之外，director 这一轮只剩提交细纲一件事（S7）。"""
-    llm = ScriptedLLM(tool("submit_outline", outline="她推开门，屋里坐着陈。"))
+    """**一轮就完**：无工具调用的非空最终文本就是细纲（S174）。"""
+    llm = ScriptedLLM(text("她推开门，屋里坐着陈。"))
     ctx, tracer, reg = make_ctx(tmp_path, llm)
 
     result = await run_director(ctx, reg, tracer, UserInput(text="我推开门"))
@@ -101,7 +102,7 @@ async def test_the_director_cannot_touch_state(tmp_path: Path) -> None:
     """
     llm = ScriptedLLM(
         tool("state_write", set={"地点": "不该生效"}),
-        tool("submit_outline", outline="她推开门。"),
+        text("她推开门。"),
     )
     ctx, tracer, reg = make_ctx(tmp_path, llm)
 
@@ -113,34 +114,28 @@ async def test_the_director_cannot_touch_state(tmp_path: Path) -> None:
     assert result.outline == "她推开门。"
 
 
-async def test_text_only_reply_is_pushed_back(tmp_path: Path) -> None:
-    """模型只回文本时不能当成产出——细纲必须经 submit_outline，否则 E0 就绕过去了。"""
-    llm = ScriptedLLM(
-        text("我觉得应该这样写……"),
-        tool("submit_outline", outline="她推开门。"),
-    )
+async def test_text_only_reply_is_the_outline(tmp_path: Path) -> None:
+    """非空文本就是细纲，不需要再复制进一个终止工具参数（S174）。"""
+    llm = ScriptedLLM(text("她推开门。"))
     ctx, tracer, reg = make_ctx(tmp_path, llm)
 
     result = await run_director(ctx, reg, tracer, UserInput(text="我推开门"))
     assert result.outline == "她推开门。"
+    assert len(llm.requests) == 1
+
+
+async def test_an_empty_final_reply_is_pushed_back(tmp_path: Path) -> None:
+    """空文本不构成细纲；loop 应明确催促一次再继续（S174）。"""
+    llm = ScriptedLLM(text(""), text("她推开门。"))
+    ctx, tracer, reg = make_ctx(tmp_path, llm)
+
+    result = await run_director(ctx, reg, tracer, UserInput(text="我推开门"))
+    assert result.outline == "她推开门。"
+    assert result.rounds == 2
 
     nudge = llm.messages_of(1)[-1]
     assert nudge["role"] == "user"
-    assert "submit_outline" in nudge["content"]
-
-
-async def test_calls_after_terminate_are_ignored(tmp_path: Path) -> None:
-    """submit_outline 是终止点，同一次响应里它之后的调用不该再执行。"""
-    llm = ScriptedLLM(
-        tools(
-            ("submit_outline", {"outline": "她推开门。"}),
-            ("state_write", {"set": {"地点": "不该生效"}}),
-        ),
-    )
-    ctx, tracer, reg = make_ctx(tmp_path, llm)
-
-    await run_director(ctx, reg, tracer, UserInput(text="我推开门"))
-    assert "地点" not in ctx.staged_delta.set
+    assert "直接输出" in nudge["content"]
 
 
 async def test_hard_limit_forces_close(tmp_path: Path) -> None:
@@ -158,7 +153,7 @@ async def test_hard_limit_forces_close(tmp_path: Path) -> None:
 async def test_recoverable_tool_error_does_not_kill_run(tmp_path: Path) -> None:
     llm = ScriptedLLM(
         tool("state_query", key="不存在的键"),
-        tool("submit_outline", outline="她推开门。"),
+        text("她推开门。"),
     )
     ctx, tracer, reg = make_ctx(tmp_path, llm)
 
@@ -170,7 +165,7 @@ async def test_trace_carries_readable_labels(tmp_path: Path) -> None:
     """S111：trace 必须带人类可读语义标签，UI 才渲染得出"确认了她现在在哪"。"""
     llm = ScriptedLLM(
         tool("state_query", paths=[["地点"]]),
-        tool("submit_outline", outline="她推开门。"),
+        text("她推开门。"),
     )
     ctx, tracer, reg = make_ctx(tmp_path, llm)
     # 状态得由**前一轮**带过来——director 自己写不了了（S7）。
@@ -230,6 +225,28 @@ def test_writer_never_sees_state_or_history(tmp_path: Path) -> None:
         # **装配器不再包标签**（R31），所以钉的是那一节的头一句——
         # 仍然是「这一段在不在」，不是它的措辞。
         assert "# 人物思绪描写" in prompt
+
+
+def test_repetition_guards_reach_the_responsible_agents() -> None:
+    """S178：director 防剧情重复，writer 防把用于衔接的正文上文重新写一遍。"""
+    director = prompt_for()
+    writer = joined(writer_prompt(upstream="上一轮正文").messages)
+
+    assert "包括开场白" in director
+    assert "本轮细纲必须从最后一份正文的最后一句之后开始" in director
+    assert "转述本轮顶层用户输入" in director
+    assert "包括开场白" in writer
+    assert "即使细纲误收了上文事件，也不要再写一次" in writer
+
+
+def test_in_turn_questions_require_an_unavoidable_current_choice() -> None:
+    """提问不能把普通的未来可能性变成越过本轮边界的授权。"""
+    director = prompt_for()
+
+    assert "不能留到下一轮" in director
+    assert "用户已经给出可执行动作时" in director
+    assert "从前提、执行过程到本轮结果" in director
+    assert "为以后越界做准备" in director
 
 
 def test_authority_maps_to_ask_question_eagerness() -> None:
@@ -381,19 +398,13 @@ def test_always_worldinfo_is_injected_on_demand_is_indexed() -> None:
     assert "worldinfo_read" in prompt
 
 
-def test_the_flow_steps_are_gone_and_the_tools_carry_them() -> None:
-    """**流程那四条已经删掉**（S7）：每一条都有工具描述覆盖它，且写得更细。
-
-    这里钉的是"提示词里不再有第二份流程说明"——两份必然对不上，而工具描述
-    才是模型照着填参数的那一份。
-    """
+def test_the_flow_does_not_reference_a_terminal_tool() -> None:
+    """流程句只描述收口方式，不虚构一个不存在的终止工具（S174）。"""
     prompt = prompt_for()
 
-    for gone in ("用工具查", "想清楚本轮发生什么", "调用 `submit_outline` 提交"):
-        assert gone not in prompt
-
-    submit = next(t for t in build_tools() if t.name == "submit_outline")
-    assert "调用即结束这一轮" in (submit.description or "")
+    assert "submit_outline" not in prompt
+    assert "直接输出本轮细纲" in prompt
+    assert "submit_outline" not in {t.name for t in build_tools()}
 
 
 def test_empty_state_renders_cleanly() -> None:
@@ -422,6 +433,69 @@ def test_density_reaches_both_sides_in_opposite_directions() -> None:
             assert w not in prompt_for()
 
 
+def test_the_three_density_choices_are_independent_and_service_wide() -> None:
+    """S81/S83：三种密度分别住在三个 agent 的 YAML，不落进 session。"""
+    picks = {
+        "director": ("event_density", "sparse"),
+        "writer": ("density", "rich"),
+        "goal_manager": ("pace", "normal"),
+    }
+    with using(choices={agent: {name: value} for agent, (name, value) in picks.items()}):
+        for agent, (name, value) in picks.items():
+            groups = {
+                str(item.get("name")): item
+                for item in assembler.load(agent).get("sections") or []
+                if isinstance(item, dict) and item.get("type") == "choice"
+            }
+            assert groups[name]["selected"] == value
+
+    assert not ({"event_density", "density", "pace"} & set(Session.model_fields))
+
+
+def test_the_six_control_choices_live_in_their_agent_files() -> None:
+    """S81：六项控制维度各有独立地址，不靠 session 或代码开关补齐。"""
+    expected = {
+        "director": {"narration_and_advancement", "speaking_rule", "event_density"},
+        "writer": {"density"},
+        "goal_manager": {"pace"},
+    }
+    for agent, names in expected.items():
+        actual = {
+            str(item.get("name"))
+            for item in assembler.load(agent).get("sections") or []
+            if isinstance(item, dict) and item.get("type") == "choice"
+        }
+        assert names <= actual
+    authority = assembler.load("director")["tools"]["ask_question"]
+    assert authority["selected"] in authority["options"]
+    controls = set().union(*expected.values(), {"authority"})
+    assert not (controls & set(Session.model_fields))
+
+
+def test_writer_and_state_history_windows_are_independent_yaml_values(tmp_path: Path) -> None:
+    """S119：正文上文与状态示范是两条 context 的参数，不能互相绑死。"""
+    for name in assembler.PROMPT_FILES:
+        shutil.copy2(assembler.path_of(name), tmp_path / f"{name}.yaml")
+
+    def set_runs(name: str, source: str, runs: int) -> None:
+        path = tmp_path / f"{name}.yaml"
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        item = next(section for section in data["sections"] if section.get("source") == source)
+        item["runs"] = runs
+        path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+    set_runs("writer", "upstream", 1)
+    set_runs("state_manager", "recent", 7)
+    assembler.use_dir(tmp_path)
+    try:
+        assert assembler.param("writer", "upstream", "runs", 3) == 1
+        assert assembler.param("state_manager", "recent", "runs", 3) == 7
+    finally:
+        assembler.use_dir(None)
+
+    assert not ({"upstream_runs", "state_recent_runs"} & set(Session.model_fields))
+
+
 def test_the_writer_never_gets_a_speaking_rule_of_its_own() -> None:
     """writer 侧不再单给抢话规则——**由输入契约统一盖住**。
 
@@ -438,22 +512,17 @@ def test_the_writer_never_gets_a_speaking_rule_of_its_own() -> None:
 
 
 async def test_the_nudge_only_asks_for_the_one_remaining_step(tmp_path: Path) -> None:
-    """催促词只提**还差的那一步**——现在就只剩一步了。
-
-    它以前无条件写着「先 state_write，再 submit_outline」。模型照做，又写一次
-    `state_write`，然后又回到纯文本，于是再被推一次——实测 `pulp` 第 4 轮这样
-    空转了 12 个来回，**69 万 input token，占整场的 84%**，靠硬上限才收住。
-    S7 把状态维护整个搬走之后，那个分支自己没有了。
-    """
+    """催促词只要求直接输出细纲，不引入不存在的工具或状态写入。"""
     llm = ScriptedLLM(
-        text("我先想想。"),  # 空手，触发催促
-        tool("submit_outline", outline="他站住了。"),
+        text(""),  # 空响应，触发催促
+        text("他站住了。"),
     )
     ctx, tracer, registry = make_ctx(tmp_path, llm)
     await run_director(ctx, registry, tracer, UserInput(text="我推开门"))
 
     nudge = llm.messages_of(1)[-1]["content"]
-    assert "submit_outline" in nudge
+    assert "直接输出" in nudge
+    assert "submit_outline" not in nudge
     assert "state_write" not in nudge, "director 根本没有这个工具，提它只会把模型带沟里"
 
 
@@ -845,10 +914,8 @@ def test_the_tool_list_is_not_a_message() -> None:
     """
     prompt = prompt_for()
     for name in ToolRegistry.for_session().names:
-        assert name not in prompt or name == "submit_outline", f"{name} 不该出现在消息里"
+        assert name not in prompt, f"{name} 不该出现在消息里"
 
-    # `submit_outline` 是例外：它出现在「流程指导」那一句里，讲的是**什么时候调**，
-    # 不是在列清单。
     assert "可用的工具" not in prompt
 
 

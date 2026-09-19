@@ -27,7 +27,7 @@ def _turn(outline: str, prose: str) -> list[dict]:
     """一轮的两次模型调用。状态那一次不在这里——它跑在 writer 之后（S7），
     由 `ScriptedLLM(state=...)` 应答。
     """
-    return [tool("submit_outline", outline=outline), text(prose)]
+    return [text(outline), text(prose)]
 
 
 def _state(key: str, value: str) -> dict:
@@ -43,10 +43,10 @@ def _setup(tmp_path: Path, llm: ScriptedLLM):
 
 
 async def test_a_sibling_branch_leaks_into_neither_input_nor_history(tmp_path: Path) -> None:
-    """B 支的 director 上下文里不能有 A 支的**用户输入**，也不能有 A 支的**细纲**。
+    """B 支的 director 上下文里不能有 A 支的用户输入或正文。
 
     两样分开断言，因为它们走的是不同的通道：用户输入进的是每轮的 user 消息，
-    细纲进的是 `submit_outline` 的调用参数。**一个坏了另一个可能还是好的。**
+    正文进的是跨轮产品历史。**一个坏了另一个可能还是好的。**
     """
     trunk_llm = ScriptedLLM(*_turn("主干：她推开门。", "主干正文"), state=_state("地点", "钟表铺"))
     repo, session, gw, reg = _setup(tmp_path, trunk_llm)
@@ -77,11 +77,11 @@ async def test_a_sibling_branch_leaks_into_neither_input_nor_history(tmp_path: P
     assert branch_b.node.parent_id == trunk.node.id
 
     context = str(b_llm.messages_of(0))
-    assert "主干：她推开门。" in context, "主干必须还在——隔离过头和污染同样是错"
+    assert "主干正文" in context, "主干正文必须还在——隔离过头和污染同样是错"
     assert "我推开门" in context
     assert "有人送来一只铁皮盒" not in context, "A 支的用户输入串过来了"
-    assert "铁皮盒" not in context, "A 支的细纲串过来了"
-    assert "A 支正文" not in context, "director 本来就不该看见任何正文（S5）"
+    assert "铁皮盒" not in context, "A 支的状态或临时细纲串过来了"
+    assert "A 支正文" not in context, "A 支正文不在当前路径上"
 
 
 async def test_a_sibling_branch_leaks_no_tool_traffic(tmp_path: Path) -> None:
@@ -96,7 +96,7 @@ async def test_a_sibling_branch_leaks_no_tool_traffic(tmp_path: Path) -> None:
 
     a_llm = ScriptedLLM(
         tools(("state_query", {"keys": ["地点"]}), ("state_write", {"set": {"A物": "铁皮盒"}})),
-        tool("submit_outline", outline="A 支的细纲。"),
+        text("A 支的细纲。"),
         text("A 支正文"),
     )
     await execute_run(
@@ -206,7 +206,7 @@ async def test_an_interrupted_deduction_is_suspended_not_discarded(tmp_path: Pat
     assert any("state_query" in str(m.tool_calls) for m in draft.messages if m.tool_calls)
 
     resume_llm = ScriptedLLM(
-        tool("submit_outline", outline="她站在门口。"),
+        text("她站在门口。"),
         text("门口的光把她的影子拉长。"),
         state=_state("门", "开着"),
     )
@@ -329,7 +329,7 @@ async def test_a_half_written_turn_becomes_a_draft_not_a_node(tmp_path: Path) ->
     半截正文不是产出而是一个失败的阶段：下一轮会接着那半句往下写，而用户按
     停止恰恰是因为不想要它。
     """
-    llm = CancelWriter(tool("submit_outline", outline="她话说到一半，停住了。"))
+    llm = CancelWriter(text("她话说到一半，停住了。"))
     repo, session, gw, reg = _setup(tmp_path, llm)
 
     with pytest.raises(asyncio.CancelledError):
@@ -344,7 +344,7 @@ async def test_a_half_written_turn_becomes_a_draft_not_a_node(tmp_path: Path) ->
     following = await execute_run(repo, repo.load_session(), next_llm.gateway(), reg)
 
     assert len(repo.all_nodes()) == 1, "一次打断 + 一次续跑 = 一个节点"
-    assert following.node.outline == "她话说到一半，停住了。"
+    assert following.outline == "她话说到一半，停住了。"
     assert following.node.prose == "她把话说完了。"
     assert repo.state_at(following.node.id).values["地点"] == "里屋"
     assert repo.load_draft() is None
@@ -389,7 +389,7 @@ async def test_guidance_lands_between_two_operations_not_after_the_turn(
     llm = _Watched(
         tool("state_query", keys=["地点"]),
         tool("state_write", set={"地点": "店里"}),
-        tool("submit_outline", outline="她留在店里。"),
+        text("她留在店里。"),
         text("她没有动。"),
         before=push_after_first_tool,
     )
@@ -402,7 +402,7 @@ async def test_guidance_lands_between_two_operations_not_after_the_turn(
     context = str(llm.messages_of(2))
     assert "别去码头，让她留在店里" in context, "引导必须在这一轮之内进入对话"
     assert len(repo.all_nodes()) == 1, "引导不开新的一轮"
-    assert outcome.node.outline == "她留在店里。"
+    assert outcome.outline == "她留在店里。"
     assert repo.load_draft() is None
 
 
@@ -419,7 +419,7 @@ async def test_an_interrupt_kills_only_the_operation_in_flight(tmp_path: Path) -
     llm = ScriptedLLM(
         # 第一次操作得是**不终止的**，否则 loop 走不到边界，也就没地方接话。
         tool("state_query", keys=["地点"]),
-        tool("submit_outline", outline="她把话咽了回去。"),
+        text("她把话咽了回去。"),
         text("她没有问出口。"),
         state=dict(set={"地点": "店里"}),
     )
@@ -429,7 +429,7 @@ async def test_an_interrupt_kills_only_the_operation_in_flight(tmp_path: Path) -
         repo, session, gw, reg, user_input=UserInput(text="我推开门"), inbox=inbox
     )
 
-    assert outcome.node.outline == "她把话咽了回去。"
+    assert outcome.outline == "她把话咽了回去。"
     assert len(repo.all_nodes()) == 1
     # 插在**第一次操作之后**，所以出现在第二次模型调用的上下文里，而不是第一次。
     assert "等等，先别问他" not in str(llm.messages_of(0))
@@ -474,7 +474,7 @@ async def test_an_aborted_tool_call_still_gets_a_result(tmp_path: Path) -> None:
 
     llm = ScriptedLLM(
         tools(("state_query", {"keys": ["地点"]}), ("state_write", {"set": {"地点": "店里"}})),
-        tool("submit_outline", outline="她换了个方向。"),
+        text("她换了个方向。"),
         text("她转身。"),
         state=dict(set={"地点": "店里"}),
     )
@@ -495,4 +495,4 @@ async def test_an_aborted_tool_call_still_gets_a_result(tmp_path: Path) -> None:
     answered = [m["tool_call_id"] for m in sent if m.get("role") == "tool"]
     assert sorted(issued) == sorted(answered)
     assert any("打断了这次调用" in (m.get("content") or "") for m in sent)
-    assert outcome.node.outline == "她换了个方向。"
+    assert outcome.outline == "她换了个方向。"

@@ -9,21 +9,21 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from agenttavern.config import Settings
-from agenttavern.models import Goal, Session, SessionMeta, Worldbook
+from agenttavern.models import Goal, RunDraft, Session, SessionMeta, UserInput, Worldbook
 from agenttavern.server import create_app
-from agenttavern.storage import SessionRepository
+from agenttavern.storage import SessionRepository, Store
 
 
 def one_run(
     place: str = "客厅", outline: str = "她推开门，屋里坐着陈。", prose: str = "门轴响了。"
 ):
-    """一个完整 run 需要的两次模型调用：submit_outline → 正文。
+    """一个完整 run 需要的两次模型调用：director 最终文本 → 正文。
 
     状态那一次不在这里——它跑在 writer 之后，由 `ScriptedLLM(state=...)` 应答
     （S7）。``place`` 因此返回的是那份增量，交给调用方传进去。
     """
     return [
-        tool("submit_outline", outline=outline),
+        text(outline),
         text(prose),
     ]
 
@@ -288,6 +288,35 @@ def test_a_worldbook_can_open_several_sessions(client_for) -> None:
         assert book_of(client, sid) == book
 
 
+def test_sessions_sharing_a_worldbook_share_the_player_character(client_for) -> None:
+    """S66/S120：玩家角色属于 worldbook，创建过的 session 也不持有覆盖值。"""
+    llm = ScriptedLLM(
+        *one_run(outline="甲继续前进。", prose="甲走进雨里。"),
+        *one_run(outline="甲继续前进。", prose="甲走进雨里。"),
+        state=[one_state(), one_state()],
+    )
+    client = client_for(llm)
+    book = client.post("/worldbooks", json={"name": "旧城区"}).json()["id"]
+    sessions = [client.post("/sessions", json={"worldbook_id": book}).json() for _ in range(2)]
+
+    client.put(
+        f"/worldbooks/{book}/entries",
+        json={"name": "甲", "kind": "character", "content": "住在旧城区。", "is_player": True},
+    )
+
+    for session in sessions:
+        assert "user_character" not in session
+        with client.websocket_connect(f"/sessions/{session['id']}/ws") as ws:
+            ws.receive_text()
+            ws.send_text(json.dumps({"type": "submit", "text": "继续"}))
+            collect(ws, "run_finished")
+
+    prompts = [json.dumps(request["messages"], ensure_ascii=False) for request in llm.requests]
+    player_prompts = [prompt for prompt in prompts if "用户扮演的角色" in prompt]
+    assert len(player_prompts) >= 4
+    assert all("甲" in prompt for prompt in player_prompts)
+
+
 def test_low_level_session_creation_without_a_worldbook_keeps_a_valid_reference(client_for) -> None:
     """仓储/API 的空值兜底不暴露给 UI，但不能落下悬空引用。"""
     client = client_for(happy_llm())
@@ -516,7 +545,7 @@ def test_ask_question_suspends_until_answered(client_for) -> None:
     """不设超时（S24）——等待期间逻辑上什么都没发生，恢复即从中断点续。"""
     llm = ScriptedLLM(
         tool("ask_question", question="她怎么反应？", options=["否认", "沉默", "反问"]),
-        tool("submit_outline", outline="她沉默了。"),
+        text("她沉默了。"),
         text("她没有说话。"),
     )
     client = client_for(llm)
@@ -550,7 +579,7 @@ def test_an_answer_outside_the_options_is_passed_through(client_for) -> None:
     """
     llm = ScriptedLLM(
         tool("ask_question", question="她怎么反应？", options=["否认", "沉默", "反问"]),
-        tool("submit_outline", outline="她把杯子推了过去。"),
+        text("她把杯子推了过去。"),
         text("杯子在桌面上滑了半尺。"),
     )
     client = client_for(llm)
@@ -612,13 +641,17 @@ def test_queued_inputs_run_one_at_a_time(client_for) -> None:
         ws.send_text(json.dumps({"type": "submit", "text": "我推开门"}))
         ws.send_text(json.dumps({"type": "submit", "text": "我环顾四周"}))
 
-        first = collect(ws, "run_finished")[-1]
-        second = collect(ws, "run_finished")[-1]
+        first_messages = collect(ws, "run_finished")
+        second_messages = collect(ws, "run_finished")
+        first = first_messages[-1]
+        second = second_messages[-1]
 
     assert first["node"]["id"] != second["node"]["id"]
     assert second["node"]["parent_id"] == first["node"]["id"]
     assert first["node"]["user_input"]["text"] == "我推开门"
     assert second["node"]["user_input"]["text"] == "我环顾四周"
+    assert next(m for m in first_messages if m["type"] == "run_started")["input"] == "我推开门"
+    assert next(m for m in second_messages if m["type"] == "run_started")["input"] == "我环顾四周"
 
 
 def test_queue_status_is_visible(client_for) -> None:
@@ -941,7 +974,7 @@ def test_editing_an_older_node_is_rejected(client_for) -> None:
     assert "天气" not in first_node["state_delta"]["set"]
 
 
-def test_editing_outline_invalidates_cached_summary(client_for) -> None:
+def test_editing_prose_invalidates_cached_summary(client_for, tmp_path: Path) -> None:
     client = client_for(happy_llm())
     session_id = client.post("/sessions").json()["id"]
 
@@ -950,10 +983,15 @@ def test_editing_outline_invalidates_cached_summary(client_for) -> None:
         ws.send_text(json.dumps({"type": "submit", "text": "我推开门"}))
         node_id = collect(ws, "run_finished")[-1]["node"]["id"]
 
+    repo = SessionRepository(tmp_path, session_id)
+    node = repo.load_node(node_id)
+    node.prose_summary = "旧摘要"
+    repo.save_node(node)
+
     patched = client.patch(
-        f"/sessions/{session_id}/nodes/{node_id}", json={"outline": "改过的细纲"}
+        f"/sessions/{session_id}/nodes/{node_id}", json={"prose": "改过的正文"}
     ).json()
-    assert patched["outline_summary"] is None
+    assert patched["prose_summary"] is None
 
 
 def test_siblings_endpoint(client_for) -> None:
@@ -1181,8 +1219,7 @@ def test_a_goal_set_mid_story_also_plans_before_it_runs(client_for) -> None:
     """**第几轮设的不影响这条**（S100）：先规划、写出输入，再交给 director。
 
     空会话和跑了几轮的会话唯一的差别在**它读到什么**：已经写出来的剧情进静态
-    前缀、**给细纲**（"故事到这儿了"，够用而且便宜），goal 期间的每一轮才逐条
-    追加、给正文（S93）。所以设目标那一刻路径末端就是切点，它之前一条都不算
+    前缀；目标前后都只给正文（S93）。所以设目标那一刻路径末端就是切点，它之前一条都不算
     goal 期间的轮次。
     """
     llm = ScriptedLLM(
@@ -1206,8 +1243,8 @@ def test_a_goal_set_mid_story_also_plans_before_it_runs(client_for) -> None:
 
     planning = [r for r in llm.requests if GOAL_MARK in r["messages"][0]["content"]][0]
     body = "\n".join(m.get("content") or "" for m in planning["messages"])
-    assert "用户自己写的那一轮。" in body, "goal 之前的剧情要给它，否则它凭空拆阶段"
-    assert "正文一。" not in body, "但给的是细纲——那一段只回答「故事到这儿了」（S93）"
+    assert "正文一。" in body, "goal 之前也必须以最终正文为准"
+    assert "用户自己写的那一轮。" not in body, "临时细纲不能进入 goal 上下文"
     assert "第 1 轮" not in body, "也不算 goal 期间的轮次：它进前缀，不是逐条追加的记录"
 
 
@@ -1338,7 +1375,7 @@ def test_a_goal_set_while_a_run_is_in_flight_survives_that_run(client_for) -> No
     """
     llm = ScriptedLLM(
         tool("ask_question", question="往哪边走？", options=["左", "右", "回头"]),
-        tool("submit_outline", outline="她推开门。"),
+        text("她推开门。"),
         text("门轴响了。"),
         *opening("接着走。"),
         *one_run(outline="第二轮。", prose="正文二。"),
@@ -1352,8 +1389,9 @@ def test_a_goal_set_while_a_run_is_in_flight_survives_that_run(client_for) -> No
         ws.send_text(json.dumps({"type": "submit", "text": "我推开门"}))
         question = collect(ws, "question")[-1]
 
-        # run 正挂在问句上——这一刻设目标。
-        ws.send_text(json.dumps({"type": "set_goal", "description": "写到摊牌"}))
+        # run 正挂在问句上——这一刻设目标。预算只给目标自己的一轮，避免测试在
+        # 完成断言前继续自动生成；当前这轮不计入预算（S101）。
+        ws.send_text(json.dumps({"type": "set_goal", "description": "写到摊牌", "max_runs": 1}))
         ws.send_text(
             json.dumps({"type": "answer", "question_id": question["question_id"], "selected": "左"})
         )
@@ -1375,12 +1413,12 @@ def test_a_goal_set_while_a_run_is_in_flight_survives_that_run(client_for) -> No
     assert second["user_input"]["source"] == "simulated"
 
     # **那一轮不算目标的**（S101）：它早就在跑了，判它、把它的开销记到目标账上，
-    # 都是在为一件目标没参与的事结账。所以它进静态前缀、给细纲，和它之前的
+    # 都是在为一件目标没参与的事结账。所以它进静态前缀、给正文，和它之前的
     # 剧情一样——不是逐条追加的「第 N 轮」记录，也不进 `spent_runs`。
     asked = [r for r in llm.requests if GOAL_MARK in r["messages"][0]["content"]]
     first_words = "\n".join(m.get("content") or "" for m in asked[0]["messages"])
-    assert "她推开门。" in first_words, "它仍然要知道故事到哪儿了"
-    assert "门轴响了。" not in first_words, "但给的是细纲，不是正文——那一轮不是它的"
+    assert "门轴响了。" in first_words, "它仍然以最终正文知道故事到哪儿了"
+    assert "她推开门。" not in first_words, "临时细纲不能进入 goal 上下文"
     assert "第 1 轮" not in first_words
     run = client.get(f"/sessions/{session_id}").json()["session"]["goal_run"]
     assert run["spent_runs"] == 1, "只有它自己开出来的那一轮算数"
@@ -1731,7 +1769,7 @@ def test_resuming_hands_over_the_turns_the_user_wrote_meanwhile(client_for) -> N
     assert third["user_input"]["source"] == "simulated"
 
     judged = "\n".join(m.get("content") or "" for m in asked[-1]["messages"])
-    assert judged.count("我写的输入") == 1, "第三轮是它自己写的，来源要标对"
+    assert "接着说" not in judged, "模拟输入已经落实成正文，不该跨轮回灌"
     assert "正文三。" in judged
 
     # `failed` 也是终态：和 `done` 一样交回控制权、一样把 goal 清掉。
@@ -1779,6 +1817,7 @@ def test_a_run_announces_that_it_started(client_for) -> None:
     started = [m for m in messages if m["type"] == "run_started"]
     assert len(started) == 1, "一轮只该宣告一次"
     assert started[0]["run_id"] == messages[-1]["node"]["id"], "宣告的必须是这一轮"
+    assert started[0]["input"] == "我推开门", "执行态输入必须来自已经出队的 item"
     # 顺序也要对：先说开始，再有过程。
     assert [m["type"] for m in messages].index("run_started") < [m["type"] for m in messages].index(
         "trace"
@@ -1794,7 +1833,7 @@ def test_prose_arrives_in_pieces_while_it_is_written(client_for) -> None:
     这是流式最值得的地方：一次调用、纯文本、而且是用户真正在等的东西。
     """
     llm = ScriptedLLM(
-        tool("submit_outline", outline="她推开门。"),
+        text("她推开门。"),
         text("门轴响了。"),
         state=one_state(),
     )
@@ -1821,7 +1860,7 @@ def test_the_final_node_is_still_the_authority(client_for) -> None:
     这条钉的是：不管流式推了什么，`run_finished` 带回来的仍然是完整正文。
     """
     llm = ScriptedLLM(
-        tool("submit_outline", outline="她推开门。"),
+        text("她推开门。"),
         text("门轴响了。"),
         state=one_state(),
     )
@@ -1839,11 +1878,12 @@ def test_the_final_node_is_still_the_authority(client_for) -> None:
 def test_tool_calls_do_not_stream(client_for) -> None:
     """**工具调用不推分片**（S118）。
 
-    它们的 `arguments` 是逐字拼出来的 JSON，半截 JSON 对界面毫无用处，只会逼
-    前端去猜。等完整了随 trace 一次性给——而细纲正是走 `submit_outline` 的参数。
+    工具 `arguments` 是逐字拼出来的 JSON，半截 JSON 对界面毫无用处，只会逼
+    前端去猜。等完整了随 trace 一次性给；director 的最终文本则可以正常流出。
     """
     llm = ScriptedLLM(
-        tool("submit_outline", outline="她推开门。"),
+        tool("state_write", set={"秘密": "工具参数不该流"}),
+        text("她推开门。"),
         text("门轴响了。"),
         state=one_state(),
     )
@@ -1856,8 +1896,9 @@ def test_tool_calls_do_not_stream(client_for) -> None:
         messages = collect(ws, "run_finished")
 
     everything = "".join(m["text"] for m in messages if m["type"] == "delta")
-    assert "她推开门。" not in everything, "细纲走的是工具参数，不该出现在分片里"
-    assert messages[-1]["node"]["outline"] == "她推开门。"
+    assert "工具参数不该流" not in everything
+    assert "她推开门。" in everything, "最终细纲是文本，应该按 director 来源流出"
+    assert "outline" not in messages[-1]["node"], "细纲不进入完成节点"
 
 
 def test_deltas_say_who_wrote_them(client_for) -> None:
@@ -1869,9 +1910,7 @@ def test_deltas_say_who_wrote_them(client_for) -> None:
     攒出 1084 字，而节点正文只有 782 字。
     """
     llm = ScriptedLLM(
-        # director 先空手回一句（会被催），再提交细纲——那句话是它的自言自语。
-        text("我先想想。"),
-        tool("submit_outline", outline="她推开门。"),
+        text("她推开门。"),
         text("门轴响了。"),
         state=one_state(),
     )
@@ -1890,7 +1929,7 @@ def test_deltas_say_who_wrote_them(client_for) -> None:
             by_actor[m["actor"]] = by_actor.get(m["actor"], "") + m["text"]
 
     assert by_actor["writer"] == "门轴响了。"
-    assert by_actor["director"] == "我先想想。"
+    assert by_actor["director"] == "她推开门。"
     # 全部 content 拼起来**不等于**正文——这正是必须按来源分开的理由。
     assert "".join(v for v in by_actor.values()) != messages[-1]["node"]["prose"]
 
@@ -1950,7 +1989,7 @@ def test_streaming_is_per_agent(client_for) -> None:
     from agenttavern.prompting import AGENTS
 
     llm = ScriptedLLM(
-        tool("submit_outline", outline="她推开门。"),
+        text("她推开门。"),
         text("门轴响了。"),
         state=one_state(),
     )
@@ -1984,7 +2023,7 @@ def test_developer_mode_records_every_agents_real_exchange(client_for) -> None:
     等于完全不可见。
     """
     llm = ScriptedLLM(
-        tool("submit_outline", outline="她推开门。"),
+        text("她推开门。"),
         text("门轴响了。"),
         state=one_state(),
     )
@@ -2011,15 +2050,16 @@ def test_developer_mode_records_every_agents_real_exchange(client_for) -> None:
         "orchestrator",
     }
 
-    # 原文要能一路读到底：role、内容、以及模型返回的工具调用。
+    # 原文要能一路读到底：role、内容、以及模型返回的最终文本。
     writer = next(e for e in exchanges if e["actor"] == "writer")
     assert writer["payload"]["messages"][0]["role"] == "system"
     assert any("她推开门。" in (m.get("content") or "") for m in writer["payload"]["messages"])
     assert writer["payload"]["response"]["content"] == "门轴响了。"
 
     director = next(e for e in exchanges if e["actor"] == "director")
-    assert director["payload"]["response"]["tool_calls"][0]["name"] == "submit_outline"
-    assert "submit_outline" in director["payload"]["tools"]
+    assert director["payload"]["response"]["content"] == "她推开门。"
+    assert not director["payload"]["response"].get("tool_calls")
+    assert "submit_outline" not in director["payload"]["tools"]
 
 
 def test_without_developer_mode_the_originals_are_not_recorded(client_for) -> None:
@@ -2028,7 +2068,7 @@ def test_without_developer_mode_the_originals_are_not_recorded(client_for) -> No
     投影照旧——`trace` 事件本身不受影响，少的只是原文那一类。
     """
     llm = ScriptedLLM(
-        tool("submit_outline", outline="她推开门。"),
+        text("她推开门。"),
         text("门轴响了。"),
         state=one_state(),
     )
@@ -2052,7 +2092,7 @@ def test_a_past_run_can_be_read_back_from_disk(client_for) -> None:
     查问题总是事后，记了不给读回来的路等于没记。
     """
     llm = ScriptedLLM(
-        tool("submit_outline", outline="她推开门。"),
+        text("她推开门。"),
         text("门轴响了。"),
         state=one_state(),
     )
@@ -2137,6 +2177,23 @@ def test_stop_without_a_run_errors(client_for) -> None:
         ws.receive_text()
         ws.send_text(json.dumps({"type": "stop"}))
         assert collect(ws, "error")[-1]["message"]
+
+
+def test_reconnecting_announces_an_existing_resumable_draft(tmp_path: Path) -> None:
+    """可恢复性来自服务端草稿，不只来自当前页面曾收到的 stop 消息。"""
+    repo = Store(tmp_path).create_session(Session())
+    repo.save_draft(
+        RunDraft(
+            user_input=UserInput(text="我推开门"),
+            outline="她正准备推门。",
+        )
+    )
+    client = TestClient(create_app(Settings(data_dir=tmp_path), gateway=happy_llm().gateway()))
+
+    with client.websocket_connect(f"/sessions/{repo.load_session().id}/ws") as ws:
+        assert json.loads(ws.receive_text())["type"] == "state"
+        interrupted = json.loads(ws.receive_text())
+        assert interrupted == {"type": "run_interrupted", "resumable": True}
 
 
 def test_unknown_session_websocket_is_rejected(client_for) -> None:
