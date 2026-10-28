@@ -147,22 +147,17 @@ def test_config_yaml_covers_every_knob() -> None:
     漏掉一个的症状是改了配置没反应，而那是最难查的一类。
     """
     import agenttavern
-    from agenttavern.agents import director, goal_manager, replay, state_manager, summarize
+    from agenttavern.agents import director, goal_manager, state_manager, summarize
     from agenttavern.config import LIMITS, Limits, load_limits
     from agenttavern.corpus import build, lookup, sources
     from agenttavern.models import Goal
     from agenttavern.orchestration import checks
-    from agenttavern.prompting import prompts, state_recent_runs, upstream_runs
+    from agenttavern.prompting import state_recent_runs, upstream_runs
 
     wired = {
         "director.max_rounds": (LIMITS.director.max_rounds, director.MAX_ROUNDS),
         "director.soft_rounds": (LIMITS.director.soft_rounds, director.SOFT_ROUNDS),
         "state_manager.max_rounds": (LIMITS.state_manager.max_rounds, state_manager.MAX_ROUNDS),
-        "context.budget_chars": (LIMITS.context.budget_chars, replay.CONTEXT_BUDGET_CHARS),
-        "context.state_inline_limit": (
-            LIMITS.context.state_inline_limit,
-            prompts.STATE_INLINE_LIMIT,
-        ),
         "segment.max_runs": (LIMITS.segment.max_runs, summarize.MAX_SEGMENT_RUNS),
         "segment.min_runs": (LIMITS.segment.min_runs, summarize.MIN_SEGMENT_RUNS),
         "sampling.state_value_max_chars": (

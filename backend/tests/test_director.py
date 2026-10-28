@@ -239,6 +239,45 @@ def test_repetition_guards_reach_the_responsible_agents() -> None:
     assert "即使细纲误收了上文事件，也不要再写一次" in writer
 
 
+def test_writer_receives_the_outline_endpoint_guard() -> None:
+    """S181：writer 的展开自由不能变成继续规划下一幕。"""
+    writer = joined(writer_prompt().messages)
+
+    assert "细纲也规定了本轮正文的终点" in writer
+    assert "完成其中明确列出的场景、动作、信息与结果后立即结束" in writer
+
+
+def test_writer_receives_the_timeline_guard() -> None:
+    """S183：相对时间的自洽由 writer 在渲染前守住。"""
+    writer = joined(writer_prompt().messages)
+
+    assert "# 时间连续性" in writer
+    assert "当天／次日／明日" in writer
+    assert "正文的开场时刻与后续推进都必须照写" in writer
+    assert "相邻时段、模糊说法或另一套日期" in writer
+
+
+def test_writer_receives_the_fixed_count_guard() -> None:
+    """S89：列举的成员与总数不能在同一篇正文里互相打架。"""
+    writer = joined(writer_prompt().messages)
+
+    assert "当前细纲是本轮正文的施工蓝图" in writer
+    assert "不要复用旧措辞" in writer
+    assert "细纲提供的精确数字必须保留" in writer
+    assert "数量、组成或名单" in writer
+    assert "用另一个总数称呼它们" in writer
+    assert "逐项清点同时出现的总数与名单" in writer
+
+
+def test_state_manager_receives_the_ambiguous_time_guard() -> None:
+    """S184：正文有歧义时 state_manager 不能自行选一个精确日期。"""
+    from agenttavern.prompting import state_manager_prompt
+
+    prompt = joined(state_manager_prompt(WorldState()).messages)
+    assert "无法唯一确定" in prompt
+    assert "不要自行选择一个精确时间" in prompt
+
+
 def test_in_turn_questions_require_an_unavoidable_current_choice() -> None:
     """提问不能把普通的未来可能性变成越过本轮边界的授权。"""
     director = prompt_for()
@@ -308,10 +347,8 @@ def test_speaking_rule_is_a_choice_not_a_toggle_in_code() -> None:
         assert forbidden not in prompt_for()
 
 
-def test_state_pack_inlines_small_values_and_defers_large_ones() -> None:
-    """与 history / worldinfo 同一模式（S53 全量索引 + 按需展开）：
-    键名全给，体量小的值内联，大的只给体量，由模型按需 state_query 展开。
-    """
+def test_state_pack_does_not_fold_strings_by_size() -> None:
+    """字符串长度不决定可见性；状态只按叶端结构折叠（S33/S157）。"""
     state = replay(
         [
             StateDelta(
@@ -331,9 +368,7 @@ def test_state_pack_inlines_small_values_and_defers_large_ones() -> None:
     assert packed["地点"] == "客厅"
     assert packed["时间"] == "第三日 傍晚"
     assert packed["林.性格"] == "谨慎，话少"
-    # 大值只给体量，键名仍在——模型知道它存在，可以展开（P13）。
-    assert "非常长的一段关系描述" not in prompt
-    assert "state_query 展开" in packed["林与陈.关系"]
+    assert packed["林与陈.关系"] == "非常长的一段关系描述" * 30
 
 
 def test_state_is_json_so_the_shape_needs_no_marker() -> None:
@@ -496,19 +531,30 @@ def test_writer_and_state_history_windows_are_independent_yaml_values(tmp_path: 
     assert not ({"upstream_runs", "state_recent_runs"} & set(Session.model_fields))
 
 
-def test_the_writer_never_gets_a_speaking_rule_of_its_own() -> None:
-    """writer 侧不再单给抢话规则——**由输入契约统一盖住**。
-
-    那条曾经在，理由是 writer 一旦真的在展开，就会顺手
-    把用户角色往前推一步。后来输入契约收紧成「除非细纲已经给出，否则不要自行
-    增加新行为、新决定、新心理」，这条更宽、更严，再单给一条抢话规则就是重复。
-    """
+def test_writer_receives_the_selected_speaking_rule_without_a_second_choice() -> None:
+    """S91：一个服务级选项同时约束两次调用，不在 writer 里复制第二组选项。"""
     for pick in ("allowed", "forbidden"):
+        selected = option("director", "speaking_rule", pick)
+        other = option(
+            "director", "speaking_rule", "allowed" if pick == "forbidden" else "forbidden"
+        )
         with using(choices={"director": {"speaking_rule": pick}}):
-            w = writer_text()
-        assert "抢话" not in w
-        assert "替用户的角色说话" not in w
-        assert "不要自行增加" in w
+            messages = writer_prompt(upstream="上一轮正文").messages
+            w = joined(messages)
+        assert selected and selected in w
+        assert not other or other not in w
+        assert sum(selected in (m.content or "") for m in messages) == 1
+
+        upstream_index = next(i for i, m in enumerate(messages) if m.content == "上一轮正文")
+        rule_index = next(i for i, m in enumerate(messages) if selected in (m.content or ""))
+        assert rule_index > upstream_index, "玩家控制边界必须压在正文上文之后"
+
+    writer_choices = {
+        item.get("name")
+        for item in assembler.load("writer").get("sections", [])
+        if isinstance(item, dict) and item.get("type") == "choice"
+    }
+    assert "speaking_rule" not in writer_choices
 
 
 async def test_the_nudge_only_asks_for_the_one_remaining_step(tmp_path: Path) -> None:
@@ -524,63 +570,6 @@ async def test_the_nudge_only_asks_for_the_one_remaining_step(tmp_path: Path) ->
     assert "直接输出" in nudge
     assert "submit_outline" not in nudge
     assert "state_write" not in nudge, "director 根本没有这个工具，提它只会把模型带沟里"
-
-
-# -- 情色指导与破限：YAML 槽位，默认空 -----------------------------------------
-
-
-def test_empty_nsfw_injects_nothing_at_all(monkeypatch) -> None:
-    """情色指导**留空则整节不注入**——连标题都不出现。
-
-    **它钉的是空槽位的行为，不是仓库里填了什么。** 早先这条断言的是"出厂为空"，
-    理由是"写任何示例都会被当成推荐值"；那个理由针对的是我们，不是部署方，
-    而这份 YAML 现在是部署方自己在维护。继续钉着它，等于每次
-    有人按自己的模型填上一段就红一次——`test_each_side_gets_its_own_sections`
-    那条已经吃过一模一样的亏：钉内容的测试不保护不变量，只是把文案冻住。
-
-    留空必须干净地消失，是因为标题本身就是一句指令：一个只剩「情色描写」四个字、
-    底下什么都没有的小节，比不出现更糟。
-    """
-    real = assembler.load
-    monkeypatch.setattr(assembler, "load", lambda name: {**real(name), "nsfw": ""})
-
-    for prompt in (writer_text(), prompt_for(worldinfo=make_book())):
-        assert "情色" not in prompt
-
-
-def test_the_jailbreak_is_the_last_system_message(monkeypatch) -> None:
-    """**破限两侧都要**，而且它的**位置**是约定的一部分。
-
-    director 决定这一轮发生什么，writer 决定怎么落笔；只给一侧，另一侧会按
-    自己的默认来。破限尤其如此——两者是两次独立的模型调用，只解开一半等于
-    没解开。
-
-    与 SillyTavern 的约定有一处不同：那边压在整个请求的最后（历史之后），
-    取最高的近因权重。我们放在系统消息的末尾，因为对话跨轮持续（S60），
-    那一段是缓存前缀，放这里只付一次钱。**哪个更有效没有实测过。**
-    想换成 ST 的做法，把 YAML 里那一条移到 history 之后即可——这正是 S9
-    把 role 写进条目要换来的东西。
-
-    **钉的是位置，不是内容**（R31 之后正文内联进了 section，没有顶层命名块
-    可以整块替换了）：把两份 YAML 里的 system 条目换成一个标记，再看它落在哪。
-    """
-    import copy
-
-    real = assembler.load
-
-    def marked(name: str) -> dict:
-        doc = copy.deepcopy(real(name))
-        for item in doc.get("sections") or []:
-            if item.get("role") == "system":
-                item["body"] = "破限占位"
-        return doc
-
-    monkeypatch.setattr(assembler, "load", marked)
-
-    for messages in (writer_prompt().messages, director_messages()):
-        system = [m for m in messages if m.role is Role.SYSTEM]
-        assert system, "这一侧一个 system 槽都没有——破限没地方放"
-        assert system[-1].content == "破限占位"
 
 
 def test_each_side_gets_its_own_sections_and_none_of_the_others() -> None:
@@ -658,7 +647,7 @@ def test_a_new_section_needs_only_yaml(monkeypatch) -> None:
 def test_each_section_is_one_message_and_carries_its_own_role(monkeypatch) -> None:
     """**一个条目 = 一条消息，role 写在条目上**（S9）。
 
-    以前整份提示词是一大块 system 文本，「这一段用什么 role」「破限压在历史
+    以前整份提示词是一大块 system 文本，「这一段用什么 role」「角色控制规则放在上文
     之后还是之前」这类决定只能在代码里改。现在它们都在 YAML 里。
     """
     fake_yaml(

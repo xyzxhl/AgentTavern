@@ -57,6 +57,7 @@ def test_shared_models_are_defined_once() -> None:
         # 所以它们的类型也要生成——手写一份对照物只能保证写下来那一刻是对的。
         "Worldbook",
         "Corpus",
+        "TracePage",
     }
 
 

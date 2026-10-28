@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import os
+from collections import deque
 from collections.abc import Iterator
 from pathlib import Path
 from threading import RLock
@@ -73,3 +74,44 @@ def read_jsonl(path: Path, model_type: type[M]) -> Iterator[M]:
         line = raw.strip()
         if line:
             yield model_type.model_validate_json(line)
+
+
+def read_jsonl_page(
+    path: Path,
+    model_type: type[M],
+    *,
+    limit: int,
+    before: int | None = None,
+) -> tuple[list[M], int | None]:
+    """从 append-only JSONL 的尾部向前取一页。
+
+    ``before`` 是从文件开头数的**非空行位置**，并且不包含该位置。首次不传时
+    取文件尾；返回的游标继续向前翻。它不用事件自己的 ``seq``，因为用户编辑等
+    后追加事件可能复用既有 seq，而文件位置仍然严格单调（S115）。
+
+    读取会顺序扫文件以确定尾部，但内存只保留一页原始行，且只解析这一页；不会
+    因为一条超大 trace 在一次请求里构造全部 Pydantic 对象。
+    """
+    if limit < 1:
+        raise ValueError("limit 必须大于 0")
+    if before is not None and before < 0:
+        raise ValueError("before 不能小于 0")
+
+    raw_page: deque[str] = deque(maxlen=limit)
+    seen = 0
+    with _JSON_IO_LOCK:
+        if not path.exists():
+            return [], None
+        with path.open("r", encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line:
+                    continue
+                if before is not None and seen >= before:
+                    break
+                raw_page.append(line)
+                seen += 1
+
+    page = [model_type.model_validate_json(raw) for raw in raw_page]
+    start = seen - len(page)
+    return page, start if start > 0 else None

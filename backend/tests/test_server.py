@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from conftest import GOAL_MARK, ScriptedLLM, text, tool, tools, using
+from conftest import ScriptedLLM, is_goal_request, text, tool, tools, using
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
@@ -1209,7 +1209,7 @@ def test_setting_a_goal_plans_first_then_runs(client_for) -> None:
     assert second["user_input"]["text"] == "再问一句。"
 
     # **规划先于推演**：第一次问的是 goal_manager，不是 director。
-    assert GOAL_MARK in llm.system_prompts[0]
+    assert is_goal_request(llm.requests[0])
     # 中间状态在第一轮落地之前就有了——否则面板上要空到第一轮写完。
     run = client.get(f"/sessions/{session_id}").json()["session"]["goal_run"]
     assert [s["description"] for s in run["plan"]["subgoals"]] == ["他先松口", "两人摊开说"]
@@ -1241,7 +1241,7 @@ def test_a_goal_set_mid_story_also_plans_before_it_runs(client_for) -> None:
     assert second["user_input"]["text"] == "我把照片推过去。"
     assert second["user_input"]["source"] == "simulated"
 
-    planning = [r for r in llm.requests if GOAL_MARK in r["messages"][0]["content"]][0]
+    planning = [r for r in llm.requests if is_goal_request(r)][0]
     body = "\n".join(m.get("content") or "" for m in planning["messages"])
     assert "正文一。" in body, "goal 之前也必须以最终正文为准"
     assert "用户自己写的那一轮。" not in body, "临时细纲不能进入 goal 上下文"
@@ -1265,7 +1265,7 @@ def test_the_opening_plan_not_tool_transcript_reaches_the_first_judgement(client
         collect(ws, "run_finished")
         collect(ws, "goal_finished")
 
-    judged = [r for r in llm.requests if GOAL_MARK in r["messages"][0]["content"]][-1]
+    judged = [r for r in llm.requests if is_goal_request(r)][-1]
     called = [c["function"]["name"] for m in judged["messages"] for c in m.get("tool_calls") or []]
     assert "steer" not in called, "开场工具往返不能跨 turn 保留"
     assert "未成立" in json.dumps(judged["messages"], ensure_ascii=False), "当前 plan 仍须在场"
@@ -1415,7 +1415,7 @@ def test_a_goal_set_while_a_run_is_in_flight_survives_that_run(client_for) -> No
     # **那一轮不算目标的**（S101）：它早就在跑了，判它、把它的开销记到目标账上，
     # 都是在为一件目标没参与的事结账。所以它进静态前缀、给正文，和它之前的
     # 剧情一样——不是逐条追加的「第 N 轮」记录，也不进 `spent_runs`。
-    asked = [r for r in llm.requests if GOAL_MARK in r["messages"][0]["content"]]
+    asked = [r for r in llm.requests if is_goal_request(r)]
     first_words = "\n".join(m.get("content") or "" for m in asked[0]["messages"])
     assert "门轴响了。" in first_words, "它仍然以最终正文知道故事到哪儿了"
     assert "她推开门。" not in first_words, "临时细纲不能进入 goal 上下文"
@@ -1683,7 +1683,7 @@ def test_a_paused_goal_neither_judges_nor_continues(client_for) -> None:
 
     assert second["user_input"]["text"] == "再来一句", "自动续跑没有插队进来"
 
-    assert not [r for r in llm.requests if GOAL_MARK in r["messages"][0]["content"]], (
+    assert not [r for r in llm.requests if is_goal_request(r)], (
         "暂停期间不该有任何 goal_manager 调用"
     )
     assert second["user_input"]["source"] == "user", "暂停期间的轮次都是用户自己打的"
@@ -1697,8 +1697,7 @@ def test_a_first_goal_failure_is_persisted_as_paused(client_for) -> None:
 
     class BrokenGoal(ScriptedLLM):
         def _handle(self, request):  # type: ignore[no-untyped-def]
-            messages = json.loads(request.content)["messages"]
-            if GOAL_MARK in messages[0].get("content", ""):
+            if is_goal_request(json.loads(request.content)):
                 raise RuntimeError("目标端点炸了")
             return super()._handle(request)
 
@@ -1754,7 +1753,7 @@ def test_resuming_hands_over_the_turns_the_user_wrote_meanwhile(client_for) -> N
         third = collect(ws, "run_finished")[-1]["node"]
         finished = collect(ws, "goal_finished")[-1]
 
-    asked = [r for r in llm.requests if GOAL_MARK in r["messages"][0]["content"]]
+    asked = [r for r in llm.requests if is_goal_request(r)]
     # 三次**请求**，两次登场：开场那次调了 `steer` 再空手回来收口（两次请求），
     # 判定那次调了 `finish` 就地收摊（一次）。
     assert len(asked) == 3
@@ -2052,7 +2051,10 @@ def test_developer_mode_records_every_agents_real_exchange(client_for) -> None:
 
     # 原文要能一路读到底：role、内容、以及模型返回的最终文本。
     writer = next(e for e in exchanges if e["actor"] == "writer")
-    assert writer["payload"]["messages"][0]["role"] == "system"
+    writer_request = next(r for r in llm.requests if not r.get("tools"))
+    assert [(m["role"], m["content"]) for m in writer["payload"]["messages"]] == [
+        (m["role"], m["content"]) for m in writer_request["messages"]
+    ]
     assert any("她推开门。" in (m.get("content") or "") for m in writer["payload"]["messages"])
     assert writer["payload"]["response"]["content"] == "门轴响了。"
 
@@ -2110,8 +2112,44 @@ def test_a_past_run_can_be_read_back_from_disk(client_for) -> None:
     assert {e["actor"] for e in exchanges} >= {"director", "writer", "state_manager"}
     assert exchanges[0]["payload"]["messages"], "原文要在"
 
+    page = client.get(f"/sessions/{session_id}/trace/{run_id}/page?limit=2").json()
+    assert len(page["events"]) == 2
+    assert page["events"] == events[-2:]
+    assert page["next_before"] == len(events) - 2
+    assert page["has_more"] is True
+
     # 没留过痕的轮次返回空，不是 404——那不是错误。
     assert client.get(f"/sessions/{session_id}/trace/run_nope").json() == []
+
+
+def test_trace_pages_start_at_the_tail_and_walk_back_without_gaps(client_for) -> None:
+    """S115：页面一次只取一页，向前翻最终精确拼回完整 append-only trace。"""
+    client = client_for(happy_llm(), developer=True)
+    session_id = client.post("/sessions").json()["id"]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws") as ws:
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "submit", "text": "我推开门"}))
+        run_id = collect(ws, "run_finished")[-1]["node"]["id"]
+
+    full = client.get(f"/sessions/{session_id}/trace/{run_id}").json()
+    before = None
+    pages: list[list[dict]] = []
+    while True:
+        suffix = f"?limit=3{f'&before={before}' if before is not None else ''}"
+        page = client.get(f"/sessions/{session_id}/trace/{run_id}/page{suffix}").json()
+        assert len(page["events"]) <= 3
+        pages.insert(0, page["events"])
+        if not page["has_more"]:
+            assert page["next_before"] is None
+            break
+        before = page["next_before"]
+
+    rebuilt = [event for page in pages for event in page]
+    assert rebuilt == full
+
+    empty = client.get(f"/sessions/{session_id}/trace/run_nope/page?limit=3").json()
+    assert empty == {"events": [], "next_before": None, "has_more": False}
 
 
 def test_the_frontend_can_tell_which_mode_the_service_started_in(client_for) -> None:

@@ -60,11 +60,21 @@
 
 | | 语义 |
 |---|---|
-| `set` | **深合并**——只动补丁里提到的键。叶子为 `null` 删除那棵子树 |
+| `set` | **深合并**——只动补丁里提到的键。叶子为 `null` 删除那棵子树；`state_write` 拒绝列表叶子 |
 | `append` | 追加去重。键不存在时创建一个列表 |
 | `remove` | 从清单里拿掉几项。作用在标量上等于删掉那个键 |
 
 套用顺序是 **set → remove → append**，所以"换掉一项"能在一次写入里表达。
+
+模型通过 `state_write` 写清单时只能使用 `append` / `remove`。若 `set` 的任意叶子是列表，
+工具把它作为可恢复的参数错误返回，不暂存其中任何改动；模型可在同一 loop 重新调用。
+这是形状校验：避免模型拿不完整的记忆整体覆盖清单。用户直接编辑状态结果不受这个工具
+参数限制。
+
+非空 state 中，新建顶层键若与既有某个嵌套对象键**完全同名**，`state_write` 把现有
+精确路径作为可恢复错误返回，不暂存本次调用。它只比较 JSON 键和路径，不判断自然语言
+近义词；用户直接编辑仍不受限制。这样允许任意 schema，同时避免把已经存在的
+`装备 › 载具` 误写成第二份顶层 `载具`。
 
 **不做** 让 `set` 整枝替换。改一个角色的一项属性不该重发整个角色——
 **整体重发正是清单被拍平的老路**。
@@ -76,17 +86,17 @@
 **这个缺口在纯文学场景里永远看不见**：那里的清单（知情、经历过的事）天然只增不减。
 数据化的世界才暴露它。这是一条方法论：**判据和语义都要拿一个反向的世界压一遍。**
 
-**验收** `test_set_overwrites_and_none_deletes` · `test_a_set_merges_deeply_instead_of_replacing_the_whole_branch` · `test_a_null_leaf_deletes_that_subtree` · `test_append_accumulates_and_dedupes` · `test_remove_takes_items_off_a_list` · `test_remove_then_append_swaps_one_item_in_a_single_write` · `test_remove_on_a_scalar_deletes_the_key` · `test_unmentioned_keys_are_untouched`
+**验收** `test_set_overwrites_and_none_deletes` · `test_a_set_merges_deeply_instead_of_replacing_the_whole_branch` · `test_a_null_leaf_deletes_that_subtree` · `test_append_accumulates_and_dedupes` · `test_remove_takes_items_off_a_list` · `test_remove_then_append_swaps_one_item_in_a_single_write` · `test_remove_on_a_scalar_deletes_the_key` · `test_unmentioned_keys_are_untouched` · `test_state_write_rejects_lists_in_set_without_staging_them` · `test_state_write_rejects_a_new_root_that_duplicates_an_existing_branch`
 
 ### S33 · 状态注入用 JSON，不加任何形状标记
 
 **服务** [R31](../req/调教提示词.md)
 
-**规格** 全量键名 + 体量小的值内联；**长的字符串**只给体量，让模型用
-`state_query` 展开。渲染成 JSON。
+**规格** 渲染成 JSON。可展开时按 [S182](Retrieval.md#s182-三类折叠都使用语义边界不使用字符阈值)
+从每条分支的叶端折叠最后两层；字符串长度不改变可见性。
 
 **不做** 在值那一侧加形状标记（曾经清单渲染成 `清单：青锋剑、止血符 ×2`）；
-不做长清单的隐藏——长清单该做的是**拆键**。
+不做按长度隐藏字符串或清单——需要更细的可展开地址时应**拆键**。
 
 **为什么** 那个 `清单：` 前缀本来是为了让清单和字符串长得不一样。
 **但实测模型把它当成了值的开头抄了回来**，写回一个以那四个字打头的字符串——
@@ -98,7 +108,7 @@ JSON 从根上消掉它：`[…]` 不是 `"…"`、`3` 不是 `"3"`、`{}` 不�
 一个标记都不用，而且**和 `state_write` 的参数是同一套写法**——模型读到什么形状
 就写回什么形状，中间没有一次翻译。
 
-**验收** `test_structure_is_the_json_structure`
+**验收** `test_structure_is_the_json_structure` · `test_state_pack_does_not_fold_strings_by_size`
 
 ### S34 · 记什么：先过门槛，再分两类
 
@@ -282,3 +292,18 @@ JSON 从根上消掉它：`[…]` 不是 `"…"`、`3` 不是 `"3"`、`{}` 不�
 这个代价由用户承担。
 
 **验收** `test_user_edit_rewrites_node_directly` · `test_editing_an_older_node_is_rejected`
+
+### S184 · state_manager 不替含糊正文选择精确时间
+
+**服务** [R59](../req/推进剧情.md)
+
+**规格** state_manager 只更新正文明确写出，或能由正文中无冲突的时间关系唯一算出的日期、
+经过时间和倒计时。正文内部的相对时间互相冲突，或不足以唯一确定当前值时，不自行选择
+一个精确值写进 state；其它可确定的状态照常维护。
+
+**不做** 用固定历法、正则或日期 schema 解析任意故事；不让 state_manager 修正文。
+
+**为什么** state 是正文的检索捷径，不是第二份剧情真相。把猜测写成精确日期会让下一轮
+把猜测当作比原文更可靠的事实，掩盖真正需要修的 writer 问题。
+
+**验收** `test_state_manager_receives_the_ambiguous_time_guard`，真实模型时间冲突回归检查。

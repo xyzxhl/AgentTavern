@@ -221,6 +221,9 @@ export type ChunksTotal = number;
 export type Embedded = boolean;
 export type Error = string;
 export type CreatedAt2 = string;
+export type Events = TraceEvent[];
+export type NextBefore = number | null;
+export type HasMore = boolean;
 
 export interface AgentTavern {
   ClientMessage: ClientMessage;
@@ -230,6 +233,7 @@ export interface AgentTavern {
   WorldbookBundle: WorldbookBundle;
   Worldbook: Worldbook;
   Corpus: Corpus;
+  TracePage: TracePage;
 }
 /**
  * 提交一条用户输入，**开新的一轮**（F3a「推进」）。
@@ -773,4 +777,12 @@ export interface BuildStatus {
   chunks_total?: ChunksTotal;
   embedded?: Embedded;
   error?: Error;
+}
+/**
+ * 开发者 trace 的一页；``next_before`` 是向更早内容继续读取的游标。
+ */
+export interface TracePage {
+  events: Events;
+  next_before?: NextBefore;
+  has_more?: HasMore;
 }

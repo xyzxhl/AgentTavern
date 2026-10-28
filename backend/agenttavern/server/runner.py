@@ -18,6 +18,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal, cast
 
+from starlette.websockets import WebSocketDisconnect
+
 from ..agents import GoalStep, advance_goal, sync_conversation
 from ..corpus.rerankers import Reranker
 from ..corpus.search import EmbedderLike
@@ -950,7 +952,20 @@ class SessionRunner:
             try:
                 # 连接断了不该拖垮 runner——它还要把当前 run 跑完并落盘。
                 await self._broadcast(message)
-            except Exception:  # noqa: BLE001 — 断线栈是定位“只提示连接关闭”的关键
+            except WebSocketDisconnect as exc:
+                # 浏览器刷新、关闭页面等正常断线只需要低噪声诊断；receive 侧也可能
+                # 稍后观察到同一次断线。投递面在这里立即关闭，权威 run 继续执行。
+                logger.info(
+                    "websocket_disconnected_during_send session=%s message=%s code=%s",
+                    self._repo.load_session().id,
+                    message.type,
+                    exc.code,
+                )
+                self._delivery_open = False
+                while not self._out.empty():
+                    self._out.get_nowait()
+                return
+            except Exception:  # noqa: BLE001 — 非预期发送故障需要保留完整诊断栈
                 logger.exception(
                     "websocket_send_failed session=%s message=%s",
                     self._repo.load_session().id,

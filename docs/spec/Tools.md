@@ -94,16 +94,16 @@ director 与 state_manager 都不注册 `state_query`；`state_write` 仍保留�
 **服务** [R16](../req/推进剧情.md)
 
 **规格** 判据是**影不影响本轮产出**。生成中：`state_query`、`worldinfo_read`、
-`history_read`、`ask_question`。生成后：归段追问（`close_segment`）。
+`history_read`、`ask_question`。生成后只有归段追问（`close_segment`）。
 
 生成后的动作**必须问 director 本人**，接在它自己的对话后面。
-`close_segment` 因此**不在任何一个 agent 的工具面里**——它只挂在追问那一次
-独立调用上，`build_tools()` 一次都不注册它。
+它因此**不在任何一个 agent 的常规工具面里**——只挂在生成后那一次独立调用上，
+`build_tools()` 不注册它。
 
 **答案是一次工具调用**：`close_segment(after)` 收一个 typed int，
 **不调用就是「先别断」**。
 
-**不做** 把归段追问塞进 tool loop；**不做**让模型回一个数字。
+**不做** 把生成后追问塞进 tool loop；**不做**让模型从自由文本里交结构化答案。
 
 追问中的每一轮正文必须完整给出，尤其不能只给固定长度开头：是否收束通常写在末尾，
 截掉末尾会让模型把预览误判成句中断裂并持续拒绝归段。若完整正文超出上下文，调用明确
@@ -164,14 +164,14 @@ director 与 state_manager 都不注册 `state_query`；`state_write` 仍保留�
 
 **服务** [R16](../req/推进剧情.md)
 
-**规格** 摘要**只由编排层生成**：轮次滑出全文窗口、且那一段已经标了结尾时，
-`close_segment()` 调一次 `summarize_text`（`prompting/summarize.yaml`，
+**规格** 摘要**只由编排层生成**：那一段已经标了结尾时，`close_segment()` 调一次
+`summarize_text`（`prompting/summarize.yaml`，
 属于「单次调用」那一类，[S147](Corpus.md)）。
 
 **没有 `max_chars`**，只统计：归段事件带 `chars_in` / `chars_out`，
 **看压缩比不看绝对字数**。
 
-**摘要只有一种**：history 中正文压缩出来的那一段（`Node.prose_summary`）。
+**剧情压缩摘要只有一种**：history 中正文压缩出来的那一段（`Node.prose_summary`）。
 设定条目**没有摘要**——它是 title → content，索引里给名字和体量。
 
 **不做** 给 director 一个 `summarize` 工具；不做预先批量生成；不做字数上限；
@@ -179,7 +179,7 @@ director 与 state_manager 都不注册 `state_query`；`state_write` 仍保留�
 
 **为什么** 这一条原先是一个工具（`summarize(source)`，`source` 是 `run:<id>`
 或 `wi:<ref>`，懒惰生成 + 系统缓存）。**它删掉了**：判定与压缩本来就不同步
-（[S58](Retrieval.md)：判定在生成时，压缩在需要时），而一个能主动触发压缩的
+（[S58](Retrieval.md)：判定与摘要是两个编排动作），而一个能主动触发压缩的
 工具等于请模型去动一件**它管不着、也看不见后果的事**——压缩不可逆，而它
 判断不了这一段将来还会不会被读到。实测 12 轮里它一次都没被调用过。
 
@@ -201,11 +201,11 @@ director 与 state_manager 都不注册 `state_query`；`state_write` 仍保留�
 
 | | 是什么 | 处置 |
 |---|---|---|
-| **隐藏** | "这个值太长，用 `state_query` 展开" | 无损降维，留着 |
+| **隐藏** | 按结构或显式按需模式留下地址，可用展开工具取回 | 无损降维，留着 |
 | **真截断** | 砍掉尾巴或整条不返回 | **必须告诉模型丢了什么** |
 
-**真截断现在只剩一处**：前情索引里没归过段的那几轮给的是"正文前 N 字"，
-那要写出**全文字数**，不能只加一个省略号——那是模型决定要不要展开的唯一依据。
+渐进式披露路径里不保留真截断：未归段历史继续给原文，已归段历史给摘要与可展开地址，
+state 与 worldbook 的占位符也都可无损展开。
 
 **读取预算和分页那两条已经撤销**（[S157](Retrieval.md#s157)）：展开就是**全给**。
 那两套话术（"这几条一个字都没返回""已读到第几字、接着读传什么"）是在这一层猜
@@ -215,7 +215,7 @@ director 与 state_manager 都不注册 `state_query`；`state_write` 仍保留�
 **为什么** 模型拿到一份看起来完整的结果却不知道自己丢了什么，
 那和按相关性筛选子集是同一条罪。**静默的降级比缺失更糟**——读的人不知道拿到的是次品。
 
-**验收** `test_an_index_entry_says_how_much_it_left_out` · `test_expanding_gives_everything_no_budget_no_paging`
+**验收** `test_expanding_gives_everything_no_budget_no_paging` · `test_nothing_is_dropped_when_no_segment_has_been_summarised_yet`
 
 ### S27 · 工具描述只说「作用 + 参数格式」
 

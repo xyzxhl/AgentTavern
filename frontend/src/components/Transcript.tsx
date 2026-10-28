@@ -325,7 +325,7 @@ function TurnControls({ node }: { node: Node }): JSX.Element {
       <Tap label="↻" title="重新生成这一轮" disabled={phase !== "idle"} onClick={reroll} />
       <Tap
         label="✎"
-        title={editable === node.id ? "改输入 / 细纲 / 正文 / 状态" : "只能编辑上一轮"}
+        title={editable === node.id ? "改输入 / 正文 / 状态" : "只能编辑上一轮"}
         disabled={phase !== "idle" || editable !== node.id}
         onClick={() => edit(editing === node.id ? null : (node.id ?? null))}
       />

@@ -58,8 +58,8 @@ class FoldText:
     是同一件事的两处，而这里只负责放它。
     """
 
-    long: Callable[[int], str]
-    """一个折起来的长叶子：参数是它有多少字。"""
+    leaf: Callable[[int], str] | None = None
+    """一个明确要求折起来的文本叶子：参数是它有多少字。"""
 
     deeper: Callable[[int], str] | None = None
     """一棵折起来的子树：参数是它底下有几项。
@@ -70,35 +70,48 @@ class FoldText:
     """
 
 
-def fold(tree: Tree, *, depth: int, texts: FoldText, inline_limit: int) -> Tree:
-    """按**层级**折叠：深过 ``depth`` 的子树只给项数，长过 ``inline_limit``
-    的字符串叶子只给字数。
+def fold(tree: Tree, *, tail_depth: int, texts: FoldText, fold_text_leaves: bool = False) -> Tree:
+    """按**离叶端还有几层**折叠，不按根部深度或字符数折叠。
 
-    - ``depth <= 0``：不折叠，整棵给出去。
-    - ``inline_limit <= 0``：**每个字符串叶子都折起来**。worldinfo 就是这样——
-      条目正文一律按需展开，不看它有多长。
+    ``tail_depth=2`` 表示把「最后一个对象键 + 它下面的叶子键值」作为一个折叠单元；
+    外层路径全都保留。不同深度的分支因此各自在叶端收口，而不是一律在根下第二层
+    被截成含糊的大父树。
 
-    **折叠只发生在字典和字符串上。** 清单（list）是一个值，折它等于改形状，
-    而形状正是这里最要紧的东西（S32）：模型照着写回，清单就塌了。
-    长清单该做的是拆一层嵌套，不是藏起来。
+    ``fold_text_leaves`` 是 worldinfo 的显式按需开关投影：它折叠每个文本叶子，和
+    文本有多少字无关。状态不启用它，任何字符串都不会仅因为长而被折叠。
+
+    清单（list）是一个值，不能单独按长度折叠；若它位于被折叠的末端对象中，会随
+    整棵对象一起隐藏，展开后仍保持原形状。
     """
     out: Tree = {}
     for key, value in tree.items():
         if not (isinstance(value, dict) and value):
-            out[key] = _hide_long(value, texts, inline_limit)
-        elif depth != 1:
-            out[key] = fold(value, depth=depth - 1, texts=texts, inline_limit=inline_limit)
-        elif texts.deeper is None:
-            raise ValueError(f"这棵树声称是平的，`{key}` 底下却有嵌套")
-        else:
+            if fold_text_leaves and isinstance(value, str):
+                if texts.leaf is None:
+                    raise ValueError("这棵树要求折叠文本叶子，却没有提供占位文字")
+                out[key] = texts.leaf(len(value))
+            else:
+                out[key] = value
+        elif tail_depth > 0 and 1 + _tree_depth(value) <= tail_depth:
+            if texts.deeper is None:
+                raise ValueError(f"这棵树声称是平的，`{key}` 底下却有嵌套")
             out[key] = texts.deeper(len(value))
+        else:
+            out[key] = fold(
+                value,
+                tail_depth=tail_depth,
+                texts=texts,
+                fold_text_leaves=fold_text_leaves,
+            )
     return out
 
 
-def _hide_long(value: JsonValue, texts: FoldText, inline_limit: int) -> JsonValue:
-    if isinstance(value, str) and (inline_limit <= 0 or len(value) > inline_limit):
-        return texts.long(len(value))
-    return value
+def _tree_depth(tree: Tree) -> int:
+    """``tree`` 下最深的键层数；只用于决定离叶端还剩几层。"""
+    return max(
+        (1 + _tree_depth(value) if isinstance(value, dict) and value else 1)
+        for value in tree.values()
+    )
 
 
 def keys_of(tree: Tree) -> list[str]:

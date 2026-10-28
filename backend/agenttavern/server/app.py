@@ -6,7 +6,7 @@ import logging
 from contextlib import asynccontextmanager, suppress
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, ValidationError, model_validator
 
 from ..config import Settings, load_settings
@@ -58,6 +58,7 @@ from .protocol import (
     Stop,
     Submit,
     SwitchBranch,
+    TracePage,
 )
 from .runner import SessionRunner
 
@@ -357,6 +358,23 @@ def create_app(settings: Settings | None = None, gateway: LLMGateway | None = No
         只是这一轮当时没留痕。
         """
         return repo_of(session_id).read_trace(run_id)
+
+    @app.get("/sessions/{session_id}/trace/{run_id}/page")
+    def read_trace_page(
+        session_id: str,
+        run_id: str,
+        limit: int = Query(default=8, ge=1, le=50),
+        before: int | None = Query(default=None, ge=0),
+    ) -> TracePage:
+        """先取 trace 尾页，再用文件位置游标逐页向前展开（S115）。"""
+        events, next_before = repo_of(session_id).read_trace_page(
+            run_id, limit=limit, before=before
+        )
+        return TracePage(
+            events=events,
+            next_before=next_before,
+            has_more=next_before is not None,
+        )
 
     # -- worldbook（一级资产，S63） -----------------------------------------
 

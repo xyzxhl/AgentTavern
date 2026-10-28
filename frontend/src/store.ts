@@ -63,7 +63,7 @@ export interface SessionState {
   sessionId: string | null;
   session: Session | null;
 
-  /** 当前路径上的节点，按顺序。**一个 node 就是一轮**（run = node = 细纲 = 正文）。 */
+  /** 当前路径上的节点，按顺序。**一个 node 就是一轮的权威产品结果**；细纲只在 turn 内存在。 */
   path: Node[];
   state: Record<string, unknown>;
 
@@ -247,6 +247,8 @@ export const useSession = create<SessionState>((set, get) => {
         const rerollFailed = get().rerolling;
         set((s) => ({
           phase: "idle",
+          // question 只属于这个 run；失败后服务端不会再接受它的答案。
+          question: null,
           live: null,
           streaming: withoutKey(s.streaming, s.live?.runId ?? ""),
           traces: withoutKey(s.traces, s.live?.runId ?? ""),
@@ -262,6 +264,9 @@ export const useSession = create<SessionState>((set, get) => {
         // 被接进了同一段推演——那是最难查的一类困惑，必须当场说清楚。
         set((s) => ({
           phase: "idle",
+          // 中断会取消正在等待的 ask_question。若保留旧问题，按钮仍能点击，
+          // 但服务端已经没有对应 waiter，只会回“这个问题已经不在等待中了”。
+          question: null,
           live: null,
           streaming: withoutKey(s.streaming, s.live?.runId ?? ""),
           traces: withoutKey(s.traces, s.live?.runId ?? ""),
@@ -493,8 +498,12 @@ export const useSession = create<SessionState>((set, get) => {
         rerolling: false,
       });
 
-      const nextSocket = new SessionSocket(sessionId, apply, (reason) => {
-        if (socket === nextSocket && revision === connectionRevision) set({ notice: reason });
+      const nextSocket = new SessionSocket(sessionId, apply, (reason, reconnected) => {
+        if (socket !== nextSocket || revision !== connectionRevision) return;
+        set({ notice: reason });
+        // 断线期间可能已经完整落了节点，此时不会再有一条可补发的 run_finished。
+        // REST 快照会带回新叶与 editable_node_id；refreshState 据此收掉旧运行态。
+        if (reconnected) void get().refreshState();
       });
       socket = nextSocket;
       nextSocket.open();
@@ -504,11 +513,28 @@ export const useSession = create<SessionState>((set, get) => {
       const id = get().sessionId;
       if (!id) return;
       const detail = await api.getSession(id);
-      set({
-        session: detail.session,
-        state: detail.state,
-        path: detail.path,
-        siblings: detail.siblings,
+      set((s) => {
+        const leaf = detail.session.active_leaf_id;
+        const recoveredFinishedRun =
+          leaf !== null &&
+          leaf !== undefined &&
+          detail.session.editable_node_id === leaf &&
+          s.live?.runId === leaf;
+        return {
+          session: detail.session,
+          state: detail.state,
+          path: detail.path,
+          siblings: detail.siblings,
+          ...(recoveredFinishedRun
+            ? {
+                phase: "idle" as const,
+                live: null,
+                question: null,
+                streaming: withoutKey(s.streaming, leaf),
+                traces: withoutKey(s.traces, leaf),
+              }
+            : {}),
+        };
       });
     },
 

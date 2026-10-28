@@ -14,7 +14,7 @@
 |---|---|---|
 | **state** | 世界的当前样子 | **剧情推进**（state_manager 每轮提交增量） |
 | **worldinfo** | 静态设定：世界、角色 | **用户** |
-| **history** | 过往每一轮的输入、插话与正文 | 每轮随路径追加；仅最后一轮在编辑窗口内可改 |
+| **history** | 过往每一轮的输入、插话与正文；正文是唯一叙事权威 | 每轮随路径追加；仅最后一轮在编辑窗口内可改 |
 
 灰区：同一个实体两边都能有——"他们是兄妹"属 worldinfo，"他们现在决裂了"属 state。
 
@@ -183,16 +183,16 @@
 
 **验收** `test_segment_closes_when_the_director_says_it_closed` · `test_open_segment_waits_another_run` · `test_every_segment_goes_through_summarize` · `test_a_summary_says_how_many_runs_it_replaced_and_how_to_get_them_back` · `test_history_read_expands_the_whole_segment` · `test_only_folded_history_is_on_the_tree`
 
-### S58 · 判定在生成时，压缩在需要时
+### S58 · 判定与摘要在生成后完成，重放直接兑现
 
 **服务** [R16](../req/推进剧情.md)
 
 **规格** 归段拆成两步：**每轮生成后当场问**"这一轮是不是一段的结尾"，
-答案记在节点上；压缩晚些按标记分组。
+答案记在节点上；一段一旦收束，编排层立即为该段生成摘要，后续重放直接用摘要替换原文。
 
 追问要问**「断在第几条」而不是「这轮是不是结尾」**，且允许**回溯**标记到前面几条。
 
-**不做** 等一批轮次滑出窗口再问"这几轮算不算一段"。
+**不做** 等一批轮次越过字符窗口再问或再决定是否折叠。
 
 **为什么** 两件事的**最佳时机不同**。合在一起时实测查全只有 0.67——
 漏判是结构性的：待归段缓冲区里只有已滑出窗口的轮次，
@@ -212,8 +212,8 @@
 
 **服务** [R16](../req/推进剧情.md)
 
-**规格** 段一收，编排层就压。默认**开**，与其它能力"默认关"相反。
-索引里据实标注是「总结」还是「开头」。
+**规格** 段一收，编排层就压。默认**开**，与其它能力"默认关"相反。摘要生成失败时
+该段继续以原文进入 history，不回退到按字符数截取正文开头。
 
 **不做** 让模型自己决定什么时候压缩。
 
@@ -221,37 +221,32 @@
 **让优化当前轮的模型去做一件只利后续的事，是把激励放反了。**
 实测 12 轮下来它一次都没被调用过。
 
-默认开是因为**它的回退项不中性**：没有摘要时索引退化为"正文前 120 字"，
-那不是精度低一点，而是**位置偏置**——开头原样保留、结尾完全消失，
-而它还顶着「总结」的名字。**会误导模型的回退不能当作安全默认值。**
+**验收** `test_every_segment_goes_through_summarize`
 
-**验收** `test_every_segment_goes_through_summarize` · `test_an_index_entry_says_how_much_it_left_out`
-（后者钉的是回退那一半：没归过段的轮次在索引里是"正文前 N 字 + 全文字数"）
-
-### S60 · director 跨 turn 只继承产品记录，压缩越界一次、全部替换
+### S60 · director 跨 turn 只继承产品记录，完成段立即折叠
 
 **服务** [R7](../req/推进剧情.md) [R31](../req/调教提示词.md)
 
 **规格** 已完成 turn 跨边界只留下三类产品记录：顶层 user input、按原位置保留的纠正/
-引导、最终正文。thinking、tool call/result、运行时错误与细纲一律不进入后续 turn 的
-context。
+引导与最终正文。thinking、tool call/result、运行时错误与细纲一律不进入后续 turn
+的 context。
 
 **状态与控制维度放在每轮的用户消息里，不放 system**。
 
-压缩**不是段落一收就做**，而是攒到预算上限再做，**并且一次把所有能被摘要顶替的
-段落全换掉**。
+完成段从下一 turn 起直接换成段落摘要；未完成段继续保留逐轮正文。折叠不看字符数。
 
-**不做** 每轮重建全新对话；不做每收一段换一段。
+**不做** 每轮重建全新对话；不做上下文越过某个字符阈值才折叠。
 
 **为什么** system 是缓存前缀，**放会变的东西进去，前缀每轮失效**，
 而且旧值会以"写在最前面"的权威姿态误导模型。
 
-每收一段换一段等于每隔几轮动一次前缀，缓存反复失效——**那还不如不持续。**
+每收一段会改变一次前缀，这是按语义边界折叠的明确缓存代价；不能为减少失效而让字数
+阈值决定何时隐藏剧情。
 
-节点保存重放所需的产品记录，重放时沿路径拼接，分支因此天然安全。工具结果里值得跨 turn
-保留的事实必须已经进入正文或 state；系统不再从旧工具回执里补捞。
+节点保存重放所需的产品记录，重放时沿路径拼接，分支因此天然安全。系统不从旧工具
+回执里补捞、概括或复制内容。
 
-**验收** `test_everything_is_kept_until_the_budget_is_crossed` · `test_crossing_the_budget_replaces_every_summarised_segment_at_once` · `test_nothing_is_dropped_when_no_segment_has_been_summarised_yet` · `test_a_past_turn_carries_no_tool_calls_at_all`
+**验收** `test_unclosed_runs_are_kept_in_full` · `test_completed_segments_fold_without_a_character_threshold` · `test_nothing_is_dropped_when_no_segment_has_been_summarised_yet` · `test_a_past_turn_carries_no_tool_calls_at_all`
 
 ### S61 · 执行流量只活在当前 turn，挂起时才进草稿
 
@@ -270,12 +265,13 @@ context 的来源。
 
 **验收** `test_a_past_turn_carries_no_tool_calls_at_all` · `test_flattening_keeps_only_the_input_and_prose` · `test_an_interjection_survives_flattening_in_place` · `test_reasoning_and_tools_only_persist_in_a_draft`
 
-### S62 · 推理段计入预算，但只在 run / 草稿内存在
+### S62 · 推理段只在 run / 草稿内存在
 
 **服务** —（内部契约）
 
-**规格** run 内推理是当前工具链的一部分，原样回传并计入 context 预算。草稿续跑的是
-同一个 run，所以挂起时推理段也要随草稿持久化；完成节点与后续 turn context 一律不留。
+**规格** run 内推理是当前工具链的一部分，原样回传。草稿续跑的是
+同一个 run，所以挂起时推理段也要随草稿持久化；完成节点与后续 turn context 一律不留
+原始推理，也不另行生成跨轮推演摘要。
 
 这条生命周期与 S61 的 tool call/result 完全相同。
 
@@ -283,9 +279,7 @@ context 的来源。
 **207 字**——推理比产出长七十倍。原样存下来，持续对话跑两轮就撞预算，
 压缩变成每轮都发生、前缀反复失效，**持续对话的全部意义就没了**。抹掉后两轮实测 2298 字。
 
-预算只数正文而不数推理会**系统性低估**，且低估幅度随对话变长而增大。
-
-**验收** `test_reasoning_and_tools_only_persist_in_a_draft` · `test_reasoning_counts_toward_the_context_budget`
+**验收** `test_reasoning_and_tools_only_persist_in_a_draft`
 
 ### S157 · 折叠与展开是同一件事的两半，只有一份实现
 
@@ -296,11 +290,11 @@ context 的来源。
 
 | 域 | key | 提要 | 折叠单位 | 展开 |
 |---|---|---|---|---|
-| 状态 | 键名 | **就是 key 本身** | 深过 `depth` 的子树、长过 `state_inline_limit` 的字符串 | `state_query` |
+| 状态 | 键名 | **就是 key 本身** | 每条分支从叶端起最后两层的对象；不按字符数折叠 | `state_query` |
 | 设定 | 条目名 | 同上 | 按需条目的正文，**不看长度** | `worldinfo_read` |
 | 前情 | 段落 id | **那段摘要** | 已归段的那几轮 | `history_read` |
 
-前情的同一套折叠与地址同时供 director 和 goal_manager 使用：两者共享预算触发方式、
+前情的同一套折叠与地址同时供 director 和 goal_manager 使用：两者共享语义段落边界、
 段落摘要与展开实现；goal_manager 另外保留用户在目标期间亲自给出的方向，不让它随正文
 折叠消失。
 
@@ -321,18 +315,65 @@ context 的来源。
 模型**（让它下一轮改对，并压住键名漂移），以及**部分命中照样给**（为了几条不存在
 的地址把整次调用判成失败，等于让模型多花一轮重来）。
 
+未命中回执必须明确区分「可用地址列表」与「已经展开的正文」：地址列表不等于内容，
+模型须从中逐字复制完整地址重新调用，不能把长名字里携带的提要当作读取结果。
+
 **代价写在明处**：设定的名字因此**是地址**，两条同名就有一条永远取不到——
 所以重名在写入时收敛（[S70](Worldbook.md#s70)）。
 
-**验收** `test_it_folds_below_the_given_level` · `test_depth_zero_means_no_folding` ·
-`test_a_list_is_a_value_and_never_folded` · `test_a_long_string_leaf_gives_its_size` ·
-`test_inline_limit_zero_folds_every_string` · `test_a_flat_tree_may_omit_the_deeper_text` ·
+**验收** `test_it_folds_the_last_two_levels_of_each_branch` · `test_tail_depth_zero_means_no_structural_folding` ·
+`test_uneven_branches_keep_outer_paths_and_fold_at_their_own_leaf_end` ·
+`test_a_list_is_a_value_and_never_folded` · `test_a_long_string_is_not_folded_because_of_its_size` ·
+`test_explicit_leaf_folding_does_not_depend_on_string_size` · `test_a_flat_tree_may_omit_the_deeper_text` ·
 `test_it_takes_a_whole_subtree` · `test_a_partial_miss_keeps_both_halves` ·
 `test_keys_are_human_readable_leaf_paths` · `test_what_is_folded_is_addressable` ·
 `test_all_three_expand_the_same_way` · `test_a_miss_hands_back_the_keys_that_do_exist` ·
+`test_a_miss_says_available_keys_are_addresses_not_content` ·
 `test_a_partial_miss_still_returns_what_it_found` · `test_expanding_gives_everything_no_budget_no_paging` ·
 `test_only_expandable_worldinfo_is_on_the_tree` · `test_only_folded_history_is_on_the_tree` ·
 `test_two_entries_cannot_share_a_name`
+
+### S179 · （已废弃）细纲交付后把执行过程压成推演摘要
+
+该方案已取消，现行行为见 [S61](#s61) 与 [S180](#s180)。实测表明独立摘要会随轮数
+线性增长，内容也可能失真；它增加一次模型调用，却不能稳定阻止重复展开。
+
+### S180 · 按需 worldbook 的名字同时承担提要与地址
+
+**服务** [R56](../req/推进剧情.md) [R5](../req/开局与设定.md)
+
+**规格** 折叠后的按需 worldbook 只展示条目名与体量，条目名同时是
+`worldinfo_read` 的地址。用户负责让名字足以说明主题、适用场景与关键区分，使模型能在
+不试读正文时判断它是否可能有用；系统不从正文生成、改写或校验名称质量。
+
+**不做** 保存跨轮工具摘要来弥补含糊名称；不让代码按关键词猜条目是否相关；不把
+按需条目正文提前泄漏进索引。
+
+**为什么** 原始工具对话跨轮保留会膨胀上下文，另生成摘要又有成本、失真与线性增长。
+名称本来就同时是人类可见提要和稳定地址；让作者提供有辨识度的名称，是更简单且可控的
+乐观路径。代价是名称含糊时模型可能试探性读取，系统不承诺消除这种行为。
+
+**验收** `test_worldinfo_is_addressed_by_name`；真实模型用含主题、场景与关键区分的长条目名
+回归，检查是否能从索引选择最小相关集合。名称质量本身由人工评估，不设代码门禁。
+
+### S182 · 三类折叠都使用语义边界，不使用字符阈值
+
+**服务** [R58](../req/推进剧情.md)
+
+**规格** state 对每个分支独立从叶端计算，把最后一个对象键及其叶子键值作为折叠单元；
+分支外层路径全部显示。worldbook 只按条目的 `mode=on_demand` 折叠，history 只按已经
+完成并取得摘要的剧情段折叠。任何一类都不因字符串或累计 context 超过某个字符数才折叠。
+
+**不做** 长字符串叶子的特殊隐藏；不做正文开头截断回退；不把 corpus 的建索引分块
+误当成上下文折叠——分块是检索单位，不会用占位符替换模型本来应看到的内容。
+
+**为什么** 字符数与内容是否适合隐藏没有语义关系，会让同一结构仅因措辞长短得到不同
+可见性。叶端对象、显式按需标记和剧情段落分别是三个域已有的自然边界。
+
+**验收** `test_state_folds_each_branch_from_its_leaf_end` ·
+`test_a_long_string_is_not_folded_because_of_its_size` ·
+`test_explicit_leaf_folding_does_not_depend_on_string_size` ·
+`test_completed_segments_fold_without_a_character_threshold`。
 
 ---
 

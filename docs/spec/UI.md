@@ -165,7 +165,7 @@ trace 那份要等落盘），只用来显示、不参与任何判断，那点�
 
 **规格** 界面上**不是两个概念**。侧栏「改状态」只作用于当前活跃路径最后一个已完成
 turn；更早的 turn 不提供状态编辑入口。只有在该 turn 完成后、下一条顶层 user input
-提交前且没有执行中或挂起的 run 时，输入、正文、状态的编辑入口才可用。
+提交前且没有执行中或挂起的 run 时，输入、正文与状态的编辑入口才可用。
 
 下一条顶层 input 成功提交时立即关闭入口，不等它出队。run 挂起时提示用户先恢复完成
 或明确放弃，不自动替他删除草稿；放弃后是否可编辑仍由窗口是否已关闭决定。
@@ -380,8 +380,9 @@ input、失败原因与「重新生成」按钮。按钮从当前活跃叶重新
 **服务** [R9](../req/推进剧情.md) [R51](../req/开发者视角.md)
 
 **规格** 单一发送者第一次向 WebSocket 投递失败后，记录一次诊断并关闭该连接的投递面：
-丢弃随后排队的界面事件，不再逐条重试或重复记错。故事 run 仍按服务端权威流程继续，
-最终结果照常落盘，客户端重连后从权威状态恢复。
+丢弃随后排队的界面事件，不再逐条重试或重复记错。预期的 `WebSocketDisconnect` 只记
+无异常栈的 INFO；其它非预期发送异常记 ERROR 并保留异常栈。故事 run 仍按服务端权威
+流程继续，最终结果照常落盘，客户端重连后从权威状态恢复。
 
 **不做** 因浏览器断开而把已经开始的故事 run 当场取消；不为队列里每条后续消息各打一条
 相同异常。
@@ -389,7 +390,8 @@ input、失败原因与「重新生成」按钮。按钮从当前活跃叶重新
 **为什么** 连接只是流式旁路，不是权威执行。断线后继续发送既无法恢复用户体验，又会
 把一条网络故障放大成错误风暴，淹没真正的运行结果。
 
-**验收** `test_a_broken_socket_stops_the_sender_after_one_failure`
+**验收** `test_a_broken_socket_stops_the_sender_after_one_failure`；
+`test_a_normal_websocket_disconnect_is_not_logged_as_an_error`
 
 ### S177 · turn 内控制与提问在重连前后保持同一个执行态
 
@@ -399,9 +401,10 @@ input、失败原因与「重新生成」按钮。按钮从当前活跃叶重新
 不能成为唯一入口。`ask_question` 的回答成功发出后立即收起问题卡，并回到当前 run 的
 运行态，不等整个 run 完成。
 
-连接断开不取消服务端 run。重连时服务端重新投影当前 `run_started`、尚未回答的问题和
-可恢复状态；若正文节点已经原子提交、但 state/goal/生成后处理仍在运行，前端把执行态
-合并到该节点，不能再画一份重复 turn。
+连接断开不取消服务端 run。客户端对普通意外断线做退避重连；重连时服务端重新投影当前
+`run_started`、尚未回答的问题和可恢复状态。服务端以 4012 表示另一页面已经接管时，旧
+页面不得自动抢回连接。若正文节点已经原子提交、但 state/goal/生成后处理仍在运行，前端
+把执行态合并到该节点，不能再画一份重复 turn。
 
 **不做** 把断线当成停止；不让已经发送答案的问题继续可点；不因正文先于整轮结束落盘
 而同时显示「已完成节点」和「运行中节点」。
@@ -410,7 +413,8 @@ input、失败原因与「重新生成」按钮。按钮从当前活跃叶重新
 维护，会在重连和原子提交边界制造重复正文、重复回答或错误取消。
 
 **验收** `test_reconnecting_announces_an_existing_resumable_draft` ·
-`test_a_detached_runner_keeps_the_run_and_replays_its_question` · 前端
+`test_a_detached_runner_keeps_the_run_and_replays_its_question` ·
+`reconnects_an_unexpectedly_closed_session_without_user_refresh` · 前端
 `hides an answered question as soon as the answer is sent` ·
 `does not render a second turn when reconnecting during post-processing` ·
 `test_only_the_latest_overlapping_attach_reopens_delivery`

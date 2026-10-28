@@ -51,7 +51,7 @@ class TraceEventType(StrEnum):
     GOAL_EVALUATED = "goal_evaluated"
 
     USER_EDIT = "user_edit"
-    """用户直接编辑 state / 细纲 / 正文（R22）。来源是用户，仍须入 trace。"""
+    """用户直接编辑输入 / 正文 / state（R20/R22）。来源是用户，仍须入 trace。"""
 
     USER_INTERJECTED = "user_interjected"
     """用户在 run 跑到一半时插了一句（F3b / S50）。

@@ -78,8 +78,12 @@ trace 从不参与节点、goal 历史或模型 context 的重放。
 
 **服务** [R37](../req/开发者视角.md)
 
-**规格** 提供按 run 读取的接口。没留过痕的轮次返回**空列表而不是 404**——
-那不是错误，只是当时没开。
+**规格** 提供按 run 读取的接口。完整读取接口保留给离线评测；开发者面板使用从尾部开始的
+分页接口，初次只取最近一页，滚动到边界时才取更早一页。页游标按文件中的事件位置计算，
+不改变 trace 事件形状或 append-only 文件。单条往返中的长文本展开后也只先渲染一段，
+在该段内继续滚动才追加后文。
+
+没留过痕的轮次返回**空列表或空页而不是 404**——那不是错误，只是当时没开。
 
 取数顺序是「**推过来的优先、落盘的兜底**」：当前这一轮内存里就有，更早的去读文件。
 
@@ -88,7 +92,9 @@ trace 从不参与节点、goal 历史或模型 context 的重放。
 **为什么** 事件是推过来的，**刷新一次页面之前那些就没了**。
 而开发者模式本来就强制落盘——**记了不给读回来的路等于没记**。
 
-**验收** `test_a_past_run_can_be_read_back_from_disk`
+**验收** `test_a_past_run_can_be_read_back_from_disk` ·
+`test_trace_pages_start_at_the_tail_and_walk_back_without_gaps` · 前端
+`merges_older_trace_pages_without_replacing_the_current_page`
 
 ### S116 · 用户的手动编辑也要进 trace
 

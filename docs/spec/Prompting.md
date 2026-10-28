@@ -63,12 +63,12 @@ context 的产品文案的一部分。归段追问以前是一段四百多字的
 
 **不做** 把整份提示词拼成一整块 system 文本；不做只读的 role。
 
-**为什么** 这才让「破限压在历史之后」成为**一次拖动**而不是改代码——
+**为什么** 这才让「角色控制规则放在上文之后」成为**一次拖动**而不是改代码——
 此前那个决定藏在 Python 里，从 YAML 那侧根本看不见还有第二种可能。
 
 实测端点接受 9 条连续 system + user/assistant 交替共 17 条消息。
 
-**验收** `test_each_section_is_one_message_and_carries_its_own_role` · `test_sections_order_comes_from_yaml` · `test_a_new_section_needs_only_yaml` · `test_a_section_without_a_role_raises` · `test_the_jailbreak_is_the_last_system_message`
+**验收** `test_each_section_is_one_message_and_carries_its_own_role` · `test_sections_order_comes_from_yaml` · `test_a_new_section_needs_only_yaml` · `test_a_section_without_a_role_raises`
 
 ### S76 · 只有三类条目，`type` 是显式字段
 
@@ -103,7 +103,7 @@ context 的产品文案的一部分。归段追问以前是一段四百多字的
 **为什么** 半截行**比没有更糟**——模型会以为这里本该有内容而自己补一个。
 空标题白占体量，同样会让模型以为这里缺了东西。
 
-**验收** `test_an_empty_variable_takes_its_line_with_it` · `test_empty_section_is_skipped_message_and_all` · `test_empty_nsfw_injects_nothing_at_all` · `test_empty_state_renders_cleanly`
+**验收** `test_an_empty_variable_takes_its_line_with_it` · `test_empty_section_is_skipped_message_and_all` · `test_empty_state_renders_cleanly`
 
 ### S78 · 装配器做减法：所见即所得
 

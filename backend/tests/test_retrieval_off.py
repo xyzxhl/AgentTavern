@@ -7,25 +7,25 @@
 
 from conftest import using
 
-from agenttavern.agents.replay import CONTEXT_BUDGET_CHARS, replay_messages
+from agenttavern.agents.replay import replay_messages
 from agenttavern.models import (
     Node,
     WorldbookEntry,
     WorldbookMode,
     WorldState,
 )
-from agenttavern.prompting import STATE_INLINE_LIMIT, render_state, render_worldinfo
+from agenttavern.prompting import render_state, render_worldinfo
 from agenttavern.tools import ToolRegistry, build_state_tools
 
 LONG = "很长的一段关系描述。" * 40
 
 
 def test_state_is_injected_in_full_when_query_is_off() -> None:
-    """关闭 `state_query` → **每轮全量注入**，长值不再截断。"""
-    state = WorldState(values={"林与陈.关系": LONG})
-    assert len(LONG) > STATE_INLINE_LIMIT
+    """关闭 `state_query` → **每轮全量注入**，叶端对象不再折叠。"""
+    state = WorldState(values={"案件": {"证物": {"铜盒": {"夹层": {"微刻": LONG}}}}})
 
-    assert "state_query 展开" in render_state(state, agent="director", expandable=True)
+    on = render_state(state, agent="director", expandable=True)
+    assert LONG not in on and "state_query 展开" in on
 
     off = render_state(state, agent="director", expandable=False)
     assert LONG in off
@@ -75,11 +75,8 @@ def test_worldinfo_tools_disappear_when_read_is_off() -> None:
 
 
 def _compacted(readable: bool) -> str:
-    # 体量要顶在**扁平化之后仍然留下的东西**上（S61）：正文留、轮次提示不留。
-    # 塞在提示里会被扁平化吃掉，压根越不了界。
-    filler = CONTEXT_BUDGET_CHARS
-    node = Node(prose="第一轮" + "长" * filler, prose_summary="她进店，他锁了门。")
-    tail = Node(parent_id=node.id, prose="第二轮" + "长" * filler)
+    node = Node(prose="第一轮", prose_summary="她进店，他锁了门。")
+    tail = Node(parent_id=node.id, prose="第二轮")
 
     return "\n".join(m.content or "" for m in replay_messages([node, tail], readable=readable))
 

@@ -101,34 +101,28 @@ session 只存一个 `worldbook_id`。
 `test_the_player_is_a_character_not_a_fifth_kind` ·
 `test_sessions_sharing_a_worldbook_share_the_player_character`
 
-### S67 · 静态条目按条展开，状态树按服务级深度折叠
+### S67 · 静态条目按条展开，状态树从叶端折叠
 
 **服务** [R5](../req/开局与设定.md)
 
 **规格** `world` 与 `character` 条目各自可设「一直在」或「需要时才展开」。
 `state` 条目先合成同一棵初始状态树，不使用逐条展开开关。
 
-**展开层级不在条目上**：状态折到第几层是**一个值**，写在
-`director.yaml` / `state_manager.yaml` 的 `- type: context, source: state`
-那一节的 `depth` 上，和 `recent` 的 `runs` 同形。默认 **2**。
+状态树对每个分支独立从叶端计算，把最后一个对象键与其叶子键值作为折叠单元；外层路径
+全部保留。规则固定，不按条目、agent、session 或服务配置深度，也不看字符串长度。
 
-这个深度和其它 agent choice 一样是**服务级**，同一台服务上的 session 共用。
-
-**不做** 让静态设定和初始状态共用一个开关；**不做**按 state 条目设展开层级。
+**不做** 让静态设定和初始状态共用一个开关；**不做**按 state 条目或从根部固定深度折叠。
 
 **为什么** 前一半：这两样东西的可见性**天然不同步**——一个角色的背景可能几百字、
 该按需展开，而他「在不在场」必须每轮都在眼前，共用一个开关时只能迁就其中一个。
 
-后一半是**推翻**：层级曾经是 `WorldbookEntry.depth`，理由写着"同一份设定里深浅
-差别很大"。那个理由站不住——**全部 `state` 条目合成的是同一棵树**
-（`compose_initial_state`），一条条目上的"给到第几层"合并之后根本没有对象。
+从根部固定深度会让深分支只留下宽泛父键，例如只显示「证物库」，模型不知道下面是否有
+铜盒夹层所需信息；从叶端折叠会留下「证物库 › 铜盒 › 夹层」这样的可判断地址。
 
-而且那条规格**从来没生效过**：`render_state` 的 `depth` 两个调用点都没传，
-恒为 0，折叠整个是死代码——**界面上那个「展开层级」输入框，用户填了、存了盘、
-对模型毫无影响**。这是「写在纸上的规格」最完整的一个标本：它读起来和落地了的
-一模一样，还配了一个能动的控件。
+**验收** `test_always_worldinfo_is_injected_on_demand_is_indexed` · `test_worldinfo_tools_only_when_something_is_expandable` · `test_state_folds_each_branch_from_its_leaf_end`
 
-**验收** `test_always_worldinfo_is_injected_on_demand_is_indexed` · `test_worldinfo_tools_only_when_something_is_expandable` · `test_the_fold_depth_comes_from_the_yaml_and_really_folds`
+按需条目的名字还是折叠后唯一可见的语义提要与 `worldinfo_read` 地址；名称质量与作者
+责任见 [Retrieval S180](Retrieval.md#s180-按需-worldbook-的名字同时承担提要与地址)。
 
 ### S68 · 设定的三路投影
 

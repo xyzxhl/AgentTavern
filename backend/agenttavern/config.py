@@ -136,8 +136,7 @@ class _GoalManager(BaseModel):
 
 
 class _Context(BaseModel):
-    budget_chars: int = 96_000
-    state_inline_limit: int = 200
+    pass
 
 
 class _Segment(BaseModel):

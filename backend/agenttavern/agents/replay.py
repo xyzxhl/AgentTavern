@@ -4,34 +4,19 @@
 `用户输入 → 用户插话 → 正文`。thinking、工具调用与工具结果都是 turn 内协议流量，
 不会进入节点，也不会在后续 turn 里换一种形态继续存活。
 
-## 压缩的触发方式：越界一次，全部替换
+## 压缩的触发方式：段落完成即替换
 
-压缩**不是段落一收就做**，而是等整份对话越过阈值再做，**并且一次把所有
-能被摘要顶替的段落全部替换掉**。
+归段判断确认一段完成并生成摘要后，该段从下一 turn 起直接以摘要进入历史；需要原文时
+再由 `history_read` 展开。触发条件是语义段落边界，不是上下文字符数。
 
-理由是缓存：持续对话的价值在于前缀稳定。**每收一段就替换一段，等于每隔几轮
-就动一次前缀，缓存反复失效**——那样还不如不持续。攒到越界再一次性替换，
-则失效只发生一次，两次压缩之间的所有轮次都命中同一个前缀。
-
-因此这里有两条线，**不要混**：
-
-- **分段**：`Node.closes_segment`，生成时当场判（S58）。它只是打标记。
-- **压缩**：本模块，按体量触发。它决定标记什么时候真正兑现成摘要。
+这会让每次归段改变一次缓存前缀；代价是明确的，但避免用字符阈值决定何时隐藏内容。
 """
 
 from __future__ import annotations
 
-from ..config import LIMITS
 from ..llm import Message, Role
 from ..models import InputSource, Node
 from ..prompting import rendering, special, special_messages
-
-CONTEXT_BUDGET_CHARS = LIMITS.context.budget_chars
-"""越过这个体量才压缩。
-
-取值上的取舍：**调小则压得勤、缓存失效频繁；调大则单次上下文更贵**。
-它不是模型的硬上限，是"多久动一次前缀"的旋钮——所以宁可偏大。
-"""
 
 
 def append_message(said: str) -> Message:
@@ -97,13 +82,6 @@ def _interjection_body(content: str, mark: str) -> str:
     if closing in after:
         return after.split(closing, 1)[0].strip()
     return content.strip()
-
-
-def _chars(messages: list[Message]) -> int:
-    """**推理段要算进去**（S62）。它是随消息一起发出去的，长度常常和正文相当——
-    不算的话预算会系统性低估，压缩迟迟不触发，而低估的幅度随对话变长而变大。
-    """
-    return sum(len(m.content or "") + len(m.reasoning_content or "") for m in messages)
 
 
 def _summary_message(node: Node, *, readable: bool, agent: str = "director") -> Message:
@@ -202,11 +180,9 @@ def _compact_goal_history(
     start_index: int,
     keep_directions: bool,
 ) -> list[Message]:
-    """按 director 的阈值和段边界折叠 goal_manager 的正文历史。"""
+    """按 director 的段边界折叠 goal_manager 的正文历史。"""
     if not path:
         return []
-    if _chars(full) <= CONTEXT_BUDGET_CHARS:
-        return full
 
     last_summarised = max(
         (index for index, node in enumerate(path) if node.prose_summary), default=-1
@@ -251,9 +227,9 @@ def goal_background_messages(path: list[Node], *, readable: bool = True) -> list
 def goal_replay_messages(
     path: list[Node], *, readable: bool = True, start_index: int = 1
 ) -> list[Message]:
-    """给 goal_manager 重放目标期间历史，使用 director 的同一压缩时机与段地址。
+    """给 goal_manager 重放目标期间历史，使用 director 的同一段边界与地址。
 
-    越界前逐轮给正文；越界后把已经归段的正文换成同一份段落摘要，并留下
+    已经归段的正文换成同一份段落摘要，并留下
     ``history_read`` 可展开的 key。用户亲自给出的输入/插话不随正文摘要消失。
     """
     full = [goal_turn_record(node, start_index + i) for i, node in enumerate(path)]
@@ -269,27 +245,20 @@ def goal_replay_messages(
 def replay_messages(path: list[Node], *, readable: bool = True) -> list[Message]:
     """沿路径重建 director 的对话。
 
-    历史轮次一律**扁平化**（S61）；未越界时全带，越界后**所有已归段的段落
-    一次性换成摘要**，最后一段之后的轮次仍以扁平形态在场。
+    历史轮次一律**扁平化**（S61）；所有已归段的段落换成摘要，最后一段之后的轮次
+    仍以扁平形态在场。归段而非字符数决定折叠。
     """
     if not path:
         return []
 
-    full: list[Message] = []
-    for node in path:
-        full.extend(flatten_turn(node))
-
-    if _chars(full) <= CONTEXT_BUDGET_CHARS:
-        return full
-
-    # 越界：从后往前找最后一个已归段的位置，它之前（含它）的全部替换。
+    # 从后往前找最后一个已归段的位置，它之前（含它）的完成段全部替换。
     last_summarised = -1
     for index, node in enumerate(path):
         if node.prose_summary:
             last_summarised = index
 
     if last_summarised < 0:
-        return full  # 还没有任何段落归好，只能先这么带着
+        return [message for node in path for message in flatten_turn(node)]
 
     compacted: list[Message] = []
     for index, node in enumerate(path[: last_summarised + 1]):

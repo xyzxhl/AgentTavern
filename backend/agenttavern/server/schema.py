@@ -24,7 +24,7 @@ from pydantic import TypeAdapter
 
 from ..models import Session, Worldbook, WorldbookBundle, WorldbookEntry
 from ..models.corpus import Corpus
-from .protocol import ClientMessage, ServerMessage
+from .protocol import ClientMessage, ServerMessage, TracePage
 
 TITLE = "AgentTavern 协议"
 
@@ -48,6 +48,7 @@ def export_schema() -> dict[str, Any]:
     bundle = TypeAdapter(WorldbookBundle).json_schema(ref_template="#/$defs/{model}")
     book = TypeAdapter(Worldbook).json_schema(ref_template="#/$defs/{model}")
     corpus = TypeAdapter(Corpus).json_schema(ref_template="#/$defs/{model}")
+    trace_page = TypeAdapter(TracePage).json_schema(ref_template="#/$defs/{model}")
 
     defs: dict[str, Any] = {}
     defs.update(client.pop("$defs", {}))
@@ -57,11 +58,13 @@ def export_schema() -> dict[str, Any]:
     defs.update(bundle.pop("$defs", {}))
     defs.update(book.pop("$defs", {}))
     defs.update(corpus.pop("$defs", {}))
+    defs.update(trace_page.pop("$defs", {}))
     defs["Session"] = session
     defs["WorldbookEntry"] = worldbook
     defs["WorldbookBundle"] = bundle
     defs["Worldbook"] = book
     defs["Corpus"] = corpus
+    defs["TracePage"] = trace_page
 
     # **两个联合本身也进 `$defs`**，根对象只 `$ref` 过去。生成器按 `$defs` 的键
     # 命名类型；写成根的内联属性的话，它们会变成 `Protocol["ClientMessage"]`
@@ -81,6 +84,7 @@ def export_schema() -> dict[str, Any]:
             "WorldbookBundle": {"$ref": "#/$defs/WorldbookBundle"},
             "Worldbook": {"$ref": "#/$defs/Worldbook"},
             "Corpus": {"$ref": "#/$defs/Corpus"},
+            "TracePage": {"$ref": "#/$defs/TracePage"},
         },
         "required": [
             "ClientMessage",
@@ -90,6 +94,7 @@ def export_schema() -> dict[str, Any]:
             "WorldbookBundle",
             "Worldbook",
             "Corpus",
+            "TracePage",
         ],
         "additionalProperties": False,
         "$defs": defs,

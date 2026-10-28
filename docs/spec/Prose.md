@@ -51,7 +51,9 @@
 
 **服务** [R14](../req/推进剧情.md)
 
-**规格** 放开措辞的同时**钉死信息**：数字、价钱、名字、期限细纲必须写死。
+**规格** 放开措辞的同时**钉死信息**：数字、价钱、名字、期限细纲必须写死。上文、用户
+输入或细纲已经固定数量、组成或名单时，正文各处必须使用同一事实，不能在列举成员后
+改称另一总数。
 用户已写出的原话是唯一例外，靠**引号**标记——**细纲里除此之外不出现引号**，
 两侧同一约定。
 
@@ -77,14 +79,14 @@
 **根在 director**：只在 writer 侧说"别这么收尾"治不了，那是细纲给的事实，照写才对。
 但实测**后半更管用**——director 仍会写，writer 已能跳过。
 
-**验收** `test_the_writer_never_gets_a_speaking_rule_of_its_own`
+**验收** `test_writer_receives_the_selected_speaking_rule_without_a_second_choice`
 
 ### S91 · 越界发生在哪一侧，规则就得在哪一侧
 
 **服务** [R15](../req/推进剧情.md)
 
-**规格** 抢话规则**两侧都要**。破限同理，而且**位置是约定的一部分**
-（压在历史之后）。
+**规格** 抢话规则**两侧都要**。同一个服务级 `speaking_rule` 只在 director 配置里
+选择一次；writer 在上文之后取得当前选项正文，不另设第二个可能漂移的选项组。
 
 **不做** 只在一侧写。
 
@@ -92,9 +94,8 @@
 **一旦它真的在展开，就会顺手把用户角色再往前推一步**——
 实测细纲停在"等林昭决定"，正文写出"她低头，指尖压了一下照片"。
 
-破限是两次独立的模型调用，**只解开一半等于没解开**。
-
-**验收** `test_the_jailbreak_is_the_last_system_message` · `test_the_writer_never_gets_a_speaking_rule_of_its_own` · `test_each_side_gets_its_own_sections_and_none_of_the_others`
+**验收** `test_writer_receives_the_selected_speaking_rule_without_a_second_choice` ·
+`test_each_side_gets_its_own_sections_and_none_of_the_others`
 
 ---
 

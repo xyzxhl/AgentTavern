@@ -25,14 +25,19 @@ FOLLOWUP_MARK = "本轮已经提交"
 STATE_MARK = "你负责维护一份"
 """state_manager 开场白的头几个字（S7）。用来认出是它在问。"""
 
-GOAL_MARK = "用户设置的目标"
-"""goal_manager 越狱词里的一句（S92）。用来在请求流水里认出是它在问。"""
-
 WRITER_MARK = "你收到的细纲描述的是"
 """writer 输入契约的头一句。**认头一句而不是标签**——装配器不再自动包
 `<本轮细纲>` 那样的标记了（R31：所见即所得）。「本轮细纲」在 director 的催促词
 里也出现，只认字面会把 director 一起认进去；这一整句只属于 writer。
 """
+
+
+def is_goal_request(payload: dict[str, Any]) -> bool:
+    """按 goal 专属工具识别请求，不依赖可编辑的提示词正文或消息位置。"""
+    return any(
+        tool.get("function", {}).get("name") in {"plan", "check", "steer", "finish"}
+        for tool in payload.get("tools", [])
+    )
 
 
 class ScriptedLLM:
@@ -99,7 +104,7 @@ class ScriptedLLM:
         # 走的都是非流式那条路，而产品跑的是另一条。
         streaming = bool(payload.get("stream"))
 
-        if self._on_goal_request and GOAL_MARK in messages[0].get("content", ""):
+        if self._on_goal_request and is_goal_request(payload):
             self._on_goal_request()
 
         if (

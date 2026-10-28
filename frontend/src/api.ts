@@ -7,6 +7,7 @@ import type {
   ServerMessage,
   Session,
   TraceEvent,
+  TracePage,
   Worldbook,
   WorldbookBundle,
   WorldbookEntry,
@@ -262,6 +263,11 @@ export const api = {
 
   /** 回看某一轮落盘的 trace（S115）。开发者面板靠它看当前连接之前的轮次。 */
   readTrace: (id: string, runId: string) => json<TraceEvent[]>(`/sessions/${id}/trace/${runId}`),
+  /** 大 trace 只从尾部取一页；``before`` 继续向更早的文件位置翻（S115）。 */
+  readTracePage: (id: string, runId: string, limit: number, before?: number) => {
+    const cursor = before === undefined ? "" : `&before=${before}`;
+    return json<TracePage>(`/sessions/${id}/trace/${runId}/page?limit=${limit}${cursor}`);
+  },
 
   // 导入导出。格式与三条约定见 docs/design/WorldbookFormat.md。
   exportWorldbook: (id: string) => json<WorldbookBundle>(`/worldbooks/${id}/export`),
@@ -275,25 +281,40 @@ export const api = {
 /**
  * 一条 session 的 WebSocket。
  *
- * **不自动重连。** 重连之后 UI 会拿到一份和服务端不一致的状态——服务端那侧
- * 正在跑的 run 还在跑，而前端已经忘了自己发过什么。断了就明说，由用户决定
- * 是否刷新，这比悄悄接上再显示错的东西好。
+ * 意外断线后自动重连。服务端会先推当前 state；若原 runner 还在运行，还会重新投影
+ * `run_started` 与待回答问题。流式旧片段可以丢，最终节点仍由权威结果整体替换。
+ * 4012 表示另一个页面已经接管，此时旧页面不能反向抢回连接。
  */
 export class SessionSocket {
   private ws: WebSocket | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private retryAttempt = 0;
+  private closedByClient = false;
 
   constructor(
     private readonly sessionId: string,
     private readonly onMessage: (message: ServerMessage) => void,
-    private readonly onClosed: (reason: string) => void,
+    private readonly onStatus: (reason: string | null, reconnected: boolean) => void,
   ) {}
 
   open(): void {
+    this.closedByClient = false;
+    this.connect();
+  }
+
+  private connect(): void {
     const scheme = location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${scheme}://${location.host}/sessions/${this.sessionId}/ws`);
     this.ws = ws;
 
+    ws.onopen = () => {
+      if (this.ws !== ws) return;
+      const reconnected = this.retryAttempt > 0;
+      this.retryAttempt = 0;
+      this.onStatus(null, reconnected);
+    };
     ws.onmessage = (event) => {
+      if (this.ws !== ws) return;
       // 解析失败不能拖垮整条连接——一条坏消息只是一条坏消息。
       try {
         this.onMessage(JSON.parse(event.data as string) as ServerMessage);
@@ -301,8 +322,23 @@ export class SessionSocket {
         console.error("无法解析的服务端消息", event.data, err);
       }
     };
-    ws.onerror = () => this.onClosed("连接出错");
-    ws.onclose = (event) => this.onClosed(event.wasClean ? "连接已关闭" : "连接断开");
+    // 浏览器在错误后还会给出 close；只在 close 上安排一次重连，避免并发建两条连接。
+    ws.onerror = () => undefined;
+    ws.onclose = (event) => {
+      if (this.ws !== ws || this.closedByClient) return;
+      this.ws = null;
+      if (event.code === 4012) {
+        this.onStatus("会话已由新的页面接管", false);
+        return;
+      }
+      this.onStatus("连接断开，正在重连…", false);
+      const delay = Math.min(1_000 * 2 ** this.retryAttempt, 5_000);
+      this.retryAttempt += 1;
+      this.retryTimer = setTimeout(() => {
+        this.retryTimer = null;
+        if (!this.closedByClient && this.ws === null) this.connect();
+      }, delay);
+    };
   }
 
   send(message: ClientMessage): boolean {
@@ -313,9 +349,15 @@ export class SessionSocket {
 
   close(): void {
     // 主动关闭时不该再触发"连接断开"的提示。
-    if (!this.ws) return;
-    this.ws.onclose = null;
-    this.ws.close();
+    this.closedByClient = true;
+    if (this.retryTimer !== null) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+    if (this.ws) {
+      this.ws.onclose = null;
+      this.ws.close();
+    }
     this.ws = null;
   }
 }

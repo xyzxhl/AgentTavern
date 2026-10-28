@@ -39,6 +39,7 @@ from ..models.state import Tree
 from .assembler import (
     Prompt,
     assemble,
+    choice_text,
     param,
     rendering,
     special_text,
@@ -72,10 +73,6 @@ def render_voices(worldinfo: Sequence[WorldbookEntry] = ()) -> str:
     )
 
 
-STATE_INLINE_LIMIT = LIMITS.context.state_inline_limit
-"""单个状态值超过这个长度就只给体量、不给内容，由模型按需 state_query 展开。"""
-
-
 def upstream_runs() -> int:
     """给 writer 几轮**正文**上文。**参数住在 `upstream` 那条 context 上**（S80）。
 
@@ -95,20 +92,6 @@ def state_recent_runs() -> int:
     return param("state_manager", "recent", "runs", LIMITS.windows.state_recent_runs)
 
 
-def fold_depth(agent: str) -> int:
-    """这个 agent 的状态给到第几层。**一个值，写在那一节 context 上**（S67）。
-
-    它以前按**条目**设（`WorldbookEntry.depth`），理由是"同一份设定里深浅差别很大"。
-    那条规格**从来没生效过**：`render_state` 的 `depth` 两个调用点都没传，恒为 0,
-    折叠整个是死代码，而界面上那个「展开层级」输入框用户填了、存了盘、
-    对模型毫无影响。现在它和 `recent` 的 `runs` 同形，改一处就生效。
-
-    默认 2：角色 › 王五 › 底下的东西折起来。再浅一层连人名都看不见，
-    再深一层就等于不折。
-    """
-    return param(agent, "state", "depth", 2)
-
-
 def _fold_text(agent: str, kind: str) -> FoldText:
     """折起来的地方摆哪句话。**从 YAML 取，一个字都不在代码里拼**（R31）。
 
@@ -117,17 +100,13 @@ def _fold_text(agent: str, kind: str) -> FoldText:
     两份 YAML 的 `rendering` 里各有一份。这不是"一件事两个入口"——它们是发给
     两个不同 agent 的两条不同消息，本来就该能分别改。
     """
-    return FoldText(
-        long=lambda chars: rendering(agent, f"{kind}_long", chars=chars),
-        # 只有状态是多层的；worldinfo 那棵树是 `条目名 → 正文`，一层到底。
-        deeper=(lambda count: rendering(agent, "state_deeper", count=count))
-        if kind == "state"
-        else None,
-    )
+    if kind == "worldinfo":
+        return FoldText(leaf=lambda chars: rendering(agent, "worldinfo_on_demand", chars=chars))
+    return FoldText(deeper=lambda count: rendering(agent, "state_deeper", count=count))
 
 
 def render_state(state: WorldState, *, agent: str, expandable: bool = True) -> str:
-    """状态默认包：**JSON**，全量键名 + 深处与长值折起来。
+    """状态默认包：**JSON**，全量外层路径 + 叶端两层对象折起来。
 
     ## 为什么是 JSON
 
@@ -141,8 +120,8 @@ def render_state(state: WorldState, *, agent: str, expandable: bool = True) -> s
     自带区分，不需要任何额外标记，而且**和 `state_write` 的参数是同一套写法**——
     模型读到什么形状就写回什么形状，中间没有一次翻译。
 
-    **层次靠嵌套，不靠点分键名**（S31）：折到第几层由 `fold_depth` 从 YAML 取，
-    更深的只给项数，模型按需 `state_query` 展开。
+    **层次靠嵌套，不靠点分键名**（S31）：从叶端起最后两层作为折叠单元，外层路径
+    全部保留，模型按需 `state_query` 展开。不按字符串字数折叠。
 
     **不预设任何维度。** 键由模型自由命名，时间、地点、角色属性的粒度与形态都
     取决于故事，定不了固定 schema（见 models/state.py）。
@@ -157,9 +136,8 @@ def render_state(state: WorldState, *, agent: str, expandable: bool = True) -> s
     if expandable:
         values = fold(
             values,
-            depth=fold_depth(agent),
+            tail_depth=2,
             texts=_fold_text(agent, "state"),
-            inline_limit=STATE_INLINE_LIMIT,
         )
     return json.dumps(values, ensure_ascii=False, indent=2, sort_keys=True)
 
@@ -191,13 +169,12 @@ def render_worldinfo(entries: list[WorldbookEntry], *, expandable: bool = True) 
 
     parts = [f"### {e.name}\n{e.content}" for e in always if e.content]
     if on_demand:
-        # `inline_limit=0`：**按需条目一律折起来**，不看它有多长。
-        # 它和状态里那个"长过多少字才折"是两条不同的规则，共用同一个折叠器。
+        # **按需条目一律折起来**，不看它有多长。
         folded = fold(
             {e.name: e.content for e in on_demand},
-            depth=0,
+            tail_depth=0,
             texts=_fold_text("director", "worldinfo"),
-            inline_limit=0,
+            fold_text_leaves=True,
         )
         index = "\n".join(f"- {name}{mark}" for name, mark in folded.items())
         # 「用 worldinfo_read 按名字展开。」是一句**明确的操作指令**，所以它也归
@@ -316,6 +293,9 @@ def writer_prompt(
         contexts={
             "character_voices": render_voices(worldinfo),
             "upstream": upstream,
+            # 用户角色代言边界是服务级选择：director 决定剧情时与 writer 落成
+            # 正文时必须读到同一段正文，不能让两份 choice 独立漂移（S91）。
+            "speaking_rule": choice_text("director", "speaking_rule"),
             "outline": outline,
         },
         # 用户扮演谁是**这个世界的设定**（S76 那条判据：换个人来读、换局故事

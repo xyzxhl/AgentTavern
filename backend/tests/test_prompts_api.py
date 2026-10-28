@@ -70,6 +70,7 @@ def test_a_tool_carries_its_description_and_its_schema(client) -> None:
 
     schema = doc["params"]["state_query"]
     assert "paths" in schema["properties"], "参数由 Python 生成，只读"
+    assert "after" in doc["params"]["close_segment"]["properties"]
     assert "submit_outline" not in doc["params"]
 
 

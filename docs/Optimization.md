@@ -11,7 +11,7 @@
 
 | 类别 | 具体 |
 |---|---|
-| **上下文装配** | 注入什么、多少、什么顺序；两个滑动窗口（`upstream_runs` / `state_recent_runs`）、`state_inline_limit`、默认包范围 |
+| **上下文装配** | 注入什么、多少、什么顺序；两个滑动窗口（`upstream_runs` / `state_recent_runs`）、默认包范围 |
 | **提示词** | 四个 agent（director / writer / state_manager / goal_manager）+ 一次单次调用（summarize）；当前完整套装在管理页选择，默认文件在 `prompting/*.yaml`，副本在 `prompting/sets/` |
 | **工具面** | 各工具的名称、描述、参数描述；能力开关的默认值。**描述只说「作用 + 参数格式」**，判据归 YAML（S27） |
 | **措辞映射** | choice 枚举值 → 提示词片段（输入处理、控制权、抢话、三项独立密度） |

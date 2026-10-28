@@ -46,7 +46,7 @@ def build_tools(
     tools: list[Tool[Any]] = []
 
     # `state_query` 是**按需展开**，可以单独关。关掉时 state 每轮全量注入——
-    # 没有展开的路还隐藏长值，就成了有损筛选（P13）。
+    # 没有展开的路还隐藏叶端对象，就成了有损筛选（P13）。
     # state_manager 整个关掉时它也没意义：查一份永远是空的状态。
     if has_state and enabled("state_manager") and tool_enabled("director", "state_query"):
         tools.append(state_query_tool("director"))

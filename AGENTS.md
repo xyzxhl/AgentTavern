@@ -26,8 +26,8 @@
 - 正常剧情生成始终走 agent 路径，不保留绕过它的“直接生成”快路径。
 - 一条从队列出队的顶层 user input 开启一个 turn；turn 内纠正或引导不另开 turn，
   重生成只为同一 turn 创建新版本。每个 run 在 turn 内产生一份细纲和一份正文；细纲
-  是交给 writer 的临时制品，完整 run 在故事树上只把正文、状态增量与偏离报告落成
-  一个原子节点。未完成的 run 只能是草稿，不能伪装成节点。
+  是交给 writer 的临时制品。完整 run 在故事树上把正文、状态增量与偏离报告落成一个
+  原子节点。未完成的 run 只能是草稿，不能伪装成节点。
 - 默认数据流固定、单向：
 
 ```text
@@ -44,7 +44,9 @@ director -> writer -> state_manager -> goal_manager（仅有 goal 时）
 
 ## 数据边界与历史
 
-- `worldinfo` 是用户维护的静态设定；`state` 是剧情推进形成的当前世界状态；`history` 是沿故事路径累积的正文历史。不要混用这三个词。
+- `worldinfo` 是用户维护的静态设定；`state` 是剧情推进形成的当前世界状态；`history`
+  是沿故事路径累积的产品历史，其中正文是叙事主干。不要混用这三个词，也不要让摘要
+  取得剧情事实地位。
 - state 是 history 的检索捷径，不是第二份剧情记录。存储层不预设时间、地点、人物属性等固定维度；值保持任意嵌套 JSON。
 - 当前 state 是“初始状态 + 当前路径上的节点增量”的重放结果，不是全局单例，也不是独立权威快照。切换分支必须同时切换并重放 state 与 history。
 - worldbook、corpus、session 都是一级资产：worldbook 与 corpus 可被多个 session 引用，session 只保存引用，不复制资产。
@@ -53,10 +55,12 @@ director -> writer -> state_manager -> goal_manager（仅有 goal 时）
 - 「用户扮演谁」属于 worldbook，不是 session 覆盖项；复用同一 worldbook 的 session
   共用同一个玩家角色。
 - trace 全局 append-only，不随分支切换；默认不落盘，开发者模式下按 run 完整落盘。
-- director 的跨 turn history 每轮只保留「顶层 user input → 按顺序的插话 → 正文」；
+- director 的跨 turn history 每轮只保留「顶层 user input → 按顺序的插话 → 正文」。
   goal 跨 turn 保留正文、用户亲自给出的方向与当前有效 plan，模拟输入不重复回灌。
-  两者共享段落折叠与 `history_read` 展开；thinking、tool call/result 不进入两者。
-- 只持久化权威数据。缓存、索引、摘要和当前 state 都应能由其来源重建，不能反过来成为真相。
+  两者共享段落折叠与 `history_read` 展开；原始 thinking、tool call/result 不进入两者。
+- 只持久化权威源数据和规格明确要求的可编辑产品记录。缓存、索引、正文摘要和当前
+  state 都不能反过来成为剧情真相；其中可再生的派生数据应能
+  由来源重建。
 
 ## 分支、输入与中断
 
@@ -72,7 +76,7 @@ director -> writer -> state_manager -> goal_manager（仅有 goal 时）
 - 被打断阶段的半成品作废；尤其半截正文不能进入节点。工具调用与工具结果必须保持协议配对。
 - thinking、tool call/result 与运行时错误的生命周期只到当前 turn：运行中留在内存，
   挂起时为恢复而持久化进草稿；turn 完成、放弃或失败后不进入节点或后续 context。
-  开发者 trace 是独立的审计旁路，不是模型上下文来源。
+  不再另行生成跨轮推演摘要。开发者 trace 是独立的审计旁路，不是模型上下文来源。
 - 只允许直接编辑当前活跃路径最后一个已完成 turn，且只能在它完成后、下一条顶层
   user input 成功提交前编辑。有 run 正在执行或挂起时一律禁止编辑。编辑不重跑 agent、
   不重算后代、摘要或缓存；可能返回旧值的派生缓存必须失效，但不立即重建。正文与状态
@@ -83,6 +87,11 @@ director -> writer -> state_manager -> goal_manager（仅有 goal 时）
 - 代码只判断形状、协议、计数和其它可机械验证的事实，不判断自然语言内容是否合理。
 - 正则和阈值默认是采样器或诊断信号，不是内容裁判。不要用字数、模板命中、风格指标等硬门禁迫使模型牺牲质量。
 - 规则可以覆盖全集后降低精度，但不能静默筛掉模型不知道存在的信息。折叠项必须留下可用地址与体量，并能按地址展开。
+- 渐进式披露不以字符数触发：state 对每个分支从叶端折叠最后两层，worldbook 按用户
+  选择的按需模式折叠，history 按已完成剧情段折叠。展开仍必须全量返回。
+- worldbook 按需条目的名字同时是索引提要与展开地址。系统不替用户推断或生成更好的
+  名字；用户应让名字足以说明主题、适用场景与关键区分，使模型能在不试读正文时判断
+  是否值得展开。
 - state、worldinfo、history 的展开必须全量返回；若完整结果超出上下文，整个 turn 明确
   失败，不分页、不截断、不静默降级，也不留下可恢复草稿或节点。
 - 外部 corpus 检索是明确的例外：它是尽力而为的增强，不承诺查全；“这次检索没找到”不能写成“资料里没有”。
@@ -95,8 +104,8 @@ director -> writer -> state_manager -> goal_manager（仅有 goal 时）
 
 - `backend/agenttavern/prompting/*.yaml` 与 `backend/agenttavern/prompting/sets/*/*.yaml` 的提示词正文属于用户。除非任务明确要求，不要顺手润色、改写或“统一语气”。结构、顺序、开关和文件头说明可以按规格修改。
 - 凡新增且可能进入后续 context 的**产品内容**，都必须有明确归属和可审查入口；
-  不要在 Python/TypeScript 中新藏一份重复提示词。thinking、tool call/result 与运行时错误
-  是只读执行记录，不在这项可编辑承诺内。
+  不要在 Python/TypeScript 中新藏一份重复提示词。thinking、tool call/result 与运行时
+  错误是只读执行记录，不在这项可编辑承诺内。
 - 一份 agent 文件描述该 agent 收到的全部可编排内容。`text`、`context`、`choice` 三类条目必须显式标型；一个 section 对应一条消息。
 - 提示词按完整套装管理，不做稀疏覆盖或跨套装继承。当前套装是服务级选择，在 turn 开始时随全部配置一起冻结。
 - 未知 context、缺失变量、非法 role、无效 selected 等配置错误应尽早、明确失败，不能静默跳过或悄悄回退。

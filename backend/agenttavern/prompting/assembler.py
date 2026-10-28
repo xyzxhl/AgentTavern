@@ -12,7 +12,7 @@
 ## 一个条目 = 一条消息，**role 必须写出来**
 
 装配出来的不是一整块文本，是**一串消息**。`sections` 里的每个条目就是其中一条，
-它的 `role` 写在条目上。这样一来「破限放在历史之后」「上文用 user 还是 assistant」
+它的 `role` 写在条目上。这样一来「角色控制规则放在上文之后」「上文用 user 还是 assistant」
 这类决定都在 YAML 里，不在代码里。
 
 ## 只有三类条目（R31）
@@ -519,6 +519,19 @@ def selected(name: str, group: str) -> str:
         if isinstance(item, dict) and item.get("type") == "choice" and item.get("name") == group:
             return str(item.get("selected") or "")
     return ""
+
+
+def choice_text(name: str, group: str) -> str:
+    """返回一组 ``choice`` 当前选中档位的正文。
+
+    这用于让一个服务级选择进入另一个调用，而不在第二份 agent 配置里复制一组
+    可能漂移的选项（S91）。找不到时明确失败：调用方既然声明依赖这项约束，静默
+    省略会把配置错误伪装成偶发的模型越权。
+    """
+    for index, item in enumerate(load(name).get("sections") or []):
+        if isinstance(item, dict) and item.get("type") == "choice" and item.get("name") == group:
+            return _resolve(item, f"{name}.yaml sections[{index}]").strip()
+    raise KeyError(f"{name}.yaml 里没有 choice `{group}`")
 
 
 def call_of(name: str) -> Call:

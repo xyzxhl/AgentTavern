@@ -585,8 +585,8 @@ async def test_the_segment_followup_receives_each_complete_prose(tmp_path: Path)
 async def test_open_run_count_resets_at_the_previous_close(tmp_path: Path) -> None:
     """追问要带上**这一段已经开了几轮**，而那是"上一个结尾之后有多少轮"。
 
-    不能用"待归段有多少轮"——那只含已滑出全文窗口的部分，拿它去问会让模型
-    以为这一段才刚开始，于是每轮都答"收"。实测那一版查准只有 0.25（S58）。
+    不能用错误的局部缓冲代替「上一个结尾之后有多少轮」，否则模型会以为这一段
+    才刚开始，于是每轮都答"收"。实测那一版查准只有 0.25（S58）。
     """
     from agenttavern.orchestration.run import _open_segment
 
@@ -676,7 +676,7 @@ async def test_manual_close_does_not_ask_the_model(tmp_path: Path) -> None:
 
 
 async def test_backfill_failure_does_not_fail_the_run(tmp_path: Path) -> None:
-    """归段失败只该回退到头部截断——这一轮已经落盘了，不能因此报错。"""
+    """归段失败保留正文原文——这一轮已经落盘了，不能因此报错。"""
 
     runs = 4
     llm = _script(runs, "她推开门，屋里坐着陈。" * 30, closes=[0, 0, 0, 4])

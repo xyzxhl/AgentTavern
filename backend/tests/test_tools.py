@@ -117,6 +117,30 @@ async def test_unmentioned_keys_survive(reg, ctx) -> None:
     assert ctx.current_state().values["陈"]["在场"] is True
 
 
+async def test_state_write_rejects_a_new_root_that_duplicates_an_existing_branch(reg, ctx) -> None:
+    """S32：任意 schema 仍允许新增根，但不能把既有对象的同名键复制到根部。"""
+    await call(
+        reg,
+        ctx,
+        "state_write",
+        set={"装备": {"载具": {"白桅号": {"状态": "停泊星陨港"}}}},
+    )
+
+    result = await call(
+        reg,
+        ctx,
+        "state_write",
+        set={"载具": {"白桅号": {"状态": "停泊森冠"}}},
+    )
+
+    assert result.is_error
+    assert "装备 › 载具" in result.content
+    assert "载具" not in ctx.staged_delta.set, "错误调用不能把重复根暂存进去"
+
+    fresh = await call(reg, ctx, "state_write", append={"悬置": ["等待授旗"]})
+    assert not fresh.is_error, "没有同名既有路径的新根仍然合法"
+
+
 async def test_any_shape_of_key_is_accepted(reg, ctx) -> None:
     """时间、地点、角色属性的粒度与形态都取决于故事，存储层不预设任何维度。
 
@@ -174,6 +198,22 @@ async def test_invalid_params_are_recoverable(reg, ctx) -> None:
     assert ctx.state_write_count == 0
 
 
+async def test_state_write_rejects_lists_in_set_without_staging_them(reg, ctx) -> None:
+    """清单整体覆盖会静默丢项；参数错误回给模型，让当前 loop 改用增删（S32）。"""
+    result = await call(
+        reg,
+        ctx,
+        "state_write",
+        set={"案件": {"线索": ["纸条"]}, "地点": "钟楼"},
+    )
+
+    assert result.is_error
+    assert "案件 › 线索" in result.content
+    assert "remove" in result.content and "append" in result.content
+    assert ctx.state_write_count == 0
+    assert ctx.staged_delta.is_empty()
+
+
 async def test_unknown_state_path_returns_what_is_available(reg, ctx) -> None:
     """查不到就把现有结构回给模型，顺带起到防键名漂移的作用。"""
     await call(reg, ctx, "state_write", set={"林与陈": {"关系": "疏远"}})
@@ -197,7 +237,13 @@ async def test_querying_a_branch_gives_the_whole_subtree(reg, ctx) -> None:
     展开层级把深处折成了「N 项」，模型看到的就是那一层的位置，
     所以它必须能照着那个位置直接要下去。
     """
-    await call(reg, ctx, "state_write", set={"林": {"在场": True, "知情": ["照片"]}})
+    await call(
+        reg,
+        ctx,
+        "state_write",
+        set={"林": {"在场": True}},
+        append={"林": {"知情": ["照片"]}},
+    )
     result = await call(reg, ctx, "state_query", paths=[["林"]])
     assert "在场" in result.content and "照片" in result.content
 
@@ -313,6 +359,25 @@ async def test_a_miss_hands_back_the_keys_that_do_exist(reg, ctx) -> None:
     assert "林与陈 › 关系" in result.content
 
 
+async def test_a_miss_says_available_keys_are_addresses_not_content(reg, ctx) -> None:
+    """S157：长名字里的提要不能被模型误认成已经展开的条目正文。"""
+    ctx.repo.book().save_entry(
+        WorldbookEntry(
+            name="场景·镜沙·七镜商路｜商旅护送与沙暴避险",
+            content="只有正文里才有的七片盐镜细节。",
+            mode=WorldbookMode.ON_DEMAND,
+        )
+    )
+
+    result = await call(reg, ctx, "worldinfo_read", paths=[["场景·镜沙·七镜商路"]])
+
+    assert result.is_error
+    assert "可用的精确地址" in result.content
+    assert "不是条目正文" in result.content
+    assert "逐字复制完整地址" in result.content
+    assert "七片盐镜细节" not in result.content
+
+
 async def test_a_partial_miss_still_returns_what_it_found(reg, ctx) -> None:
     """**部分命中照样给**：为了几条不存在的地址把整次调用判成失败，
     等于让模型多花一轮重来。
@@ -342,23 +407,6 @@ async def test_expanding_gives_everything_no_budget_no_paging(reg, ctx) -> None:
     assert "没给全" not in body.content and "截断" not in body.content
 
 
-# -- 截断必须出声 ------------------------------------------------------------
-#
-# **隐藏不是截断。** 长值换成"用 state_query 展开"是无损降维，展开的路还在。
-# 真截断只剩一处了：前情索引里没归过段的那几轮给的是"正文前 N 字"，
-# 那是真的砍掉了尾巴，砍掉了就得说清丢了多少（P13 同一条理由）。
-
-
-async def test_an_index_entry_says_how_much_it_left_out(reg, ctx) -> None:
-    """索引里的头部截断要报出全文字数——那是模型决定要不要 `history_read` 的依据。"""
-    node = Node(prose="很长的一轮正文。" * 60)
-    assert "……（截断，全文共" in node.summary_or_head(120)
-    assert str(len(node.prose)) in node.summary_or_head(120)
-
-    short = Node(prose="很短。")
-    assert short.summary_or_head(120) == "很短。", "没截断就不要加噪声"
-
-
 # -- close_segment ----------------------------------------------------------
 
 
@@ -369,8 +417,8 @@ def test_close_segment_is_in_no_tool_face() -> None:
     它只出现在生成后追问那一次独立调用里（`agents/postrun.py`）。
 
     `summarize` 曾经在 director 的工具面里（S25）。**它整个删掉了**——
-    压缩由编排层在轮次滑出全文窗口时自己做，模型不该有一个主动触发压缩的
-    入口：判定和压缩本来就不同步，给它这个工具等于请它去动一件它管不着、
+    压缩由编排层在段落收束时自己做，模型不该有一个主动触发压缩的
+    入口：判定和摘要是编排层的连续动作，给它这个工具等于请它去动一件它管不着、
     也看不见后果的事。
     """
     faces = [

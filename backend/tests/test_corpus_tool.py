@@ -152,7 +152,7 @@ def test_writer_never_sees_corpus_hits() -> None:
     顺带钉住 writer **一个工具都没有**：这是它是一次干净调用的前提。
     """
     sources = {s.get("source") for s in load("writer")["sections"] if s.get("type") == "context"}
-    assert sources == {"character_voices", "upstream", "outline"}
+    assert sources == {"character_voices", "upstream", "speaking_rule", "outline"}
     assert not load("writer").get("tools"), "writer 一个工具都不该有"
 
 

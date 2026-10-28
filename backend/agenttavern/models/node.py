@@ -95,8 +95,7 @@ class Node(BaseModel):
     可能只占半轮。按轮切分不是语义单位，切出来的东西既不好读、条数也不收敛
     （50 轮就是 50 条索引，Q23 的规模问题原样还在）。
 
-    ``None`` 表示这一节点还没有被归入任何已完成的段落——它要么还在窗口内，
-    要么在等这一段结束。索引对它回退到"前 N 字 + 字数"，仍满足 P13。
+    ``None`` 表示这一节点还没有被归入任何已完成的段落，仍以正文原文进入 history。
     """
 
     interjections: list[str] = Field(default_factory=list)
@@ -109,8 +108,8 @@ class Node(BaseModel):
     closes_segment: bool = False
     """这一轮是不是一段剧情的结尾。**在生成之后当场判定**（S58）。
 
-    判定与压缩必须分开：**判定在生成时**（director 刚写完，知道这场戏收没收），
-    **压缩在需要时**（那几轮滑出全文窗口之后）。
+    判定与压缩仍是两个动作：**判定在生成时**（director 刚写完，知道这场戏收没收），
+    **压缩在下一次重放时**兑现成摘要。
 
     合在一起做过一版，漏判很严重：待归段缓冲区里只有已滑出窗口的轮次，
     所以"第 9 轮是个分界"要等三轮之后才被问到——**而那时问的人已经看不到
@@ -145,17 +144,3 @@ class Node(BaseModel):
     # `goal_plan` **已删除**（S92）。S92 把它挂在节点上是为了分支隔离；
     # goal 跑着的时候不允许切分支之后，那个理由不成立了。计划现在挂在
     # `Session.goal_run.plan` 上，跟着 goal 的生命周期走。
-
-    def summary_or_head(self, head_chars: int = 120) -> str:
-        """history 索引用的摘要。无缓存时回退到头部截断。
-
-        **截断要出声**：一个省略号说不清丢了多少，而模型据此判断"这一轮我看全了
-        没有"。所以直接把还剩多少字写出来——那是它决定要不要 `history_read`
-        的唯一依据。隐藏（"用工具展开"）不算截断，那条路是无损的；这里是真的
-        砍掉了尾巴，砍掉了就得说。
-        """
-        if self.prose_summary:
-            return self.prose_summary
-        if len(self.prose) <= head_chars:
-            return self.prose
-        return f"{self.prose[:head_chars]}……（截断，全文共 {len(self.prose)} 字）"

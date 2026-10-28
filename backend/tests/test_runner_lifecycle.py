@@ -6,11 +6,13 @@
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from conftest import FOLLOWUP_MARK, STATE_MARK, ScriptedLLM, text, tool
+from starlette.websockets import WebSocketDisconnect
 
 from agenttavern.agents.director import _operation
 from agenttavern.models import Actor, Goal, GoalRun, Node, Session, SessionMeta, UserInput
@@ -147,7 +149,9 @@ async def test_stop_and_correction_pause_the_active_goal(tmp_path: Path) -> None
                 await blocker
 
 
-async def test_a_broken_socket_stops_the_sender_after_one_failure(tmp_path: Path) -> None:
+async def test_a_broken_socket_stops_the_sender_after_one_failure(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     """连接关闭后只记录一次发送失败，后续 trace/delta 不再堆积或反复发送。"""
     store = Store(tmp_path)
     repo = store.create_session(Session())
@@ -159,6 +163,7 @@ async def test_a_broken_socket_stops_the_sender_after_one_failure(tmp_path: Path
         raise RuntimeError("socket closed")
 
     runner = SessionRunner(repo, ScriptedLLM(*one_run()).gateway(), broken_broadcast)
+    caplog.set_level(logging.ERROR, logger="agenttavern.server.runner")
     runner.start()
     try:
         runner._emit(QueueStatus(pending=["第一条"]))
@@ -167,6 +172,41 @@ async def test_a_broken_socket_stops_the_sender_after_one_failure(tmp_path: Path
         await asyncio.sleep(0)
 
         assert attempts == 1
+        assert runner._out.empty()
+        records = [
+            record for record in caplog.records if record.name == "agenttavern.server.runner"
+        ]
+        assert [record.levelno for record in records] == [logging.ERROR]
+        assert records[0].getMessage().startswith("websocket_send_failed")
+        assert records[0].exc_info is not None
+    finally:
+        await asyncio.wait_for(runner.aclose(), timeout=2.0)
+
+
+async def test_a_normal_websocket_disconnect_is_not_logged_as_an_error(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """浏览器正常离开只记 INFO，不用 ERROR 栈污染服务诊断（S175）。"""
+    store = Store(tmp_path)
+    repo = store.create_session(Session())
+
+    async def disconnected_broadcast(_message: object) -> None:
+        raise WebSocketDisconnect(code=1001)
+
+    runner = SessionRunner(repo, ScriptedLLM(*one_run()).gateway(), disconnected_broadcast)
+    caplog.set_level(logging.INFO, logger="agenttavern.server.runner")
+    runner.start()
+    try:
+        runner._emit(QueueStatus(pending=["第一条"]))
+        assert await _until(lambda: runner._sender_task is not None and runner._sender_task.done())
+
+        records = [
+            record for record in caplog.records if record.name == "agenttavern.server.runner"
+        ]
+        assert [record.levelno for record in records] == [logging.INFO]
+        assert records[0].getMessage().startswith("websocket_disconnected_during_send")
+        assert records[0].exc_info is None
+        assert not runner._delivery_open
         assert runner._out.empty()
     finally:
         await asyncio.wait_for(runner.aclose(), timeout=2.0)

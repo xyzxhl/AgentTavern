@@ -35,7 +35,12 @@ from ..prompting import (
     save,
     set_active_set,
 )
-from ..tools import build_state_tools, build_tools, goal_tools
+from ..tools import (
+    build_state_tools,
+    build_tools,
+    close_segment_tool,
+    goal_tools,
+)
 
 
 class PromptDoc(BaseModel):
@@ -65,7 +70,12 @@ def _params() -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     # `corpora=[…]` 是个占位：`corpus_search` 只在挂了资料时才注册（S145），
     # 而页面要显示的是「这个工具长什么样」，跟此刻挂没挂资料无关。
-    for tool in [*build_tools(corpora=[Corpus()]), *build_state_tools(), *goal_tools()]:
+    for tool in [
+        *build_tools(corpora=[Corpus()]),
+        *build_state_tools(),
+        *goal_tools(),
+        close_segment_tool(),
+    ]:
         out[tool.name] = tool.params_type.model_json_schema()
     return out
 
@@ -82,6 +92,7 @@ _FAKE_CONTEXTS: dict[str, Any] = {
     "user_input": "（试装配）",
     "character_voices": "（试装配）",
     "upstream": "（试装配）",
+    "speaking_rule": "（试装配）",
     "outline": "（试装配）",
     "prose": "（试装配）",
     "recent": "（试装配）",

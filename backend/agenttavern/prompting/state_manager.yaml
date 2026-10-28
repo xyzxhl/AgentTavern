@@ -46,6 +46,8 @@ sections:
 
     尤其注意位置、在场人物、时间、资源、倒计时等容易过期的状态。
 
+    时间只以正文中已经明确发生的事实为准。若正文内部的绝对时间与“当天”“次日”“明日”等相对指代冲突，或无法唯一确定，不要自行选择一个精确时间；其它无歧义的状态仍照常维护。
+
     本轮没有发生变化的状态不要擅自修改。
 
     # 区分世界事实与角色的知情状态
@@ -61,6 +63,7 @@ sections:
     - 数量优先使用数字，二值状态优先使用布尔值；
     - 一个字段只表达一种状态，不把多个独立事实塞进同一句描述；
     - 清单只保存当前仍有效的项目，不积累历史；
+    - 清单用 append 增项、用 remove 删项；不要把记忆中的整份清单交给 set 覆盖；
     - 新建字段前检查是否已有字段表达同一事实；
     - 不要为了整理而无意义地重写结构。
 - type: text
@@ -69,7 +72,6 @@ sections:
 - type: context
   role: user
   source: state
-  depth: 2
 - type: context
   role: user
   source: recent
@@ -83,9 +85,8 @@ tools:
     body: 记录本轮状态变化。参数直接给顶层 set、append、remove，不要外套 arguments 或 JSON 字符串；可多次调用并累积，没有变化就不调。
   state_query:
     enabled: true
-    body: 按路径展开世界状态。上下文里已给出结构，深过展开层级的子树与体量大的值只给了个数/字数，这里用来把它们取出来。
+    body: 按路径展开世界状态。上下文保留外层路径，并将每个分支从叶端起的最后两层对象折叠；这里用来按显示的精确路径取回完整内容。
 rendering:
   state_empty: （尚无记录）
-  state_long: （{{chars}} 字，用 state_query 展开）
   state_deeper: （{{count}} 项，用 state_query 展开）
   recent_empty: （这是第一轮，前面没有可参照的记录。）

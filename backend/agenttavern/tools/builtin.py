@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..disclosure import expand, keys_of
 from ..models import StateDelta, WorldbookMode
-from ..models.state import Tree, paths_of
+from ..models.state import Tree, paths_of, walk
 from ..models.state import label_path as _label
 from ..prompting import tool_description
 from .base import Tool, ToolResult, error
@@ -72,14 +72,20 @@ async def _expand(
 
     if got.empty:
         available = "、".join(keys_of(tree)) or "（无）"
+        content_kind = "条目正文" if what == "设定" else f"{what}内容"
         return error(
-            f"没有这些位置：{'、'.join(got.missing)}。当前有：{available}",
+            f"没有展开任何{what}内容：{'、'.join(got.missing)}。"
+            f"以下只是可用的精确地址列表，不是{content_kind}：{available}。"
+            "请从列表中逐字复制完整地址后重新调用。",
             label=f"展开{what} {'、'.join(got.missing)} 未命中",
         )
 
     content = json.dumps(got.found, ensure_ascii=False)
     if got.missing:
-        content += f"\n（不存在的位置：{'、'.join(got.missing)}）"
+        content += (
+            f"\n（不存在的位置、没有展开：{'、'.join(got.missing)}。"
+            "返回的可用项名只是精确地址，不是对应内容；请逐字复制完整地址后重试。）"
+        )
     return ToolResult(
         content=content,
         label=f"展开了{what} {'、'.join(got.found)}",
@@ -102,8 +108,8 @@ class StateWriteParams(BaseModel):
 
     set: dict[str, Any] = Field(
         default_factory=dict,
-        description="覆盖写，**深合并**：只动你提到的那几个键，同层别的原样留着。"
-        "从属关系用嵌套表达。值为 null 表示删掉该键。",
+        description="覆盖写标量或对象叶子，**不能写列表**。深合并：只动你提到的那几个键，"
+        "同层别的原样留着。从属关系用嵌套表达。值为 null 表示删掉该键。",
     )
     append: dict[str, Any] = Field(
         default_factory=dict,
@@ -117,6 +123,34 @@ class StateWriteParams(BaseModel):
 
 
 async def _state_write(ctx: RunContext, params: StateWriteParams) -> ToolResult:
+    # 清单整体塞进 set 会把模型记得不全的旧清单当成完整真相，造成静默丢项。
+    # 这是参数形状检查，不是自然语言内容判断：清单只能逐项 append/remove。
+    list_paths = [path for path in paths_of(params.set) if isinstance(walk(params.set, path), list)]
+    if list_paths:
+        labels = "、".join(_label(path) for path in list_paths)
+        return error(
+            f"set 不能写清单：{labels}。追加请用 append；替换清单项请 remove 旧项后 append 新项。"
+            "请重新调用 state_write。",
+            label=f"state_write 的 set 含清单：{labels}",
+        )
+
+    # 新建一个顶层域时，如果同名对象已经存在于当前 state 的更深位置，通常意味着
+    # 模型看见折叠后的外层结构，却把叶端对象误当成了根。这里只比对**精确 JSON
+    # 键名和对象形状**，不猜自然语言同义词；真正的新域仍然可以自由创建（S32）。
+    current = ctx.current_state().values
+    for root in params.set.keys() | params.append.keys():
+        if root in current:
+            continue
+        existing = [path for path in _object_key_paths(current, root) if len(path) > 1]
+        if existing:
+            locations = "、".join(_label(path) for path in existing)
+            return error(
+                f"不能新建顶层键「{root}」：当前 state 的既有对象中已有同名分支"
+                f"（{locations}）。请沿既有完整路径写入；若确实需要同名的新顶层域，"
+                "先改用不冲突的明确键名。",
+                label=f"state_write 拒绝重复根：{root}",
+            )
+
     delta = StateDelta(set=params.set, append=params.append, remove=params.remove)
     ctx.staged_delta = ctx.staged_delta.merge(delta)
     ctx.state_write_count += 1
@@ -134,6 +168,18 @@ async def _state_write(ctx: RunContext, params: StateWriteParams) -> ToolResult:
         label=f"更新了 {'、'.join(touched)}",
         payload=delta.model_dump(exclude_defaults=True),
     )
+
+
+def _object_key_paths(tree: Tree, target: str, prefix: tuple[str, ...] = ()) -> list[list[str]]:
+    """返回名为 ``target`` 且值为对象的全部路径；只做结构检查，不解释键义。"""
+    found: list[list[str]] = []
+    for key, value in tree.items():
+        path = (*prefix, key)
+        if key == target and isinstance(value, dict):
+            found.append(list(path))
+        if isinstance(value, dict):
+            found.extend(_object_key_paths(value, target, path))
+    return found
 
 
 # -- worldinfo：条目名 → 正文 -------------------------------------------------
@@ -337,9 +383,9 @@ def close_segment_tool(agent: str = "director") -> Tool[Any]:
     """归段那一刀。**不进任何工具面**（S22）——只有生成后追问那一次调用带上它。
 
     `summarize` 曾经在这里，是 director 手上的一个工具（S25：按引用寻址、
-    懒惰生成）。**它删掉了**：压缩由编排层在轮次滑出全文窗口时自己做
+    懒惰生成）。**它删掉了**：压缩由编排层在段落收束时自己做
     （`orchestration/run.py` 的 `close_segment`），模型不该有一个能主动
-    触发压缩的入口——判定和压缩本来就不同步，给它这个工具等于请它去动
+    触发压缩的入口——判定和摘要是编排层的连续动作，给它这个工具等于请它去动
     一件它管不着、也看不见后果的事。
     """
     return _tool(agent, "close_segment", CloseSegmentParams, _close_segment)

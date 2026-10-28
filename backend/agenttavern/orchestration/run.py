@@ -363,7 +363,7 @@ async def _execute_run(
         prose=prose,
         deviation_report=deviation,
         state_delta=ctx.staged_delta,
-        # 跨轮只有产品记录。reasoning 与工具对话仅在本轮/草稿恢复中存在。
+        # reasoning 与工具对话仅在本轮/草稿恢复中存在，不进入完成节点。
         interjections=interjection_texts(loop_messages),
     )
     repo.clear_draft()
@@ -552,7 +552,7 @@ async def close_segment(
     *,
     forced: bool = False,
 ) -> Node | None:
-    """把已经滑出全文窗口、又还没归段的轮次压成一段；没归成返回 ``None``。
+    """把已经形成语义段落、又还没归段的轮次压成一段；没归成返回 ``None``。
 
     **只负责压缩，不负责判定。** 哪一轮是结尾由 `Node.closes_segment` 记着，
     那是生成时当场判的（S58）——分界往往要等下一轮才认得出来，
@@ -566,12 +566,9 @@ async def close_segment(
 
     **允许单轮成段。** 一次干脆的转场本来就是一段。
 
-    **失败不影响已落盘的内容**：没有摘要只是回退到头部截断。
+    **失败不影响已落盘的内容**：没有摘要就继续在 history 中保留正文原文。
     """
-    # **段一收就压**，不再等它滑出什么窗口——摘要生成与上下文替换是两件事：
-    # 摘要在段收束时生成并缓存，替换在整份对话越界时一次性发生（S60）。
-    # 早先按 `RECENT_OUTLINES` 卡住不压，会让刚收的段落在越界时**还没有摘要可用**，
-    # 于是压不掉。
+    # **段一收就压**，不再等它滑出什么窗口；下一 turn 重放时直接用摘要替换该段（S60）。
     path = repo.path_to(leaf_id)
 
     # 已归段的节点连同它覆盖的那几轮一起跳过——`segment_span` 是"末节点 + 跨度"，
@@ -618,7 +615,7 @@ async def close_segment(
         tracer.emit(
             TraceEventType.CROSS_CHECK,
             Actor.ORCHESTRATOR,
-            f"归段失败，回退到头部截断：{type(exc).__name__}",
+            f"归段失败，保留正文原文：{type(exc).__name__}",
         )
         return None
 

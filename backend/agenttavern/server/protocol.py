@@ -100,7 +100,6 @@ class EditNode(BaseModel):
     user_input: str | None = Field(default=None, title="EditedUserInput")
     """替换这一 turn 的顶层输入文字；来源与提交时间保持不变（S164）。"""
     prose: str | None = None
-
     state_delta: StateDelta | None = None
     """**改指令**：整份替换该节点的增量。
 
@@ -219,6 +218,14 @@ class Trace(BaseModel):
 
     type: Literal["trace"] = "trace"
     event: TraceEvent
+
+
+class TracePage(BaseModel):
+    """开发者 trace 的一页；``next_before`` 是向更早内容继续读取的游标。"""
+
+    events: list[TraceEvent]
+    next_before: int | None = None
+    has_more: bool = False
 
 
 class Question(BaseModel):

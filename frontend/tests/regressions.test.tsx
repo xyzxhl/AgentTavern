@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { splitAtProse } from "../src/components/Process";
+import { mergeOlderTracePage, nextVisibleChars } from "../src/components/DeveloperPanel";
 import { hasCommittedLiveNode, isNodeProseVisible } from "../src/components/Transcript";
-import type { Node } from "../src/protocol";
+import type { Node, TraceEvent } from "../src/protocol";
 import { liveFromRunStarted, pathBeforeReroll } from "../src/store";
 
 describe("story timeline regressions", () => {
@@ -47,5 +48,24 @@ describe("story timeline regressions", () => {
     const [before, after] = splitAtProse(events);
     expect(before.map((event) => event.label)).toEqual(["开场规划", "细纲", "正文"]);
     expect(after.map((event) => event.label)).toEqual(["正文结束", "状态", "目标判定"]);
+  });
+
+  it("prepends older trace pages without changing their chronological order", () => {
+    const event = (seq: number): TraceEvent => ({
+      run_id: "run_trace",
+      seq,
+      type: "model_request",
+      actor: "director",
+      label: `事件 ${seq}`,
+    });
+
+    expect(mergeOlderTracePage([event(3), event(4)], [event(1), event(2)]).map((e) => e.seq)).toEqual([
+      1, 2, 3, 4,
+    ]);
+  });
+
+  it("reveals long trace fields in bounded chunks", () => {
+    expect(nextVisibleChars(4_000, 20_000)).toBe(8_000);
+    expect(nextVisibleChars(18_000, 20_000)).toBe(20_000);
   });
 });

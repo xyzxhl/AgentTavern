@@ -24,8 +24,8 @@ goal_manager 是第四个 agent，跨整个 goal 生命周期累积一份**产�
 `steer`（写下一条输入）、`finish`；历史发生折叠时还可用只读的 `history_read`。
 收口条件是「这一次不再调用任何工具」。
 
-静态前缀跨整个 goal 生命周期不变，**每轮只追加一条产品记录**；累计体量越过与
-director 相同的上下文预算后，按同一段落边界折成摘要，并可由 `history_read` 按段展开。
+静态前缀跨整个 goal 生命周期不变，**每轮只追加一条产品记录**；与 director 使用同一
+段落边界，完成段直接折成摘要，并可由 `history_read` 按段展开，不以字符数触发。
 当前有效的 plan 与
 进度以权威状态单独持久化，并在每次 goal_manager 调用前投影到上下文末尾。当前 turn 的
 thinking、tool call/result 只在这次 loop 内存在；turn 结束后不追加到 goal 历史。跨 turn

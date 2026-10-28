@@ -117,7 +117,7 @@ def test_a_scenario_is_long_enough_to_trigger_progressive_disclosure() -> None:
     """短场景走不到渐进式披露那条路径，`history_read` 与 `summarize` 就等于没测过。
 
     探针的形状同样要守住：**早埋一个具体的东西，晚了再要它**。
-    只是"轮数够多"不够——还得有个东西会滑出全文窗口而后被需要。
+    只是"轮数够多"不够——还得有个东西在完成段折叠后再次被需要。
     """
     long = SCENARIOS["noir_long"]
     assert len(long.inputs) >= 12, "要够长才走得到压缩那条路径"
@@ -125,7 +125,7 @@ def test_a_scenario_is_long_enough_to_trigger_progressive_disclosure() -> None:
     planted_at, probe_at = 1, len(long.inputs) - 2
     planted, probe = long.inputs[planted_at], long.inputs[probe_at]
 
-    # 埋点必须远早于全文窗口，否则模型不必检索也能看见
+    # 埋点必须远早于追问，让中间有机会完成并折叠语义段
     assert probe_at - planted_at >= 8, "埋点要远早于追问，中间足够发生压缩"
 
     # **埋的东西当时必须不要紧。** 摘要保留"人物、地点、关键事件与因果"，

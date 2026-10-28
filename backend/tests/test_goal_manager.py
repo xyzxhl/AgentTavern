@@ -12,7 +12,6 @@ from pathlib import Path
 
 from conftest import ScriptedLLM, text, tool, tools
 
-from agenttavern.agents import replay
 from agenttavern.agents.goal_manager import advance_goal, sync_conversation, turn_record
 from agenttavern.llm import Message, Role, ToolCall
 from agenttavern.models import (
@@ -140,11 +139,8 @@ def test_a_goal_set_at_session_start_treats_everything_as_during() -> None:
     assert "还没有已经写出来的剧情" in body, "之前那段是空的，要说出来"
 
 
-async def test_goal_history_compacts_like_director_and_can_expand(
-    tmp_path: Path, monkeypatch
-) -> None:
+async def test_goal_history_compacts_like_director_and_can_expand(tmp_path: Path) -> None:
     """goal_manager 复用同一段落摘要、同一地址和同一展开工具。"""
-    monkeypatch.setattr(replay, "CONTEXT_BUDGET_CHARS", 20)
     repo = _repo(tmp_path)
     first = _node(0, source=InputSource.USER, said="先记住门上的划痕")
     second = _node(1)

@@ -37,7 +37,14 @@ from ..models import (
 )
 from ..models.corpus import Corpus
 from .corpora import CorpusStore
-from .jsonfile import append_jsonl, read_jsonl, read_model, read_model_or_none, write_model
+from .jsonfile import (
+    append_jsonl,
+    read_jsonl,
+    read_jsonl_page,
+    read_model,
+    read_model_or_none,
+    write_model,
+)
 from .worldbooks import WorldbookRepository
 
 
@@ -263,6 +270,11 @@ class SessionRepository:
 
     def read_trace(self, run_id: str) -> list[TraceEvent]:
         return list(read_jsonl(self.trace_path(run_id), TraceEvent))
+
+    def read_trace_page(
+        self, run_id: str, *, limit: int, before: int | None = None
+    ) -> tuple[list[TraceEvent], int | None]:
+        return read_jsonl_page(self.trace_path(run_id), TraceEvent, limit=limit, before=before)
 
 
 class Store:

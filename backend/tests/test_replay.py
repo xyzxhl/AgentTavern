@@ -1,11 +1,6 @@
-"""director 的对话跨轮持续（S60）、越界时的批量压缩、以及跨轮扁平化（S61）。"""
+"""director 的对话跨轮持续、按段折叠，以及跨轮扁平化（S60/S61）。"""
 
-from agenttavern.agents.replay import (
-    CONTEXT_BUDGET_CHARS,
-    _chars,
-    flatten_turn,
-    replay_messages,
-)
+from agenttavern.agents.replay import flatten_turn, replay_messages
 from agenttavern.llm import Message, Role, ToolCall
 from agenttavern.models import Node, RunDraft, UserInput
 
@@ -72,8 +67,8 @@ def test_an_interjection_survives_flattening_in_place() -> None:
     assert positions and positions[0] > 0
 
 
-def test_everything_is_kept_until_the_budget_is_crossed() -> None:
-    """未越界时每一轮都在场——只是以扁平形态。"""
+def test_unclosed_runs_are_kept_in_full() -> None:
+    """没有语义段落边界时，每一轮都以扁平原文在场。"""
     path = [_run(f"第{i}轮") for i in range(5)]
     messages = replay_messages(path)
     text = "\n".join(m.content or "" for m in messages)
@@ -81,14 +76,9 @@ def test_everything_is_kept_until_the_budget_is_crossed() -> None:
     assert all(f"第{i}轮" in text for i in range(5))
 
 
-def test_crossing_the_budget_replaces_every_summarised_segment_at_once() -> None:
-    """**越界一次，全部替换**——不是每收一段就换一段。
-
-    持续对话的价值在于前缀稳定。每收一段就替换一段，等于每隔几轮就动一次前缀，
-    **缓存反复失效**，那还不如不持续。攒到越界再一次性换掉，失效只发生一次，
-    两次压缩之间的所有轮次命中同一个前缀。
-    """
-    filler = CONTEXT_BUDGET_CHARS // 4
+def test_completed_segments_fold_without_a_character_threshold() -> None:
+    """已完成并取得摘要的语义段立即折叠，不等待字符阈值。"""
+    filler = 0
     path = [
         _run("第1轮", filler=filler, closes=True, summary="第一段的摘要"),
         _run("第2轮", filler=filler),
@@ -101,7 +91,7 @@ def test_crossing_the_budget_replaces_every_summarised_segment_at_once() -> None
     messages = replay_messages(path)
     text = "\n".join(m.content or "" for m in messages)
 
-    # 两段都被换掉了，而不是只换最老的那一段
+    # 两个已完成的语义段都被摘要替换。
     assert "第一段的摘要" in text
     assert "第二段的摘要" in text
     # 被覆盖的轮次不再单独出现
@@ -119,7 +109,7 @@ def test_a_summary_says_how_many_runs_it_replaced_and_how_to_get_them_back() -> 
     否则模型会把这一段读成"那几轮只发生了这么点事"——**比不压缩更糟**，
     因为它会以为自己已经看全了。
     """
-    filler = CONTEXT_BUDGET_CHARS // 2
+    filler = 0
     path = [
         _run("第1轮", filler=filler, closes=True, summary="她进店，他锁了门。"),
         _run("第2轮", filler=filler),
@@ -135,12 +125,8 @@ def test_a_summary_says_how_many_runs_it_replaced_and_how_to_get_them_back() -> 
 
 
 def test_nothing_is_dropped_when_no_segment_has_been_summarised_yet() -> None:
-    """越界了但还没有任何段落归好——只能先原样带着。
-
-    **绝不能因为超预算就随意截断**：那会让上下文里出现无主的工具结果，
-    也会让模型不知道自己丢了什么（P13）。
-    """
-    filler = CONTEXT_BUDGET_CHARS
+    """没有可用摘要的未完成段保持原样，不按字符数丢弃或截断。"""
+    filler = 20_000
     path = [_run("第1轮", filler=filler), _run("第2轮", filler=filler)]
 
     messages = replay_messages(path)
@@ -174,14 +160,3 @@ def test_reasoning_and_tools_only_persist_in_a_draft() -> None:
     dumped = node.model_dump()
     assert "director_messages" not in dumped
     assert "messages" not in dumped
-
-
-def test_reasoning_counts_toward_the_context_budget() -> None:
-    """推理段是随消息一起发出去的，算预算时**必须算上**。
-
-    不算的话预算会系统性低估，而低估的幅度随对话变长越来越大。
-    """
-    plain = [Message(role=Role.ASSISTANT, content="x" * 100)]
-    with_reasoning = [Message(role=Role.ASSISTANT, content="x" * 100, reasoning_content="y" * 900)]
-    assert _chars(plain) == 100
-    assert _chars(with_reasoning) == 1000
